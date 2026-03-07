@@ -1,9 +1,11 @@
-import { useState, useMemo, useEffect, useCallback, createContext, useContext } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext } from "react";
 import { supabase } from "./supabaseClient";
+import * as XLSX from "xlsx";
+import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
-   (주)미스터팍 근로계약서 관리 시스템 v3.0
-   React + Supabase Auth + 관리자 초대 시스템
+   (주)미스터팍 근로계약서 관리 시스템 v4.0
+   Phase 2: 엑셀 Import + Word 출력 + 계약 이력
    ═══════════════════════════════════════════════════════ */
 
 // ── 1. 상수 ──────────────────────────────────────────
@@ -521,11 +523,12 @@ function Dashboard({ employees }) {
 }
 
 // ── 11. 직원대장 ──────────────────────────────────────
-function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign }) {
+function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign, onReload }) {
   const { can } = useAuth();
   const [filter, setFilter] = useState({ site: "", cat: "", status: "재직", tax: "", search: "" });
   const [editEmp, setEditEmp] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const blankEmp = {
@@ -563,7 +566,10 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
         <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>👥 직원대장</h2>
         {can("edit") && (
-          <button onClick={() => { setEditEmp({ ...blankEmp }); setShowForm(true); }} style={btnPrimary}>+ 직원등록</button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => setShowImport(true)} style={{ ...btnOutline, display: "flex", alignItems: "center", gap: 4 }}>📤 엑셀 Import</button>
+            <button onClick={() => { setEditEmp({ ...blankEmp }); setShowForm(true); }} style={btnPrimary}>+ 직원등록</button>
+          </div>
         )}
       </div>
 
@@ -727,6 +733,341 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
           </div>
         </div>
       )}
+
+      {/* 엑셀 Import 모달 */}
+      {showImport && (
+        <ExcelImportModal
+          onClose={() => setShowImport(false)}
+          onImport={() => { if (onReload) onReload(); }}
+          existingEmpNos={new Set(employees.map(e => String(e.emp_no)))}
+        />
+      )}
+    </div>
+  );
+}
+const EXCEL_COL_MAP = {
+  "사번": "emp_no", "성명": "name", "이름": "name", "휴대폰번호": "phone", "연락처": "phone",
+  "직위": "position", "근무처코드(1)": "site_code_1", "근무처코드1": "site_code_1",
+  "근무처코드(2)": "site_code_2", "근무처코드2": "site_code_2",
+  "근무형태1": "work_type_1", "근무형태": "work_type_1", "근무형태2": "work_type_2",
+  "복합코드": "work_code", "근무코드": "work_code",
+  "입사일": "hire_date", "수습종료일": "probation_end",
+  "근무조건": "employment_type", "퇴사일": "resign_date",
+  "수당구분": "salary_type", "평일수당": "base_salary", "기본급": "base_salary",
+  "주말수당": "weekend_daily", "팀장수당": "leader_allow", "식대": "meal_allow",
+  "보육수당": "childcare_allow", "자가운전보조금": "car_allow",
+  "신고여부": "tax_type", "신고자": "reporter_name",
+  "예금주": "account_holder", "은행명": "bank_name", "계좌번호": "account_number",
+  "메모": "memo",
+};
+
+// 근무형태 라벨 → 코드 역매핑
+const WORK_LABEL_TO_CODE = {};
+WORK_CODES.forEach(w => { WORK_LABEL_TO_CODE[w.label] = w.code; WORK_LABEL_TO_CODE[w.code] = w.code; });
+
+function mapWorkCode(raw1, raw2) {
+  if (!raw1) return "C";
+  const c1 = WORK_LABEL_TO_CODE[raw1] || raw1;
+  const c2 = raw2 ? (WORK_LABEL_TO_CODE[raw2] || raw2) : "";
+  // 복합코드 시도
+  if (c1 && c2) {
+    const combo = c1 + c2;
+    if (WORK_CODES.find(w => w.code === combo)) return combo;
+  }
+  if (WORK_CODES.find(w => w.code === c1)) return c1;
+  return "C";
+}
+
+function parseExcelDate(v) {
+  if (!v) return null;
+  if (typeof v === "number") {
+    const d = XLSX.SSF.parse_date_code(v);
+    if (d) return `${d.y}-${String(d.m).padStart(2,"0")}-${String(d.d).padStart(2,"0")}`;
+  }
+  const s = String(v).trim();
+  const m = s.match(/(\d{4})[-./](\d{1,2})[-./](\d{1,2})/);
+  if (m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+  return null;
+}
+
+function ExcelImportModal({ onClose, onImport, existingEmpNos }) {
+  const [step, setStep] = useState("upload"); // upload → preview → importing → done
+  const [rows, setRows] = useState([]);
+  const [colMap, setColMap] = useState({});
+  const [sheetNames, setSheetNames] = useState([]);
+  const [selSheet, setSelSheet] = useState("");
+  const [workbook, setWorkbook] = useState(null);
+  const [stats, setStats] = useState({ total: 0, new: 0, update: 0, skip: 0 });
+  const [importMode, setImportMode] = useState("skip"); // skip or update
+  const [importResult, setImportResult] = useState(null);
+  const fileRef = useRef(null);
+
+  const handleFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const wb = XLSX.read(ev.target.result, { type: "array", cellDates: true });
+      setWorkbook(wb);
+      setSheetNames(wb.SheetNames);
+      // 자동 선택: "인원현황" 시트 우선
+      const defaultSheet = wb.SheetNames.find(s => s.includes("인원현황")) || wb.SheetNames[0];
+      setSelSheet(defaultSheet);
+      parseSheet(wb, defaultSheet);
+    };
+    reader.readAsArrayBuffer(file);
+  };
+
+  const parseSheet = (wb, sheetName) => {
+    const ws = wb.Sheets[sheetName];
+    const rawData = XLSX.utils.sheet_to_json(ws, { defval: "" });
+    if (rawData.length === 0) return;
+    // 자동 컬럼 매핑
+    const headers = Object.keys(rawData[0]);
+    const mapping = {};
+    headers.forEach(h => {
+      const clean = h.replace(/\s/g, "");
+      Object.keys(EXCEL_COL_MAP).forEach(k => {
+        if (clean.includes(k) || clean === k) mapping[h] = EXCEL_COL_MAP[k];
+      });
+    });
+    setColMap(mapping);
+
+    // 행 변환
+    const parsed = rawData.map(row => {
+      const emp = {};
+      Object.entries(mapping).forEach(([excelCol, empField]) => {
+        let val = row[excelCol];
+        if (["hire_date", "resign_date", "probation_end"].includes(empField)) {
+          val = parseExcelDate(val);
+        } else if (["base_salary", "weekend_daily", "leader_allow", "meal_allow", "childcare_allow", "car_allow"].includes(empField)) {
+          val = parseInt(val) || 0;
+        }
+        emp[empField] = val;
+      });
+      // 근무코드 자동 판정
+      if (!emp.work_code && emp.work_type_1) {
+        emp.work_code = mapWorkCode(emp.work_type_1, emp.work_type_2);
+      }
+      if (!emp.work_code) emp.work_code = "C";
+      // 상태 자동 판정
+      emp.status = emp.resign_date ? "퇴사" : "재직";
+      // 사번 없으면 스킵
+      emp._valid = !!emp.emp_no && !!emp.name;
+      emp._isDuplicate = existingEmpNos.has(String(emp.emp_no));
+      return emp;
+    }).filter(e => e._valid);
+
+    setRows(parsed);
+    setStats({
+      total: parsed.length,
+      new: parsed.filter(e => !e._isDuplicate).length,
+      update: parsed.filter(e => e._isDuplicate).length,
+      skip: 0,
+    });
+    setStep("preview");
+  };
+
+  const handleSheetChange = (sheetName) => {
+    setSelSheet(sheetName);
+    if (workbook) parseSheet(workbook, sheetName);
+  };
+
+  const doImport = async () => {
+    setStep("importing");
+    let imported = 0, updated = 0, skipped = 0;
+    for (const emp of rows) {
+      const { _valid, _isDuplicate, work_type_1, work_type_2, salary_type, probation_end, ...data } = emp;
+      // 수습기간 계산 (입사일~수습종료일 차이)
+      if (data.hire_date && probation_end) {
+        const hd = new Date(data.hire_date), pe = new Date(probation_end);
+        const months = Math.round((pe - hd) / (30.44 * 86400000));
+        data.probation_months = months > 0 ? months : 0;
+      }
+      // 기본값 보정
+      if (!data.position) data.position = "일반";
+      if (!data.employment_type) data.employment_type = "정규직";
+      if (!data.tax_type) data.tax_type = "3.3%";
+      delete data.status; // resign_date로 자동 판단
+
+      if (_isDuplicate) {
+        if (importMode === "update") {
+          const { error } = await supabase.from("employees")
+            .update({ ...data, updated_at: new Date().toISOString() })
+            .eq("emp_no", data.emp_no);
+          if (!error) updated++; else skipped++;
+        } else {
+          skipped++;
+        }
+      } else {
+        // status는 직접 설정
+        data.status = emp.resign_date ? "퇴사" : "재직";
+        const { error } = await supabase.from("employees").insert(data);
+        if (!error) imported++; else skipped++;
+      }
+    }
+    setImportResult({ imported, updated, skipped });
+    setStep("done");
+  };
+
+  const modalBg = { position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 };
+  const modalBox = { background: C.white, borderRadius: 16, padding: 28, width: 720, maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" };
+
+  return (
+    <div style={modalBg} onClick={onClose}>
+      <div style={modalBox} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <h3 style={{ fontSize: 18, fontWeight: 900, color: C.navy, margin: 0 }}>📤 엑셀 Import</h3>
+          <button onClick={onClose} style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: C.gray }}>✕</button>
+        </div>
+
+        {step === "upload" && (
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>📊</div>
+            <p style={{ color: C.gray, fontSize: 14, marginBottom: 20 }}>인원현황 엑셀 파일(.xlsx)을 선택하세요</p>
+            <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} style={{ display: "none" }} />
+            <button onClick={() => fileRef.current?.click()} style={{ ...btnPrimary, padding: "14px 40px", fontSize: 15 }}>📁 파일 선택</button>
+            <div style={{ marginTop: 16, padding: 16, background: "#FFF8E1", borderRadius: 10, fontSize: 12, color: C.gray, textAlign: "left" }}>
+              <p style={{ fontWeight: 700, marginBottom: 6 }}>💡 지원 형식</p>
+              <p>• 인원현황 엑셀 파일 (.xlsx)</p>
+              <p>• 자동 매핑: 사번, 성명, 직위, 근무처코드, 근무형태, 급여 항목 등</p>
+              <p>• 시트가 여러 개인 경우 "인원현황" 시트를 자동 선택합니다</p>
+            </div>
+          </div>
+        )}
+
+        {step === "preview" && (
+          <div>
+            {/* 시트 선택 */}
+            {sheetNames.length > 1 && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.gray }}>시트 선택:</label>
+                <div style={{ display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" }}>
+                  {sheetNames.map(s => (
+                    <button key={s} onClick={() => handleSheetChange(s)}
+                      style={{ padding: "6px 14px", borderRadius: 8, border: `2px solid ${selSheet === s ? C.navy : C.border}`, background: selSheet === s ? C.navy : C.white, color: selSheet === s ? C.white : C.gray, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 통계 */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 16 }}>
+              <div style={{ ...cardStyle, textAlign: "center", padding: 14 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: C.navy }}>{stats.total}</div>
+                <div style={{ fontSize: 11, color: C.gray }}>전체 인원</div>
+              </div>
+              <div style={{ ...cardStyle, textAlign: "center", padding: 14 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: C.success }}>{stats.new}</div>
+                <div style={{ fontSize: 11, color: C.gray }}>신규 등록</div>
+              </div>
+              <div style={{ ...cardStyle, textAlign: "center", padding: 14 }}>
+                <div style={{ fontSize: 24, fontWeight: 900, color: C.orange }}>{stats.update}</div>
+                <div style={{ fontSize: 11, color: C.gray }}>중복 사번</div>
+              </div>
+            </div>
+
+            {/* 중복 처리 방식 */}
+            {stats.update > 0 && (
+              <div style={{ marginBottom: 16, padding: 12, background: "#FFF3E0", borderRadius: 10, display: "flex", gap: 12, alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.orange }}>⚠️ 중복 사번 {stats.update}건 처리:</span>
+                <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                  <input type="radio" checked={importMode === "skip"} onChange={() => setImportMode("skip")} /> 건너뛰기
+                </label>
+                <label style={{ fontSize: 12, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                  <input type="radio" checked={importMode === "update"} onChange={() => setImportMode("update")} /> 덮어쓰기
+                </label>
+              </div>
+            )}
+
+            {/* 매핑된 컬럼 */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>🔗 자동 매핑된 컬럼 ({Object.keys(colMap).length}개)</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+                {Object.entries(colMap).map(([excel, field]) => (
+                  <span key={excel} style={{ padding: "3px 8px", background: "#EFF6FF", borderRadius: 6, fontSize: 10, color: C.navy, fontWeight: 600 }}>
+                    {excel} → {field}
+                  </span>
+                ))}
+              </div>
+            </div>
+
+            {/* 미리보기 테이블 */}
+            <div style={{ overflowX: "auto", maxHeight: 300, border: `1px solid ${C.border}`, borderRadius: 10, marginBottom: 16 }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead>
+                  <tr style={{ background: C.navy, position: "sticky", top: 0 }}>
+                    {["", "사번", "이름", "직위", "사업장", "근무형태", "기본급", "일당", "상태"].map(h => (
+                      <th key={h} style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.slice(0, 50).map((e, i) => (
+                    <tr key={i} style={{ background: e._isDuplicate ? "#FFF3E0" : i % 2 ? C.bg : C.white }}>
+                      <td style={{ padding: "6px", textAlign: "center" }}>
+                        {e._isDuplicate ? <span title="중복" style={{ color: C.orange }}>⚠️</span> : <span style={{ color: C.success }}>✅</span>}
+                      </td>
+                      <td style={{ padding: "6px", fontWeight: 700, textAlign: "center" }}>{e.emp_no}</td>
+                      <td style={{ padding: "6px", fontWeight: 700 }}>{e.name}</td>
+                      <td style={{ padding: "6px", textAlign: "center", color: C.gray }}>{e.position}</td>
+                      <td style={{ padding: "6px", fontSize: 10 }}>{getSiteName(e.site_code_1) || e.site_code_1}</td>
+                      <td style={{ padding: "6px", textAlign: "center" }}>{getWorkLabel(e.work_code)}</td>
+                      <td style={{ padding: "6px", textAlign: "right" }}>{e.base_salary ? fmt(e.base_salary) : "−"}</td>
+                      <td style={{ padding: "6px", textAlign: "right" }}>{e.weekend_daily ? fmt(e.weekend_daily) : "−"}</td>
+                      <td style={{ padding: "6px", textAlign: "center" }}>
+                        <span style={{ padding: "2px 6px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: e.status === "재직" ? "#E8F5E9" : "#FFEBEE", color: e.status === "재직" ? C.success : C.error }}>
+                          {e.status}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {rows.length > 50 && <div style={{ padding: 8, textAlign: "center", fontSize: 11, color: C.gray }}>외 {rows.length - 50}명 더...</div>}
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={() => { setStep("upload"); setRows([]); }} style={btnOutline}>← 다시 선택</button>
+              <button onClick={doImport} style={{ ...btnPrimary, background: C.success, padding: "12px 30px" }}>
+                ✅ {importMode === "update" ? `${stats.new}명 등록 + ${stats.update}명 업데이트` : `${stats.new}명 등록`}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === "importing" && (
+          <div style={{ textAlign: "center", padding: "60px 0" }}>
+            <div style={{ fontSize: 36, marginBottom: 12 }}>⏳</div>
+            <p style={{ color: C.navy, fontWeight: 700, fontSize: 16 }}>Import 진행 중...</p>
+            <p style={{ color: C.gray, fontSize: 13 }}>Supabase에 데이터를 저장하고 있습니다</p>
+          </div>
+        )}
+
+        {step === "done" && importResult && (
+          <div style={{ textAlign: "center", padding: "40px 0" }}>
+            <div style={{ fontSize: 48, marginBottom: 12 }}>🎉</div>
+            <p style={{ color: C.navy, fontWeight: 900, fontSize: 18, marginBottom: 16 }}>Import 완료!</p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 24 }}>
+              <div style={{ ...cardStyle, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: C.success }}>{importResult.imported}</div>
+                <div style={{ fontSize: 12, color: C.gray }}>신규 등록</div>
+              </div>
+              <div style={{ ...cardStyle, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: C.orange }}>{importResult.updated}</div>
+                <div style={{ fontSize: 12, color: C.gray }}>업데이트</div>
+              </div>
+              <div style={{ ...cardStyle, padding: 16, textAlign: "center" }}>
+                <div style={{ fontSize: 28, fontWeight: 900, color: C.gray }}>{importResult.skipped}</div>
+                <div style={{ fontSize: 12, color: C.gray }}>건너뜀</div>
+              </div>
+            </div>
+            <button onClick={() => { onImport(); onClose(); }} style={{ ...btnPrimary, padding: "14px 40px", fontSize: 15 }}>✅ 확인</button>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -855,6 +1196,169 @@ function ContractWriter({ employees, initialEmp }) {
     win.onload = () => { setTimeout(() => win.print(), 300); };
   };
 
+  // ── Word(.docx) 출력 ──
+  const handleWordExport = async () => {
+    if (!selEmp) { alert("직원을 먼저 선택하세요."); return; }
+    const empName = selEmp.name;
+    const contractType = contract.type === "weekend" ? "주말제·일당" : contract.type === "mixed" ? "복합근무" : "평일제·월급";
+
+    // 조항 데이터 수집
+    const allArticles = contract.type === "weekend" ? DEFAULT_ARTICLES_WEEKEND : DEFAULT_ARTICLES_WEEKDAY;
+    const mergedArticles = { ...allArticles };
+    // contract.articles overrides if any
+    if (contract.articles) {
+      Object.entries(contract.articles).forEach(([k, v]) => {
+        const num = parseInt(k.replace("art", ""));
+        if (mergedArticles[num]) mergedArticles[num] = { ...mergedArticles[num], text: v };
+      });
+    }
+
+    const createParagraph = (text, options = {}) => new Paragraph({
+      spacing: { after: 100 },
+      children: [new TextRun({ text: replaceVars(text), font: "맑은 고딕", size: options.size || 22, bold: options.bold || false, color: options.color || "222222" })],
+      alignment: options.align || AlignmentType.LEFT,
+    });
+
+    const titlePara = (num, title) => new Paragraph({
+      spacing: { before: 200, after: 100 },
+      children: [new TextRun({ text: `제${num}조 (${title})`, font: "맑은 고딕", size: 24, bold: true, color: "1428A0" })],
+    });
+
+    // 임금 테이블 생성
+    const wageRows = [];
+    if (contract.type !== "weekend") {
+      const basic_hours = contract.basic_hours || 182.49;
+      const annual_hours = contract.annual_hours || 8.75;
+      const overtime_hours = contract.overtime_hours || 0;
+      const holiday_hours = contract.holiday_hours || 21;
+      const totalH = basic_hours + annual_hours + overtime_hours + holiday_hours;
+      const total = toNum(contract.total_salary);
+      const exactRate = totalH > 0 ? total / totalH : 0;
+      const basicPay = Math.round(exactRate * basic_hours);
+      const annualPay = Math.round(exactRate * annual_hours);
+      const overtimePay = Math.round(exactRate * overtime_hours);
+      const holidayPay = Math.round(exactRate * holiday_hours);
+      const adjBasic = total - annualPay - overtimePay - holidayPay;
+      const displayRate = Math.floor(exactRate);
+
+      const wageData = [
+        ["기본급", fmt(adjBasic) + "원", `통상시급 × ${basic_hours} H`],
+        ["연차수당", fmt(annualPay) + "원", `통상시급 × ${annual_hours} H`],
+        ["연장수당", fmt(overtimePay) + "원", `통상시급 × ${overtime_hours} H`],
+        ["공휴수당", fmt(holidayPay) + "원", `통상시급 × ${holiday_hours} H`],
+        ["통상시급", fmt(displayRate) + "원", `월지급액 ÷ ${totalH.toFixed(2)} H`],
+      ];
+
+      wageData.forEach(([item, amount, basis]) => {
+        wageRows.push(new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: item, font: "맑은 고딕", size: 20, bold: true })], alignment: AlignmentType.CENTER })], width: { size: 20, type: WidthType.PERCENTAGE } }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: amount, font: "맑은 고딕", size: 20 })], alignment: AlignmentType.RIGHT })], width: { size: 30, type: WidthType.PERCENTAGE } }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: basis, font: "맑은 고딕", size: 20 })], alignment: AlignmentType.LEFT })], width: { size: 50, type: WidthType.PERCENTAGE } }),
+          ],
+        }));
+      });
+    }
+
+    const wageTable = wageRows.length > 0 ? new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      rows: [
+        new TableRow({
+          children: ["항목", "금액", "산출근거"].map(h => new TableCell({
+            children: [new Paragraph({ children: [new TextRun({ text: h, font: "맑은 고딕", size: 20, bold: true, color: "FFFFFF" })], alignment: AlignmentType.CENTER })],
+            shading: { fill: "1428A0", type: ShadingType.CLEAR },
+          })),
+        }),
+        ...wageRows,
+        new TableRow({
+          children: [
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: "월간 계약금액", font: "맑은 고딕", size: 20, bold: true })], alignment: AlignmentType.CENTER })], columnSpan: 1 }),
+            new TableCell({ children: [new Paragraph({ children: [new TextRun({ text: `금 ${fmt(contract.total_salary)}원`, font: "맑은 고딕", size: 22, bold: true, color: "1428A0" })], alignment: AlignmentType.RIGHT })], columnSpan: 2 }),
+          ],
+          tableHeader: false,
+        }),
+      ],
+    }) : null;
+
+    // 문서 조항 파라그래프 생성
+    const articleParagraphs = [];
+    const maxArt = contract.type === "weekend" ? 10 : 11;
+
+    for (let i = 1; i <= maxArt; i++) {
+      const art = mergedArticles[i];
+      if (!art) continue;
+      articleParagraphs.push(titlePara(i, art.title));
+      // 임금 조항에 테이블 삽입
+      if ((contract.type !== "weekend" && i === 7) || (contract.type === "weekend" && i === 7)) {
+        if (wageTable) articleParagraphs.push(wageTable);
+      }
+      const text = replaceVars(art.text);
+      text.split("\n").forEach(line => {
+        if (line.trim()) articleParagraphs.push(createParagraph(line.trim()));
+      });
+    }
+
+    // 서명란
+    const signDate = contract.start_date || today();
+    const signParagraphs = [
+      new Paragraph({ spacing: { before: 400 } }),
+      createParagraph(`${signDate.replace(/-/g, "년 ").replace(/년 (\d{2})$/, "월 $1일")}`, { align: AlignmentType.CENTER, bold: true }),
+      new Paragraph({ spacing: { before: 200 } }),
+      createParagraph("[ 사 용 자 ]", { bold: true }),
+      createParagraph("상 호: 주식회사 미스터팍"),
+      createParagraph("주 소: 인천광역시 연수구 갯벌로 12, 인천테크노파크 갯벌타워 1501A,B호"),
+      createParagraph("대 표: 이지섭                          (인)"),
+      new Paragraph({ spacing: { before: 200 } }),
+      createParagraph("[ 근 로 자 ]", { bold: true }),
+      createParagraph(`성 명: ${empName}`),
+      createParagraph("연락처:"),
+      createParagraph("주 소:"),
+      createParagraph("                                      (서명 또는 인)"),
+    ];
+
+    const doc = new Document({
+      styles: {
+        default: { document: { run: { font: "맑은 고딕", size: 22, color: "222222" } } },
+      },
+      sections: [{
+        properties: {
+          page: { size: { width: 11906, height: 16838 }, margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 } },
+        },
+        headers: {
+          default: new Header({
+            children: [new Paragraph({ alignment: AlignmentType.LEFT, children: [new TextRun({ text: "주식회사 미스터팍", size: 20, color: "1428A0", bold: true, font: "맑은 고딕" })] })],
+          }),
+        },
+        footers: {
+          default: new Footer({
+            children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: "- ", size: 18, color: "666666" }), new TextRun({ children: [PageNumber.CURRENT], size: 18, color: "666666" }), new TextRun({ text: " -", size: 18, color: "666666" })] })],
+          }),
+        },
+        children: [
+          new Paragraph({
+            spacing: { after: 200 },
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: "근  로  계  약  서", font: "맑은 고딕", size: 48, bold: true, color: "222222" })],
+          }),
+          createParagraph(`(${contractType})`, { align: AlignmentType.CENTER, size: 20, color: "666666" }),
+          new Paragraph({ spacing: { after: 100 } }),
+          createParagraph(`주식회사 미스터팍(이하 "갑"이라 한다)과 ${empName}(이하 "을"이라 한다)은 다음과 같이 근로계약을 체결한다.`),
+          new Paragraph({ spacing: { after: 200 } }),
+          ...articleParagraphs,
+          ...signParagraphs,
+        ],
+      }],
+    });
+
+    const blob = await Packer.toBlob(doc);
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `근로계약서_${empName}_${today()}.docx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
       {/* 좌측: 입력 */}
@@ -958,7 +1462,12 @@ function ContractWriter({ employees, initialEmp }) {
           </div>
         </div>
 
-        {can("edit") && <button onClick={handlePrint} style={{ ...btnGold, width: "100%", padding: 14, fontSize: 15 }}>🖨️ 인쇄 / PDF 출력</button>}
+        {can("edit") && (
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={handlePrint} style={{ ...btnGold, flex: 1, padding: 14, fontSize: 14 }}>🖨️ 인쇄 / PDF</button>
+            <button onClick={handleWordExport} style={{ ...btnPrimary, flex: 1, padding: 14, fontSize: 14 }}>📄 Word 출력</button>
+          </div>
+        )}
       </div>
 
       {/* 우측: 미리보기 */}
@@ -1726,7 +2235,7 @@ function MainApp() {
       {/* 메인 콘텐츠 */}
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {page === "dashboard" && <Dashboard employees={employees} />}
-        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} />}
+        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onReload={loadEmployees} />}
         {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} />}
         {page === "resignation" && <Resignation employees={employees} />}
         {page === "certificate" && <Certificate employees={employees} />}
