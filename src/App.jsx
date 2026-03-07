@@ -2797,7 +2797,550 @@ function Settings() {
   );
 }
 
-// ── 16. 메인 앱 쉘 ────────────────────────────────────
+// ── 16-1. 수익성 분석 시스템 (v7.0 통합) ────────────────
+const FIELD_SITES = SITES.filter(s => s.code !== "V000");
+const ALLOC_METHODS = [
+  { key: "revenue", label: "매출비중", desc: "사업장 매출 비율로 배분" },
+  { key: "headcount", label: "인원비중", desc: "사업장 인원 비율로 배분" },
+  { key: "site_count", label: "사업장수", desc: "인원 있는 사업장에 균등 배분" },
+  { key: "hq_only", label: "본사귀속", desc: "사업장에 배분하지 않음" },
+];
+const DEFAULT_OVERHEAD = [
+  { key: "hq_salary", label: "본사급여(V000)", method: "revenue", amount: 12000000 },
+  { key: "severance", label: "퇴직급여", method: "headcount", amount: 2394386 },
+  { key: "misc_wage", label: "잡급", method: "headcount", amount: 1663240 },
+  { key: "welfare", label: "복리후생비", method: "headcount", amount: 7134120 },
+  { key: "insurance", label: "보험료", method: "headcount", amount: 545000 },
+  { key: "commission", label: "지급수수료", method: "revenue", amount: 551300 },
+  { key: "ad", label: "광고선전비", method: "revenue", amount: 0 },
+  { key: "vehicle", label: "차량유지비", method: "site_count", amount: 2464550 },
+  { key: "tax_local", label: "세금(지방세등)", method: "headcount", amount: 41228 },
+  { key: "rent", label: "임차료", method: "hq_only", amount: 5179690 },
+  { key: "telecom", label: "통신비", method: "headcount", amount: 220000 },
+  { key: "tax_duty", label: "세금과공과", method: "revenue", amount: 14228750 },
+  { key: "supplies", label: "소모품비", method: "site_count", amount: 376680 },
+  { key: "travel", label: "여비교통비", method: "site_count", amount: 151600 },
+];
+
+const pFmt = (n) => {
+  if (n == null || n === "" || isNaN(n)) return "0";
+  const num = Math.round(Number(n));
+  if (Math.abs(num) >= 100000000) return (num / 100000000).toFixed(1) + "억";
+  if (Math.abs(num) >= 10000) return Math.round(num / 10000).toLocaleString("ko-KR") + "만";
+  return num.toLocaleString("ko-KR");
+};
+const pFmtFull = (n) => (n == null || n === "" || isNaN(n)) ? "0" : Math.round(Number(n)).toLocaleString("ko-KR");
+const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
+
+function ProfitabilityPage({ employees, subPage }) {
+  const [currentMonth, setCurrentMonth] = useState("2026-02");
+  const [revenueData, setRevenueData] = useState({ "2026-02": {} });
+  const [overheadData, setOverheadData] = useState({ "2026-02": DEFAULT_OVERHEAD.map(o => ({ ...o })) });
+  const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
+  const [sortBy, setSortBy] = useState("profit");
+  const [editLabel, setEditLabel] = useState(null);
+
+  const monthRevenue = revenueData[currentMonth] || {};
+  const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
+
+  const setRev = (code, val) => setRevenueData(p => ({ ...p, [currentMonth]: { ...p[currentMonth], [code]: val } }));
+  const setOH = (idx, field, val) => setOverheadData(p => {
+    const arr = [...(p[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o })))];
+    arr[idx] = { ...arr[idx], [field]: val };
+    return { ...p, [currentMonth]: arr };
+  });
+
+  // 인건비 자동 집계 (employees 기반)
+  const laborBySite = useMemo(() => {
+    const map = {};
+    FIELD_SITES.forEach(s => { map[s.code] = { total: 0, count: 0, emps: [] }; });
+    employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000").forEach(e => {
+      const sc = e.site_code_1;
+      if (!map[sc]) map[sc] = { total: 0, count: 0, emps: [] };
+      const monthly = toNum(e.base_salary) + toNum(e.leader_allow) + toNum(e.meal_allow) + toNum(e.childcare_allow) + toNum(e.car_allow)
+        + (toNum(e.weekend_daily) > 0 ? toNum(e.weekend_daily) * 8 : 0);
+      map[sc].total += monthly;
+      map[sc].count++;
+      map[sc].emps.push({ ...e, monthly });
+    });
+    return map;
+  }, [employees]);
+
+  // 간접비 배부 계산
+  const allocated = useMemo(() => {
+    const totalRev = FIELD_SITES.reduce((s, site) => s + toNum(monthRevenue[site.code]), 0);
+    const totalHead = FIELD_SITES.reduce((s, site) => s + (laborBySite[site.code]?.count || 0), 0);
+    const activeSites = FIELD_SITES.filter(s => (laborBySite[s.code]?.count || 0) > 0).length || 1;
+    const result = {};
+    FIELD_SITES.forEach(s => { result[s.code] = { items: [], total: 0 }; });
+
+    monthOverhead.forEach(oh => {
+      if (oh.method === "hq_only") return;
+      FIELD_SITES.forEach(site => {
+        let share = 0;
+        const rev = toNum(monthRevenue[site.code]);
+        const head = laborBySite[site.code]?.count || 0;
+        if (oh.method === "revenue" && totalRev > 0) share = (rev / totalRev) * toNum(oh.amount);
+        else if (oh.method === "headcount" && totalHead > 0) share = (head / totalHead) * toNum(oh.amount);
+        else if (oh.method === "site_count" && head > 0) share = toNum(oh.amount) / activeSites;
+        result[site.code].items.push({ label: oh.label, method: oh.method, amount: Math.round(share) });
+        result[site.code].total += Math.round(share);
+      });
+    });
+    return result;
+  }, [monthRevenue, monthOverhead, laborBySite]);
+
+  // 사업장별 PL
+  const sitePLs = useMemo(() => {
+    return FIELD_SITES.map(site => {
+      const rev = toNum(monthRevenue[site.code]);
+      const labor = laborBySite[site.code]?.total || 0;
+      const overhead = allocated[site.code]?.total || 0;
+      const totalCost = labor + overhead;
+      const profit = rev - totalCost;
+      const margin = rev > 0 ? (profit / rev) * 100 : 0;
+      const count = laborBySite[site.code]?.count || 0;
+      return { ...site, rev, labor, overhead, totalCost, profit, margin, count };
+    });
+  }, [monthRevenue, laborBySite, allocated]);
+
+  const sortedPLs = useMemo(() => {
+    const arr = [...sitePLs].filter(s => s.rev > 0 || s.count > 0);
+    if (sortBy === "profit") arr.sort((a, b) => b.profit - a.profit);
+    else if (sortBy === "margin") arr.sort((a, b) => b.margin - a.margin);
+    else if (sortBy === "revenue") arr.sort((a, b) => b.rev - a.rev);
+    else if (sortBy === "labor") arr.sort((a, b) => b.labor - a.labor);
+    return arr;
+  }, [sitePLs, sortBy]);
+
+  const totals = useMemo(() => {
+    const t = { rev: 0, labor: 0, overhead: 0, profit: 0, count: 0, black: 0, red: 0 };
+    sitePLs.forEach(s => {
+      t.rev += s.rev; t.labor += s.labor; t.overhead += s.overhead; t.profit += s.profit; t.count += s.count;
+      if (s.rev > 0 || s.count > 0) { if (s.profit >= 0) t.black++; else t.red++; }
+    });
+    t.hqOverhead = monthOverhead.filter(o => o.method === "hq_only").reduce((s, o) => s + toNum(o.amount), 0);
+    t.netProfit = t.profit - t.hqOverhead;
+    return t;
+  }, [sitePLs, monthOverhead]);
+
+  const pcardStyle = { background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" };
+  const pSectionTitle = (text) => <div style={{ fontSize: 15, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `2px solid ${C.gold}` }}>{text}</div>;
+
+  const copyPrevMonth = () => {
+    const [y, m] = currentMonth.split("-").map(Number);
+    const pm = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+    if (revenueData[pm]) setRevenueData(p => ({ ...p, [currentMonth]: { ...p[pm] } }));
+    if (overheadData[pm]) setOverheadData(p => ({ ...p, [currentMonth]: overheadData[pm].map(o => ({ ...o })) }));
+  };
+
+  const addOverheadItem = () => {
+    setOverheadData(p => {
+      const arr = [...(p[currentMonth] || []), { key: `custom_${Date.now()}`, label: "새 항목", method: "revenue", amount: 0 }];
+      return { ...p, [currentMonth]: arr };
+    });
+  };
+  const removeOverheadItem = (idx) => {
+    setOverheadData(p => {
+      const arr = [...(p[currentMonth] || [])];
+      arr.splice(idx, 1);
+      return { ...p, [currentMonth]: arr };
+    });
+  };
+
+  // ── 전체 요약 ──
+  const SummaryView = () => (
+    <div>
+      {pSectionTitle("📊 전체 요약 — " + currentMonth)}
+      <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+        <input type="month" value={currentMonth} onChange={e => setCurrentMonth(e.target.value)} style={{ ...inputStyle, width: 160 }} />
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12, marginBottom: 20 }}>
+        {[
+          ["총 매출", pFmt(totals.rev), C.navy],
+          ["총 인건비", pFmt(totals.labor), C.orange],
+          ["간접비 배부", pFmt(totals.overhead), C.gray],
+          ["영업이익", pFmt(totals.profit), totals.profit >= 0 ? C.success : C.error],
+          ["흑자/적자", `${totals.black}곳 / ${totals.red}곳`, C.navy],
+        ].map(([l, v, color]) => (
+          <div key={l} style={{ ...pcardStyle, textAlign: "center", padding: 16 }}>
+            <div style={{ fontSize: 20, fontWeight: 900, color, fontFamily: "'Noto Sans KR', sans-serif" }}>{v}</div>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>{l}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 수익 구조 바 */}
+      {totals.rev > 0 && (() => {
+        const lPct = (totals.labor / totals.rev) * 100;
+        const oPct = (totals.overhead / totals.rev) * 100;
+        const pPctVal = Math.max(0, 100 - lPct - oPct);
+        return (
+          <div style={{ ...pcardStyle, marginBottom: 20, padding: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: C.dark, marginBottom: 8 }}>수익 구조</div>
+            <div style={{ display: "flex", height: 28, borderRadius: 8, overflow: "hidden", fontSize: 10, fontWeight: 700 }}>
+              <div style={{ width: `${lPct}%`, background: C.orange, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center", minWidth: lPct > 5 ? "auto" : 0 }}>
+                {lPct > 8 ? `인건비 ${lPct.toFixed(0)}%` : ""}
+              </div>
+              <div style={{ width: `${oPct}%`, background: C.lightGray, color: C.dark, display: "flex", alignItems: "center", justifyContent: "center", minWidth: oPct > 5 ? "auto" : 0 }}>
+                {oPct > 8 ? `간접비 ${oPct.toFixed(0)}%` : ""}
+              </div>
+              <div style={{ flex: 1, background: pPctVal >= 0 ? C.success : C.error, color: "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                {pPctVal > 8 ? `이익 ${pPctVal.toFixed(0)}%` : ""}
+              </div>
+            </div>
+            {totals.hqOverhead > 0 && (
+              <div style={{ marginTop: 8, fontSize: 11, color: C.gray }}>
+                본사귀속 간접비 차감 후 순이익: <strong style={{ color: totals.netProfit >= 0 ? C.success : C.error }}>{pFmt(totals.netProfit)}</strong>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* PL 테이블 */}
+      <div style={{ ...pcardStyle, overflowX: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>사업장별 손익 (P&L)</div>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["profit", "이익순"], ["margin", "이익률순"], ["revenue", "매출순"], ["labor", "인건비순"]].map(([k, v]) => (
+              <button key={k} onClick={() => setSortBy(k)} style={{ padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer", border: `1px solid ${sortBy === k ? C.navy : C.border}`, background: sortBy === k ? C.navy : "#fff", color: sortBy === k ? "#fff" : C.gray }}>{v}</button>
+            ))}
+          </div>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: C.navy }}>
+              {["#", "코드", "사업장", "인원", "매출", "인건비", "간접비", "이익", "이익률"].map(h => (
+                <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: h === "사업장" ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {sortedPLs.map((s, i) => (
+              <tr key={s.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, color: C.gray }}>{i + 1}</td>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 600, color: C.navy }}>{s.code}</td>
+                <td style={{ padding: "7px 6px", fontWeight: 600 }}>{s.name}</td>
+                <td style={{ padding: "7px 6px", textAlign: "center" }}>{s.count}명</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700 }}>{pFmtFull(s.rev)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", color: C.orange }}>{pFmtFull(s.labor)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", color: C.gray }}>{pFmtFull(s.overhead)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: s.profit >= 0 ? C.success : C.error }}>{pFmtFull(s.profit)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, color: s.margin >= 0 ? C.success : C.error }}>{s.margin.toFixed(1)}%</td>
+              </tr>
+            ))}
+            <tr style={{ background: C.navy }}>
+              {[
+                { v: "", align: "center" }, { v: "", align: "center" }, { v: "합계", align: "left", color: C.gold },
+                { v: `${totals.count}명`, align: "center", color: "#fff" },
+                { v: pFmtFull(totals.rev), align: "right", color: "#fff" },
+                { v: pFmtFull(totals.labor), align: "right", color: C.gold },
+                { v: pFmtFull(totals.overhead), align: "right", color: "#fff" },
+                { v: pFmtFull(totals.profit), align: "right", color: C.gold },
+                { v: totals.rev > 0 ? ((totals.profit / totals.rev) * 100).toFixed(1) + "%" : "—", align: "center", color: C.gold },
+              ].map((cell, ci) => (
+                <td key={ci} style={{ padding: "8px 6px", textAlign: cell.align, fontWeight: 900, color: cell.color || C.gold, fontSize: 12 }}>{cell.v}</td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+
+  // ── 사업장 PL ──
+  const SitePLView = () => {
+    const site = FIELD_SITES.find(s => s.code === selectedSite) || FIELD_SITES[0];
+    const pl = sitePLs.find(s => s.code === selectedSite) || {};
+    const siteLabor = laborBySite[selectedSite] || { total: 0, count: 0, emps: [] };
+    const siteAlloc = allocated[selectedSite] || { items: [], total: 0 };
+
+    return (
+      <div>
+        {pSectionTitle("🏢 사업장 P&L")}
+        <select value={selectedSite} onChange={e => setSelectedSite(e.target.value)} style={{ ...inputStyle, width: 240, marginBottom: 16, fontWeight: 700 }}>
+          {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+        </select>
+
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
+          {[
+            ["매출", pFmt(pl.rev || 0), C.navy, pl.rev ? "100%" : "—"],
+            ["인건비", pFmt(pl.labor || 0), C.orange, pPct(pl.labor || 0, pl.rev || 0)],
+            ["간접비", pFmt(pl.overhead || 0), C.gray, pPct(pl.overhead || 0, pl.rev || 0)],
+            ["영업이익", pFmt(pl.profit || 0), (pl.profit || 0) >= 0 ? C.success : C.error, pPct(pl.profit || 0, pl.rev || 0)],
+          ].map(([l, v, color, sub]) => (
+            <div key={l} style={{ ...pcardStyle, textAlign: "center", padding: 14 }}>
+              <div style={{ fontSize: 18, fontWeight: 900, color }}>{v}</div>
+              <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>{l} ({sub})</div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+          {/* 배치 인원 */}
+          <div style={pcardStyle}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 10 }}>👥 배치 인원 ({siteLabor.count}명)</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead><tr style={{ background: C.navy }}>
+                {["사번", "이름", "근무형태", "월급여"].map(h => <th key={h} style={{ padding: "6px", color: "#fff", fontWeight: 700 }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {siteLabor.emps.map(e => (
+                  <tr key={e.id} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "5px 6px", fontWeight: 600, color: C.navy }}>{e.emp_no}</td>
+                    <td style={{ padding: "5px 6px" }}>{e.name}</td>
+                    <td style={{ padding: "5px 6px", textAlign: "center" }}>{e.work_code || e.work_type_1}</td>
+                    <td style={{ padding: "5px 6px", textAlign: "right", fontWeight: 700 }}>{pFmtFull(e.monthly)}</td>
+                  </tr>
+                ))}
+                {siteLabor.emps.length === 0 && <tr><td colSpan={4} style={{ padding: 16, textAlign: "center", color: C.gray }}>배치 인원 없음</td></tr>}
+              </tbody>
+            </table>
+          </div>
+
+          {/* 간접비 상세 */}
+          <div style={pcardStyle}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 10 }}>📋 간접비 배부 상세</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead><tr style={{ background: C.navy }}>
+                {["항목", "배부방식", "배부금액"].map(h => <th key={h} style={{ padding: "6px", color: "#fff", fontWeight: 700 }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {siteAlloc.items.filter(i => i.amount > 0).map((item, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "5px 6px" }}>{item.label}</td>
+                    <td style={{ padding: "5px 6px", textAlign: "center" }}>
+                      <span style={{ padding: "2px 6px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: item.method === "revenue" ? "#EFF6FF" : item.method === "headcount" ? "#FFF3E0" : "#F5F5F5", color: item.method === "revenue" ? C.navy : item.method === "headcount" ? C.orange : C.gray }}>{ALLOC_METHODS.find(m => m.key === item.method)?.label}</span>
+                    </td>
+                    <td style={{ padding: "5px 6px", textAlign: "right", fontWeight: 700 }}>{pFmtFull(item.amount)}</td>
+                  </tr>
+                ))}
+                <tr style={{ background: C.navy }}>
+                  <td colSpan={2} style={{ padding: "7px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+                  <td style={{ padding: "7px 6px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(siteAlloc.total)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── 비용 입력 ──
+  const CostInputView = () => {
+    const [costTab, setCostTab] = useState("revenue");
+    return (
+      <div>
+        {pSectionTitle("✏️ 비용 입력 — " + currentMonth)}
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+          <input type="month" value={currentMonth} onChange={e => setCurrentMonth(e.target.value)} style={{ ...inputStyle, width: 160 }} />
+          <button onClick={copyPrevMonth} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>📋 이전달 복사</button>
+          {[["revenue", "💰 사업장 매출"], ["overhead", "🏢 간접비"]].map(([k, v]) => (
+            <button key={k} onClick={() => setCostTab(k)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${costTab === k ? C.navy : C.border}`, background: costTab === k ? C.navy : "#fff", color: costTab === k ? "#fff" : C.gray }}>{v}</button>
+          ))}
+        </div>
+
+        {costTab === "revenue" ? (
+          <div style={{ ...pcardStyle, overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead><tr style={{ background: C.navy }}>
+                {["코드", "사업장", "매출 (월)", "인원", "인건비", "이익률"].map(h => <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {FIELD_SITES.map((site, i) => {
+                  const pl = sitePLs.find(s => s.code === site.code) || {};
+                  return (
+                    <tr key={site.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: "6px", textAlign: "center", fontWeight: 600, color: C.navy }}>{site.code}</td>
+                      <td style={{ padding: "6px", fontWeight: 600 }}>{site.name}</td>
+                      <td style={{ padding: "4px 6px", width: 160 }}>
+                        <NumInput value={toNum(monthRevenue[site.code])} onChange={v => setRev(site.code, v)}
+                          style={{ ...inputStyle, textAlign: "right", padding: "6px 8px", fontSize: 12 }} />
+                      </td>
+                      <td style={{ padding: "6px", textAlign: "center", color: C.gray }}>{pl.count || 0}명</td>
+                      <td style={{ padding: "6px", textAlign: "right", color: C.orange, fontWeight: 700 }}>{pFmt(pl.labor || 0)}</td>
+                      <td style={{ padding: "6px", textAlign: "center", fontWeight: 700, color: (pl.margin || 0) >= 0 ? C.success : C.error }}>{pl.rev > 0 ? (pl.margin || 0).toFixed(1) + "%" : "—"}</td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: C.navy }}>
+                  <td colSpan={2} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(totals.rev)}</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", textAlign: "center" }}>{totals.count}명</td>
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmt(totals.labor)}</td>
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{totals.rev > 0 ? ((totals.profit / totals.rev) * 100).toFixed(1) + "%" : "—"}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div style={{ ...pcardStyle, overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead><tr style={{ background: C.navy }}>
+                {["항목", "금액 (월)", "배부방식", ""].map(h => <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>)}
+              </tr></thead>
+              <tbody>
+                {monthOverhead.map((oh, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "6px", fontWeight: 600 }}>
+                      {editLabel === i ? (
+                        <input value={oh.label} onChange={e => setOH(i, "label", e.target.value)} onBlur={() => setEditLabel(null)} autoFocus
+                          style={{ ...inputStyle, padding: "4px 8px", fontSize: 12, width: 140 }} />
+                      ) : (
+                        <span onClick={() => setEditLabel(i)} style={{ cursor: "pointer" }}>{oh.label}</span>
+                      )}
+                    </td>
+                    <td style={{ padding: "4px 6px", width: 160 }}>
+                      <NumInput value={oh.amount} onChange={v => setOH(i, "amount", v)}
+                        style={{ ...inputStyle, textAlign: "right", padding: "6px 8px", fontSize: 12 }} />
+                    </td>
+                    <td style={{ padding: "6px", textAlign: "center" }}>
+                      <select value={oh.method} onChange={e => setOH(i, "method", e.target.value)}
+                        style={{ ...inputStyle, width: "auto", padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
+                        {ALLOC_METHODS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                      </select>
+                    </td>
+                    <td style={{ padding: "6px", textAlign: "center" }}>
+                      <button onClick={() => removeOverheadItem(i)} style={{ background: "none", border: "none", cursor: "pointer", color: C.error, fontSize: 14 }}>✕</button>
+                    </td>
+                  </tr>
+                ))}
+                <tr style={{ background: C.navy }}>
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(monthOverhead.reduce((s, o) => s + toNum(o.amount), 0))}</td>
+                  <td colSpan={2} />
+                </tr>
+              </tbody>
+            </table>
+            <button onClick={addOverheadItem} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: `1px dashed ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>+ 항목 추가</button>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // ── 비교 분석 ──
+  const ComparisonView = () => {
+    const maxRev = Math.max(...sortedPLs.map(s => s.rev), 1);
+    return (
+      <div>
+        {pSectionTitle("📈 비교 분석")}
+        <div style={{ display: "flex", gap: 4, marginBottom: 16 }}>
+          {[["profit", "이익순"], ["margin", "이익률순"], ["revenue", "매출순"], ["labor", "인건비순"]].map(([k, v]) => (
+            <button key={k} onClick={() => setSortBy(k)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${sortBy === k ? C.navy : C.border}`, background: sortBy === k ? C.navy : "#fff", color: sortBy === k ? "#fff" : C.gray }}>{v}</button>
+          ))}
+        </div>
+
+        {/* 매출 vs 이익 바차트 */}
+        <div style={{ ...pcardStyle, marginBottom: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 12 }}>매출 vs 이익</div>
+          {sortedPLs.map(s => (
+            <div key={s.code} style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.dark, marginBottom: 4 }}>{s.code} {s.name}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
+                <div style={{ width: 40, fontSize: 10, color: C.gray, textAlign: "right" }}>매출</div>
+                <div style={{ flex: 1, background: C.bg, borderRadius: 4, height: 16, overflow: "hidden" }}>
+                  <div style={{ width: `${(s.rev / maxRev) * 100}%`, background: C.navy, height: "100%", borderRadius: 4, minWidth: s.rev > 0 ? 4 : 0 }} />
+                </div>
+                <div style={{ width: 70, fontSize: 10, fontWeight: 700, textAlign: "right" }}>{pFmt(s.rev)}</div>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 40, fontSize: 10, color: C.gray, textAlign: "right" }}>이익</div>
+                <div style={{ flex: 1, background: C.bg, borderRadius: 4, height: 16, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.max(0, (s.profit / maxRev) * 100)}%`, background: s.profit >= 0 ? C.success : C.error, height: "100%", borderRadius: 4, minWidth: Math.abs(s.profit) > 0 ? 4 : 0 }} />
+                </div>
+                <div style={{ width: 70, fontSize: 10, fontWeight: 700, textAlign: "right", color: s.profit >= 0 ? C.success : C.error }}>{pFmt(s.profit)}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* 인건비 비중 도넛 */}
+        <div style={{ ...pcardStyle }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 12 }}>인건비 비중 & 이익률</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: 12 }}>
+            {sortedPLs.map(s => {
+              const lRatio = s.rev > 0 ? (s.labor / s.rev) * 100 : 0;
+              const oRatio = s.rev > 0 ? (s.overhead / s.rev) * 100 : 0;
+              const pRatio = Math.max(0, 100 - lRatio - oRatio);
+              return (
+                <div key={s.code} style={{ textAlign: "center", padding: 10, background: C.bg, borderRadius: 10 }}>
+                  <div style={{ width: 60, height: 60, borderRadius: "50%", margin: "0 auto 8px", background: `conic-gradient(${C.orange} 0% ${lRatio}%, ${C.lightGray} ${lRatio}% ${lRatio + oRatio}%, ${s.profit >= 0 ? C.success : C.error} ${lRatio + oRatio}% 100%)` }}>
+                    <div style={{ width: 36, height: 36, borderRadius: "50%", background: "#fff", position: "relative", top: 12, left: 12, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 9, fontWeight: 900, color: s.profit >= 0 ? C.success : C.error }}>{s.margin.toFixed(0)}%</div>
+                  </div>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: C.dark }}>{s.code}</div>
+                  <div style={{ fontSize: 9, color: C.gray }}>{s.name}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ── 배부 설정 ──
+  const AllocSettingsView = () => (
+    <div>
+      {pSectionTitle("⚙️ 간접비 배부 설정")}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 20 }}>
+        {ALLOC_METHODS.map(m => (
+          <div key={m.key} style={{ ...pcardStyle, padding: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>{m.label}</div>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>{m.desc}</div>
+          </div>
+        ))}
+      </div>
+      <div style={pcardStyle}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 12 }}>현재 배부방식 설정</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead><tr style={{ background: C.navy }}>
+            {["항목", "현재 배부방식", "변경"].map(h => <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700 }}>{h}</th>)}
+          </tr></thead>
+          <tbody>
+            {monthOverhead.map((oh, i) => (
+              <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: "6px", fontWeight: 600 }}>{oh.label}</td>
+                <td style={{ padding: "6px", textAlign: "center" }}>
+                  <span style={{ padding: "3px 8px", borderRadius: 4, fontSize: 10, fontWeight: 700, background: oh.method === "revenue" ? "#EFF6FF" : oh.method === "headcount" ? "#FFF3E0" : oh.method === "hq_only" ? "#FFEEF0" : "#F5F5F5", color: oh.method === "revenue" ? C.navy : oh.method === "headcount" ? C.orange : oh.method === "hq_only" ? C.error : C.gray }}>{ALLOC_METHODS.find(m => m.key === oh.method)?.label}</span>
+                </td>
+                <td style={{ padding: "4px 6px", textAlign: "center" }}>
+                  <select value={oh.method} onChange={e => setOH(i, "method", e.target.value)}
+                    style={{ ...inputStyle, width: "auto", padding: "4px 8px", fontSize: 11 }}>
+                    {ALLOC_METHODS.map(m => <option key={m.key} value={m.key}>{m.label}</option>)}
+                  </select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 사업장 마스터 */}
+      <div style={{ ...pcardStyle, marginTop: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 12 }}>🏢 사업장 마스터 ({SITES.length}개)</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12 }}>
+          {SITES.map(s => (
+            <div key={s.code} style={{ padding: "6px 10px", background: s.code === "V000" ? "#FFF8E1" : C.bg, borderRadius: 6 }}>
+              <span style={{ fontWeight: 700, color: C.navy }}>{s.code}</span> {s.name} {s.code === "V000" && <span style={{ fontSize: 9, color: C.orange, fontWeight: 700 }}>본사</span>}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  // ── 서브페이지 라우팅 ──
+  if (subPage === "site_pl") return <SitePLView />;
+  if (subPage === "cost_input") return <CostInputView />;
+  if (subPage === "comparison") return <ComparisonView />;
+  if (subPage === "alloc_settings") return <AllocSettingsView />;
+  return <SummaryView />;
+}
+
+// ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
   const { profile, signOut, can } = useAuth();
   const [page, setPage] = useState("dashboard");
@@ -2837,15 +3380,23 @@ function MainApp() {
   const goEditContract = (c) => { setContractEdit(c); setContractEmp(null); setPage("contract"); };
   const goNewContract = () => { setContractEdit(null); setContractEmp(null); setPage("contract"); };
 
-  const navItems = [
+  const hrNavItems = [
     { key: "dashboard", icon: "📊", label: "대시보드" },
     { key: "employees", icon: "👥", label: "직원대장" },
     { key: "contract", icon: "📝", label: "계약서" },
     { key: "history", icon: "📋", label: "계약 이력" },
     { key: "resignation", icon: "📄", label: "사직서" },
     { key: "certificate", icon: "📑", label: "재직증명서" },
-    ...(can("settings") ? [{ key: "settings", icon: "⚙️", label: "설정" }] : []),
+    ...(can("settings") ? [{ key: "settings", icon: "⚙️", label: "계약서 조항변경" }] : []),
     ...(can("invite") ? [{ key: "invite", icon: "🔐", label: "관리자 초대" }] : []),
+  ];
+
+  const profitNavItems = [
+    { key: "profit_summary", icon: "📊", label: "전체 요약" },
+    { key: "profit_site_pl", icon: "🏢", label: "사업장 PL" },
+    { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
+    { key: "profit_comparison", icon: "📈", label: "비교 분석" },
+    { key: "profit_alloc", icon: "⚙️", label: "배부 설정" },
   ];
 
   return (
@@ -2857,14 +3408,34 @@ function MainApp() {
             <div style={{ width: 36, height: 36, borderRadius: 10, background: C.gold, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: C.navy }}>MP</div>
             <div>
               <div style={{ color: C.white, fontSize: 14, fontWeight: 900 }}>ME.PARK</div>
-              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>근로계약서 관리</div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>계약관리 & 수익분석</div>
             </div>
           </div>
         </div>
 
-        <nav style={{ flex: 1, padding: "12px 8px" }}>
-          {navItems.map(item => (
+        <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" }}>
+          {/* HR & 계약관리 영역 */}
+          <div style={{ padding: "6px 12px 4px", fontSize: 10, fontWeight: 800, color: C.gold, letterSpacing: 1, marginBottom: 4 }}>HR & 계약관리</div>
+          {hrNavItems.map(item => (
             <button key={item.key} onClick={() => { setPage(item.key); if (item.key !== "contract") { setContractEmp(null); setContractEdit(null); } }}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
+                borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 4, fontSize: 13, fontWeight: 700,
+                background: page === item.key ? "rgba(255,255,255,0.15)" : "transparent",
+                color: page === item.key ? C.white : "rgba(255,255,255,0.55)",
+                fontFamily: FONT,
+              }}>
+              <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
+            </button>
+          ))}
+
+          {/* 구분선 */}
+          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
+
+          {/* 수익성 분석 영역 */}
+          <div style={{ padding: "6px 12px 4px", fontSize: 10, fontWeight: 800, color: C.gold, letterSpacing: 1, marginBottom: 4 }}>수익성 분석</div>
+          {profitNavItems.map(item => (
+            <button key={item.key} onClick={() => setPage(item.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
                 borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 4, fontSize: 13, fontWeight: 700,
@@ -2900,6 +3471,11 @@ function MainApp() {
         {page === "certificate" && <Certificate employees={employees} />}
         {page === "settings" && <Settings />}
         {page === "invite" && <AdminInvitePanel />}
+        {page === "profit_summary" && <ProfitabilityPage employees={employees} subPage="summary" />}
+        {page === "profit_site_pl" && <ProfitabilityPage employees={employees} subPage="site_pl" />}
+        {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" />}
+        {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" />}
+        {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" />}
       </main>
     </div>
   );
