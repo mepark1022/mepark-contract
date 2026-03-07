@@ -67,6 +67,47 @@ const getSiteName = (code) => SITES.find(s => s.code === code)?.name || "";
 const getWorkLabel = (code) => WORK_CODES.find(w => w.code === code)?.label || code;
 const getWorkCat = (code) => WORK_CODES.find(w => w.code === code)?.cat || "weekday";
 
+// ── 사번 자동생성 ──
+function generateEmpNo(employees, { siteCode, workCode, hireDate }) {
+  const isAlba = workCode === "W";
+  const isHQ = siteCode === "V000";
+  const year2 = hireDate ? String(new Date(hireDate).getFullYear()).slice(2) : String(new Date().getFullYear()).slice(2);
+
+  if (isAlba) {
+    // MPA + 순번(1~100)
+    const existing = employees
+      .map(e => e.emp_no)
+      .filter(no => /^MPA\d+$/.test(no))
+      .map(no => parseInt(no.replace("MPA", ""), 10))
+      .filter(n => !isNaN(n));
+    const maxNum = existing.length > 0 ? Math.max(...existing) : 0;
+    return `MPA${maxNum + 1}`;
+  }
+
+  // MP + 연도2자리 + 순번
+  const prefix = `MP${year2}`;
+  const allNums = employees
+    .map(e => e.emp_no)
+    .filter(no => no.startsWith(prefix) && /^MP\d{2}\d{3,}$/.test(no))
+    .map(no => parseInt(no.slice(4), 10))
+    .filter(n => !isNaN(n));
+
+  if (isHQ) {
+    // 001~100 범위
+    const hqNums = allNums.filter(n => n >= 1 && n <= 100);
+    const maxNum = hqNums.length > 0 ? Math.max(...hqNums) : 0;
+    const next = maxNum + 1;
+    if (next > 100) return `${prefix}${String(next).padStart(3, "0")}`;
+    return `${prefix}${String(next).padStart(3, "0")}`;
+  } else {
+    // 101~999 범위
+    const fieldNums = allNums.filter(n => n >= 101 && n <= 999);
+    const maxNum = fieldNums.length > 0 ? Math.max(...fieldNums) : 100;
+    const next = maxNum + 1;
+    return `${prefix}${String(next).padStart(3, "0")}`;
+  }
+}
+
 // ── 3. 스타일 ─────────────────────────────────────────
 const inputStyle = {
   width: "100%", padding: "8px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8,
@@ -574,6 +615,22 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   });
 
   const saveEmp = async (emp) => {
+    // 사번 비어있으면 자동생성
+    if (!emp.emp_no || emp.emp_no.trim() === "") {
+      emp.emp_no = generateEmpNo(employees, { siteCode: emp.site_code_1, workCode: emp.work_code, hireDate: emp.hire_date });
+    }
+    // 사번 중복 체크 (신규 등록 시)
+    if (!emp.id) {
+      const dup = employees.find(e => e.emp_no === emp.emp_no);
+      if (dup) {
+        alert(`사번 "${emp.emp_no}"이 이미 존재합니다. (${dup.name})\n자동 버튼을 눌러 새 사번을 생성하세요.`);
+        return;
+      }
+    }
+    if (!emp.name || emp.name.trim() === "") {
+      alert("이름을 입력해주세요.");
+      return;
+    }
     setSaving(true);
     await saveEmployee(emp);
     setSaving(false);
@@ -591,7 +648,12 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
         {can("edit") && (
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => setShowImport(true)} style={{ ...btnOutline, display: "flex", alignItems: "center", gap: 4 }}>📤 엑셀 Import</button>
-            <button onClick={() => { setEditEmp({ ...blankEmp }); setShowForm(true); }} style={btnPrimary}>+ 직원등록</button>
+            <button onClick={() => {
+              const newEmp = { ...blankEmp };
+              newEmp.emp_no = generateEmpNo(employees, { siteCode: newEmp.site_code_1, workCode: newEmp.work_code, hireDate: newEmp.hire_date });
+              setEditEmp(newEmp);
+              setShowForm(true);
+            }} style={btnPrimary}>+ 직원등록</button>
           </div>
         )}
       </div>
@@ -680,8 +742,35 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
             onClick={e => e.stopPropagation()}>
             <h3 style={{ fontSize: 16, fontWeight: 900, color: C.navy, margin: "0 0 20px" }}>{editEmp.id ? "✏️ 직원 수정" : "➕ 직원 등록"}</h3>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+              {/* 사번 (자동생성 포함) */}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>사번</label>
+                <div style={{ display: "flex", gap: 4 }}>
+                  <input value={editEmp.emp_no || ""} onChange={e => setEditEmp(p => ({ ...p, emp_no: e.target.value }))}
+                    placeholder="자동생성 또는 직접입력" style={{ ...inputStyle, flex: 1 }} />
+                  <button onClick={() => {
+                    const auto = generateEmpNo(employees, {
+                      siteCode: editEmp.site_code_1,
+                      workCode: editEmp.work_code,
+                      hireDate: editEmp.hire_date,
+                    });
+                    setEditEmp(p => ({ ...p, emp_no: auto }));
+                  }} title="사번 자동생성" style={{
+                    padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.navy}`,
+                    background: C.navy, color: C.gold, fontSize: 11, fontWeight: 800,
+                    cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT,
+                  }}>⚡ 자동</button>
+                </div>
+                {editEmp.emp_no && (
+                  <div style={{ fontSize: 10, marginTop: 3, color: C.gray }}>
+                    {/^MPA\d+$/.test(editEmp.emp_no) ? "알바 사번" :
+                     /^MP\d{5,}$/.test(editEmp.emp_no) ?
+                       (parseInt(editEmp.emp_no.slice(4)) <= 100 ? "운영팀(본사) 사번" : "현장 근무자 사번") : "사번"}
+                  </div>
+                )}
+              </div>
               {[
-                ["사번", "emp_no", "text"], ["이름", "name", "text"], ["연락처", "phone", "text"],
+                ["이름", "name", "text"], ["연락처", "phone", "text"],
               ].map(([label, key, type]) => (
                 <div key={key}>
                   <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>{label}</label>
