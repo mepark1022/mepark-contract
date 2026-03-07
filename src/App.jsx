@@ -463,7 +463,192 @@ const DEFAULT_ARTICLES_PARTTIME = {
   8: { title: "계약서 교부", text: "본 계약서는 2부를 작성하여 당사자 각각 1부씩 보관한다." },
 };
 
-// ── 10. 대시보드 ──────────────────────────────────────
+// ── 10. 메인 대시보드 (통합 홈) ──────────────────────────
+function MainDashboard({ employees, onNavigate }) {
+  const active = employees.filter(e => e.status === "재직");
+  const weekday = active.filter(e => ["weekday"].includes(getWorkCat(e.work_code)));
+  const weekend = active.filter(e => ["weekend"].includes(getWorkCat(e.work_code)));
+  const mixed = active.filter(e => getWorkCat(e.work_code) === "mixed");
+  const parttime = active.filter(e => getWorkCat(e.work_code) === "parttime");
+  const activeSites = [...new Set(active.map(e => e.site_code_1))].filter(Boolean).filter(c => c !== "V000");
+  const totalSalary = active.reduce((s, e) => s + toNum(e.base_salary) + toNum(e.meal_allow) + toNum(e.leader_allow) + toNum(e.childcare_allow) + toNum(e.car_allow) + (toNum(e.weekend_daily) > 0 ? toNum(e.weekend_daily) * 8 : 0), 0);
+
+  // 수습 알림
+  const probAlerts = active.filter(e => {
+    if (!e.probation_months || !e.hire_date) return false;
+    const end = new Date(e.hire_date);
+    end.setMonth(end.getMonth() + e.probation_months);
+    const d = dDay(end.toISOString().slice(0, 10));
+    return d !== null && d >= -7 && d <= 14;
+  });
+
+  // 사업장별 인원 집계
+  const siteData = activeSites.sort().map(sc => {
+    const siteEmps = active.filter(e => e.site_code_1 === sc);
+    const labor = siteEmps.reduce((s, e) => s + toNum(e.base_salary) + toNum(e.meal_allow) + toNum(e.leader_allow) + toNum(e.childcare_allow) + toNum(e.car_allow) + (toNum(e.weekend_daily) > 0 ? toNum(e.weekend_daily) * 8 : 0), 0);
+    return { code: sc, name: getSiteName(sc), count: siteEmps.length, labor };
+  });
+
+  const kpiCard = (icon, value, label, sub, color, onClick) => (
+    <div onClick={onClick} style={{
+      background: C.white, borderRadius: 14, padding: "20px 18px", border: `1px solid ${C.border}`,
+      flex: "1 1 170px", minWidth: 170, cursor: onClick ? "pointer" : "default",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.04)", transition: "transform 0.15s, box-shadow 0.15s",
+    }}
+    onMouseEnter={e => { if (onClick) { e.currentTarget.style.transform = "translateY(-2px)"; e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"; } }}
+    onMouseLeave={e => { e.currentTarget.style.transform = "none"; e.currentTarget.style.boxShadow = "0 2px 8px rgba(0,0,0,0.04)"; }}
+    >
+      <div style={{ fontSize: 28, marginBottom: 8 }}>{icon}</div>
+      <div style={{ fontSize: 30, fontWeight: 900, color: color || C.navy, fontFamily: FONT, lineHeight: 1.1 }}>{value}</div>
+      <div style={{ fontSize: 12, color: C.gray, fontWeight: 600, marginTop: 6 }}>{label}</div>
+      {sub && <div style={{ fontSize: 11, color: C.gray, marginTop: 3 }}>{sub}</div>}
+    </div>
+  );
+
+  return (
+    <div>
+      {/* 헤더 */}
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 900, color: C.dark, margin: 0 }}>ME.PARK 종합 대시보드</h2>
+        <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>HR·계약관리 + 수익성분석 통합 현황</div>
+      </div>
+
+      {/* KPI 카드 — 1열 5개 */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 24 }}>
+        {kpiCard("👥", `${active.length}명`, "총 재직 인원", `퇴직 ${employees.length - active.length}명 · 전체 ${employees.length}명`, C.navy, () => onNavigate("employees"))}
+        {kpiCard("📅", `${weekday.length} / ${weekend.length} / ${mixed.length}`, "평일 / 주말 / 복합", `알바 ${parttime.length}명`, C.navy)}
+        {kpiCard("💰", `${fmt(totalSalary)}원`, "월 총 인건비", "고정급 + 주말일당 포함", C.orange)}
+        {kpiCard("🏢", `${activeSites.length}곳`, "운영 사업장", `전체 ${SITES.length - 1}개 중`, C.navy, () => onNavigate("profit_summary"))}
+        {kpiCard("⏰", `${probAlerts.length}명`, "수습 종료 임박", probAlerts.length > 0 ? "±7일 이내" : "해당 없음", probAlerts.length > 0 ? C.orange : C.success, () => onNavigate("dashboard"))}
+      </div>
+
+      {/* 2열 레이아웃: 좌 HR 요약 / 우 수익성 요약 */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
+
+        {/* 좌: 근무유형 분포 */}
+        <div style={{ ...cardStyle }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>👥 근무유형 분포</h3>
+            <button onClick={() => onNavigate("dashboard")} style={{ fontSize: 11, color: C.navy, fontWeight: 700, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>상세 →</button>
+          </div>
+          {[
+            { label: "평일", count: weekday.length, color: C.navy },
+            { label: "주말", count: weekend.length, color: C.orange },
+            { label: "복합", count: mixed.length, color: C.skyBlue },
+            { label: "알바", count: parttime.length, color: C.gray },
+          ].map(b => (
+            <div key={b.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, width: 36, color: C.dark }}>{b.label}</span>
+              <div style={{ flex: 1, height: 24, background: C.lightGray, borderRadius: 6, overflow: "hidden" }}>
+                <div style={{ width: `${active.length ? (b.count / active.length) * 100 : 0}%`, height: "100%", background: b.color, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 6, transition: "width 0.5s" }}>
+                  {b.count > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff" }}>{b.count}</span>}
+                </div>
+              </div>
+              <span style={{ fontSize: 12, fontWeight: 800, color: b.color, width: 36, textAlign: "right" }}>{active.length ? ((b.count / active.length) * 100).toFixed(0) : 0}%</span>
+            </div>
+          ))}
+        </div>
+
+        {/* 우: 사업장 인건비 TOP 5 */}
+        <div style={{ ...cardStyle }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>🏢 사업장 인건비 TOP {Math.min(5, siteData.length)}</h3>
+            <button onClick={() => onNavigate("profit_summary")} style={{ fontSize: 11, color: C.navy, fontWeight: 700, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>수익분석 →</button>
+          </div>
+          {siteData.sort((a, b) => b.labor - a.labor).slice(0, 5).map((s, i) => {
+            const maxLabor = siteData[0]?.labor || 1;
+            return (
+              <div key={s.code} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 800, color: C.navy, width: 20, textAlign: "center" }}>{i + 1}</span>
+                <span style={{ fontSize: 11, fontWeight: 600, width: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                <div style={{ flex: 1, height: 20, background: C.lightGray, borderRadius: 5, overflow: "hidden" }}>
+                  <div style={{ width: `${(s.labor / maxLabor) * 100}%`, height: "100%", background: C.orange, borderRadius: 5, transition: "width 0.5s" }} />
+                </div>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.orange, width: 65, textAlign: "right" }}>{fmt(s.labor)}</span>
+                <span style={{ fontSize: 10, color: C.gray, width: 28, textAlign: "right" }}>{s.count}명</span>
+              </div>
+            );
+          })}
+          {siteData.length === 0 && <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: 20 }}>배치 인원 없음</div>}
+        </div>
+      </div>
+
+      {/* 사업장별 인원 전체 테이블 */}
+      <div style={cardStyle}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>📋 사업장별 인원·인건비 현황</h3>
+          <div style={{ fontSize: 11, color: C.gray }}>재직자 기준 · 본사(V000) 제외</div>
+        </div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ background: C.navy }}>
+              {["코드", "사업장", "평일", "주말", "복합", "알바", "합계", "월 인건비"].map(h => (
+                <th key={h} style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: h === "사업장" ? "left" : "center" }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {siteData.map((s, i) => {
+              const siteEmps = active.filter(e => e.site_code_1 === s.code);
+              const wd = siteEmps.filter(e => getWorkCat(e.work_code) === "weekday").length;
+              const we = siteEmps.filter(e => getWorkCat(e.work_code) === "weekend").length;
+              const mx = siteEmps.filter(e => getWorkCat(e.work_code) === "mixed").length;
+              const pt = siteEmps.filter(e => getWorkCat(e.work_code) === "parttime").length;
+              return (
+                <tr key={s.code} style={{ background: i % 2 ? C.bg : C.white, borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, color: C.navy }}>{s.code}</td>
+                  <td style={{ padding: "7px 6px", fontWeight: 600 }}>{s.name}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{wd || "−"}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{we || "−"}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{mx || "−"}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{pt || "−"}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 800 }}>{s.count}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: C.orange }}>{fmt(s.labor)}</td>
+                </tr>
+              );
+            })}
+            <tr style={{ background: C.navy }}>
+              <td colSpan={2} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{weekday.length}</td>
+              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{weekend.length}</td>
+              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{mixed.length}</td>
+              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{parttime.length}</td>
+              <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>{active.filter(e => e.site_code_1 !== "V000").length}</td>
+              <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{fmt(totalSalary)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* 수습 알림 */}
+      {probAlerts.length > 0 && (
+        <div style={{ ...cardStyle, borderLeft: `4px solid ${C.orange}`, marginTop: 16 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.orange, margin: "0 0 12px" }}>⏰ 수습 종료 임박</h3>
+          {probAlerts.map(e => {
+            const end = new Date(e.hire_date);
+            end.setMonth(end.getMonth() + e.probation_months);
+            const dd = dDay(end.toISOString().slice(0, 10));
+            return (
+              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${C.lightGray}` }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{e.emp_no}</span>
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>{e.name}</span>
+                <span style={{ fontSize: 11, color: C.gray }}>{getSiteName(e.site_code_1)}</span>
+                <span style={{ fontSize: 11, color: C.gray }}>종료: {dateFmt(end.toISOString().slice(0, 10))}</span>
+                <span style={{
+                  fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 10,
+                  background: dd <= 0 ? "#FEE2E2" : "#FFF3E0",
+                  color: dd <= 0 ? C.error : C.orange,
+                }}>D{dd <= 0 ? dd : "−" + dd}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── 10-1. HR 대시보드 ──────────────────────────────────
 function Dashboard({ employees }) {
   const active = employees.filter(e => e.status === "재직");
   const weekday = active.filter(e => ["weekday"].includes(getWorkCat(e.work_code)));
@@ -3343,7 +3528,7 @@ function ProfitabilityPage({ employees, subPage }) {
 // ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
   const { profile, signOut, can } = useAuth();
-  const [page, setPage] = useState("dashboard");
+  const [page, setPage] = useState("main_dashboard");
   const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
   const [contractEdit, setContractEdit] = useState(null);
@@ -3381,7 +3566,7 @@ function MainApp() {
   const goNewContract = () => { setContractEdit(null); setContractEmp(null); setPage("contract"); };
 
   const hrNavItems = [
-    { key: "dashboard", icon: "📊", label: "대시보드" },
+    { key: "dashboard", icon: "📊", label: "HR 대시보드" },
     { key: "employees", icon: "👥", label: "직원대장" },
     { key: "contract", icon: "📝", label: "계약서" },
     { key: "history", icon: "📋", label: "계약 이력" },
@@ -3414,6 +3599,20 @@ function MainApp() {
         </div>
 
         <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" }}>
+          {/* 메인 대시보드 — 최상위 */}
+          <button onClick={() => setPage("main_dashboard")}
+            style={{
+              display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 12px",
+              borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 6, fontSize: 13, fontWeight: 800,
+              background: page === "main_dashboard" ? C.gold : "transparent",
+              color: page === "main_dashboard" ? C.navy : "rgba(255,255,255,0.7)",
+              fontFamily: FONT,
+            }}>
+            <span style={{ fontSize: 16 }}>🏠</span> 메인 대시보드
+          </button>
+
+          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "6px 8px 10px" }} />
+
           {/* HR & 계약관리 영역 */}
           <div style={{ padding: "6px 12px 4px", fontSize: 10, fontWeight: 800, color: C.gold, letterSpacing: 1, marginBottom: 4 }}>HR & 계약관리</div>
           {hrNavItems.map(item => (
@@ -3463,6 +3662,7 @@ function MainApp() {
 
       {/* 메인 콘텐츠 */}
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
+        {page === "main_dashboard" && <MainDashboard employees={employees} onNavigate={setPage} />}
         {page === "dashboard" && <Dashboard employees={employees} />}
         {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onReload={loadEmployees} />}
         {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={() => {}} />}
