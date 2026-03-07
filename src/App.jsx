@@ -1,10 +1,10 @@
-import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment } from "react";
 import { supabase } from "./supabaseClient";
 import * as XLSX from "xlsx";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
-   (주)미스터팍 근로계약서 관리 시스템 v4.0
+   (주)미스터팍 근로계약서 관리 시스템 v5.0
    Phase 2: 엑셀 Import + Word 출력 + 계약 이력
    ═══════════════════════════════════════════════════════ */
 
@@ -1073,9 +1073,11 @@ function ExcelImportModal({ onClose, onImport, existingEmpNos }) {
 }
 
 // ── 12. 계약서 작성기 ─────────────────────────────────
-function ContractWriter({ employees, initialEmp }) {
-  const { can } = useAuth();
+function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
+  const { can, user } = useAuth();
   const [selEmpId, setSelEmpId] = useState(initialEmp?.id || "");
+  const [contractId, setContractId] = useState(null);
+  const [saveMsg, setSaveMsg] = useState("");
   const [contract, setContract] = useState({
     type: "weekday", start_date: today(), end_date: "", work_site: "", work_start: "09:00",
     work_end: "18:00", break_min: 60, work_days: "월~금", total_salary: 0, base_salary: 0,
@@ -1087,8 +1089,45 @@ function ContractWriter({ employees, initialEmp }) {
 
   const activeEmps = employees.filter(e => e.status === "재직");
 
+  // 기존 계약서 불러오기
   useEffect(() => {
-    if (initialEmp) selectEmployee(initialEmp.id);
+    if (initialContract) {
+      setContractId(initialContract.id);
+      setSelEmpId(initialContract.employee_id || "");
+      const isWeekend = initialContract.contract_type === "weekend";
+      setContract({
+        type: initialContract.contract_type || "weekday",
+        start_date: initialContract.start_date || today(),
+        end_date: initialContract.end_date || "",
+        work_site: initialContract.work_site || "",
+        work_start: initialContract.work_start || "09:00",
+        work_end: initialContract.work_end || "18:00",
+        break_min: initialContract.break_min || 60,
+        work_days: initialContract.work_days || "월~금",
+        total_salary: initialContract.total_salary || 0,
+        base_salary: initialContract.base_salary || 0,
+        weekend_daily: initialContract.weekend_daily || 0,
+        meal_allow: initialContract.meal_allow || 0,
+        leader_allow: initialContract.leader_allow || 0,
+        pay_day: initialContract.pay_day || 10,
+        special_terms: initialContract.special_terms || "",
+        probation: initialContract.probation || false,
+        probation_months: initialContract.probation_months || 4,
+        basic_hours: Number(initialContract.basic_hours) || 173.8,
+        annual_hours: Number(initialContract.annual_hours) || 8.75,
+        overtime_hours: Number(initialContract.overtime_hours) || 0,
+        holiday_hours: Number(initialContract.holiday_hours) || 21,
+      });
+      if (initialContract.articles) {
+        setArticles(initialContract.articles);
+      } else {
+        setArticles(isWeekend ? { ...DEFAULT_ARTICLES_WEEKEND } : { ...DEFAULT_ARTICLES_WEEKDAY });
+      }
+    }
+  }, [initialContract]);
+
+  useEffect(() => {
+    if (initialEmp && !initialContract) selectEmployee(initialEmp.id);
   }, [initialEmp]);
 
   const selectEmployee = (empId) => {
@@ -1359,11 +1398,70 @@ function ContractWriter({ employees, initialEmp }) {
     URL.revokeObjectURL(url);
   };
 
+  // ── 계약서 저장 (Supabase) ──
+  const handleSave = async (newStatus) => {
+    if (!selEmpId) { alert("직원을 선택해주세요."); return; }
+    const selEmp = employees.find(e => e.id === selEmpId);
+    if (!selEmp) return;
+    const payload = {
+      employee_id: selEmpId,
+      emp_no: selEmp.emp_no,
+      emp_name: selEmp.name,
+      contract_type: contract.type,
+      status: newStatus || "작성중",
+      start_date: contract.start_date,
+      end_date: contract.end_date || null,
+      work_site: contract.work_site,
+      work_start: contract.work_start,
+      work_end: contract.work_end,
+      break_min: contract.break_min,
+      work_days: contract.work_days,
+      total_salary: contract.total_salary,
+      base_salary: contract.base_salary,
+      weekend_daily: contract.weekend_daily,
+      meal_allow: contract.meal_allow,
+      leader_allow: contract.leader_allow,
+      pay_day: contract.pay_day,
+      basic_hours: contract.basic_hours,
+      annual_hours: contract.annual_hours,
+      overtime_hours: contract.overtime_hours,
+      holiday_hours: contract.holiday_hours,
+      probation: contract.probation,
+      probation_months: contract.probation_months,
+      special_terms: contract.special_terms,
+      articles: articles,
+      updated_at: new Date().toISOString(),
+    };
+
+    try {
+      if (contractId) {
+        // 업데이트
+        const { error } = await supabase.from("contracts").update(payload).eq("id", contractId);
+        if (error) throw error;
+        setSaveMsg(`✅ 계약서 ${newStatus === "확정" ? "확정" : "저장"} 완료`);
+      } else {
+        // 새로 생성
+        payload.created_by = user?.id || null;
+        const { data, error } = await supabase.from("contracts").insert(payload).select().single();
+        if (error) throw error;
+        setContractId(data.id);
+        setSaveMsg(`✅ 계약서 ${newStatus === "확정" ? "확정" : "저장"} 완료 (신규)`);
+      }
+      if (onSave) onSave();
+    } catch (err) {
+      setSaveMsg(`❌ 저장 실패: ${err.message}`);
+    }
+    setTimeout(() => setSaveMsg(""), 3000);
+  };
+
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, alignItems: "start" }}>
       {/* 좌측: 입력 */}
       <div>
-        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 16px" }}>📝 계약서 작성</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 16px" }}>
+          📝 {contractId ? "계약서 수정" : "계약서 작성"}
+          {contractId && <span style={{ fontSize: 12, fontWeight: 600, color: C.gray, marginLeft: 8 }}>#{contractId.slice(0, 8)}</span>}
+        </h2>
 
         {/* 직원 선택 */}
         <div style={cardStyle}>
@@ -1463,10 +1561,26 @@ function ContractWriter({ employees, initialEmp }) {
         </div>
 
         {can("edit") && (
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handlePrint} style={{ ...btnGold, flex: 1, padding: 14, fontSize: 14 }}>🖨️ 인쇄 / PDF</button>
-            <button onClick={handleWordExport} style={{ ...btnPrimary, flex: 1, padding: 14, fontSize: 14 }}>📄 Word 출력</button>
-          </div>
+          <>
+            {saveMsg && (
+              <div style={{ padding: "10px 14px", borderRadius: 8, marginBottom: 8, fontSize: 13, fontWeight: 700, background: saveMsg.startsWith("✅") ? "#E8F5E9" : "#FFEBEE", color: saveMsg.startsWith("✅") ? C.success : C.error }}>
+                {saveMsg}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+              <button onClick={() => handleSave("작성중")} style={{ ...btnOutline, padding: 14, fontSize: 14, width: "100%" }}>💾 임시 저장</button>
+              <button onClick={() => handleSave("확정")} style={{ ...btnPrimary, padding: 14, fontSize: 14, background: C.success, width: "100%" }}>✅ 확정 저장</button>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button onClick={handlePrint} style={{ ...btnGold, flex: 1, padding: 14, fontSize: 14 }}>🖨️ 인쇄 / PDF</button>
+              <button onClick={handleWordExport} style={{ ...btnPrimary, flex: 1, padding: 14, fontSize: 14 }}>📄 Word 출력</button>
+            </div>
+            {contractId && (
+              <div style={{ marginTop: 8, textAlign: "center", fontSize: 11, color: C.gray }}>
+                📋 계약서 ID: {contractId.slice(0, 8)}... · 수정 시 자동 업데이트
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -1580,6 +1694,278 @@ function ContractWriter({ employees, initialEmp }) {
     </div>
   );
 }
+
+// ── 12-1. 계약서 이력 관리 ────────────────────────────
+function ContractHistory({ employees, onEditContract, onNewContract }) {
+  const { can } = useAuth();
+  const [contracts, setContracts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filter, setFilter] = useState({ empName: "", status: "", type: "", site: "" });
+  const [expandedId, setExpandedId] = useState(null);
+  const [sortKey, setSortKey] = useState("updated_at");
+  const [sortDir, setSortDir] = useState("desc");
+
+  const loadContracts = async () => {
+    setLoading(true);
+    const { data, error } = await supabase.from("contracts").select("*").order("updated_at", { ascending: false });
+    if (data) setContracts(data);
+    setLoading(false);
+  };
+
+  useEffect(() => { loadContracts(); }, []);
+
+  const updateStatus = async (id, newStatus) => {
+    if (!can("edit")) return;
+    const { error } = await supabase.from("contracts").update({ status: newStatus, updated_at: new Date().toISOString() }).eq("id", id);
+    if (!error) loadContracts();
+  };
+
+  const deleteContract = async (id) => {
+    if (!can("edit")) return;
+    if (!confirm("이 계약서 이력을 삭제하시겠습니까?")) return;
+    const { error } = await supabase.from("contracts").delete().eq("id", id);
+    if (!error) loadContracts();
+  };
+
+  // 필터링
+  const filtered = contracts.filter(c => {
+    if (filter.empName && !c.emp_name?.includes(filter.empName) && !c.emp_no?.includes(filter.empName)) return false;
+    if (filter.status && c.status !== filter.status) return false;
+    if (filter.type && c.contract_type !== filter.type) return false;
+    if (filter.site && c.work_site && !c.work_site.includes(filter.site)) return false;
+    return true;
+  });
+
+  // 정렬
+  const sorted = [...filtered].sort((a, b) => {
+    let va = a[sortKey], vb = b[sortKey];
+    if (sortKey === "total_salary" || sortKey === "weekend_daily") { va = Number(va) || 0; vb = Number(vb) || 0; }
+    if (va < vb) return sortDir === "asc" ? -1 : 1;
+    if (va > vb) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir(d => d === "asc" ? "desc" : "asc");
+    else { setSortKey(key); setSortDir("desc"); }
+  };
+
+  const statusColor = (s) => {
+    switch (s) {
+      case "확정": return { bg: "#E8F5E9", text: C.success };
+      case "작성중": return { bg: "#FFF8E1", text: C.orange };
+      case "만료": return { bg: "#FFEBEE", text: C.error };
+      case "갱신": return { bg: "#E3F2FD", text: C.blue };
+      default: return { bg: C.lightGray, text: C.gray };
+    }
+  };
+
+  const typeLabel = (t) => {
+    switch (t) {
+      case "weekday": return "평일제(월급)";
+      case "weekend": return "주말제(일당)";
+      case "mixed": return "복합근무";
+      case "parttime": return "알바";
+      default: return t;
+    }
+  };
+
+  // 통계
+  const stats = {
+    total: contracts.length,
+    confirmed: contracts.filter(c => c.status === "확정").length,
+    draft: contracts.filter(c => c.status === "작성중").length,
+    expired: contracts.filter(c => c.status === "만료").length,
+    renewed: contracts.filter(c => c.status === "갱신").length,
+  };
+
+  const thStyle = (key) => ({
+    padding: "10px 12px", fontSize: 12, fontWeight: 800, color: C.gray, textAlign: "left",
+    cursor: "pointer", whiteSpace: "nowrap", borderBottom: `2px solid ${C.border}`,
+    background: sortKey === key ? "#F0F4FF" : "transparent",
+    userSelect: "none",
+  });
+
+  const tdStyle = { padding: "10px 12px", fontSize: 12, borderBottom: `1px solid ${C.lightGray}`, verticalAlign: "middle" };
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>📋 계약서 이력 관리</h2>
+        {can("edit") && (
+          <button onClick={onNewContract} style={btnPrimary}>+ 새 계약서 작성</button>
+        )}
+      </div>
+
+      {/* 통계 카드 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "전체", value: stats.total, icon: "📋", color: C.navy },
+          { label: "확정", value: stats.confirmed, icon: "✅", color: C.success },
+          { label: "작성중", value: stats.draft, icon: "✏️", color: C.orange },
+          { label: "만료", value: stats.expired, icon: "⏰", color: C.error },
+          { label: "갱신", value: stats.renewed, icon: "🔄", color: C.blue },
+        ].map(s => (
+          <div key={s.label} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.border}`, padding: "14px 16px", textAlign: "center" }}>
+            <div style={{ fontSize: 22, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: s.color, fontFamily: FONT }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: C.gray, fontWeight: 600 }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 필터 */}
+      <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.border}`, padding: "12px 16px", marginBottom: 16, display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
+        <input value={filter.empName} onChange={e => setFilter(p => ({ ...p, empName: e.target.value }))}
+          placeholder="🔍 직원명/사번 검색" style={{ ...inputStyle, width: 180 }} />
+        <select value={filter.status} onChange={e => setFilter(p => ({ ...p, status: e.target.value }))} style={{ ...inputStyle, width: 130 }}>
+          <option value="">전체 상태</option>
+          {["작성중", "확정", "만료", "갱신"].map(s => <option key={s} value={s}>{s}</option>)}
+        </select>
+        <select value={filter.type} onChange={e => setFilter(p => ({ ...p, type: e.target.value }))} style={{ ...inputStyle, width: 150 }}>
+          <option value="">전체 유형</option>
+          <option value="weekday">평일제(월급)</option>
+          <option value="weekend">주말제(일당)</option>
+          <option value="mixed">복합근무</option>
+          <option value="parttime">알바</option>
+        </select>
+        <select value={filter.site} onChange={e => setFilter(p => ({ ...p, site: e.target.value }))} style={{ ...inputStyle, width: 170 }}>
+          <option value="">전체 사업장</option>
+          {SITES.map(s => <option key={s.code} value={s.name}>{s.name}</option>)}
+        </select>
+        <button onClick={() => setFilter({ empName: "", status: "", type: "", site: "" })}
+          style={{ ...btnSmall, background: C.lightGray, color: C.gray }}>초기화</button>
+        <button onClick={loadContracts} style={{ ...btnSmall, background: C.white, color: C.navy, border: `1px solid ${C.navy}` }}>🔄 새로고침</button>
+        <div style={{ marginLeft: "auto", fontSize: 12, color: C.gray, fontWeight: 600 }}>
+          {filtered.length}건 표시 / 전체 {contracts.length}건
+        </div>
+      </div>
+
+      {/* 테이블 */}
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 40, color: C.gray, fontSize: 14 }}>로딩 중...</div>
+      ) : sorted.length === 0 ? (
+        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>
+          <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
+          <div style={{ fontSize: 14, fontWeight: 700 }}>저장된 계약서가 없습니다</div>
+          <div style={{ fontSize: 12, marginTop: 6 }}>계약서 작성 화면에서 '저장'하면 여기에 이력이 쌓입니다</div>
+        </div>
+      ) : (
+        <div style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={thStyle("emp_no")} onClick={() => toggleSort("emp_no")}>사번 {sortKey === "emp_no" ? (sortDir === "asc" ? "↑" : "↓") : ""}</th>
+                <th style={thStyle("emp_name")} onClick={() => toggleSort("emp_name")}>이름 {sortKey === "emp_name" ? (sortDir === "asc" ? "↑" : "↓") : ""}</th>
+                <th style={thStyle("contract_type")} onClick={() => toggleSort("contract_type")}>유형</th>
+                <th style={thStyle("status")} onClick={() => toggleSort("status")}>상태</th>
+                <th style={thStyle("start_date")} onClick={() => toggleSort("start_date")}>계약기간</th>
+                <th style={thStyle("total_salary")} onClick={() => toggleSort("total_salary")}>급여</th>
+                <th style={thStyle("work_site")}>사업장</th>
+                <th style={thStyle("updated_at")} onClick={() => toggleSort("updated_at")}>최종수정 {sortKey === "updated_at" ? (sortDir === "asc" ? "↑" : "↓") : ""}</th>
+                <th style={{ ...thStyle(""), cursor: "default" }}>액션</th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(c => {
+                const sc = statusColor(c.status);
+                const isExpanded = expandedId === c.id;
+                return (
+                  <Fragment key={c.id}>
+                    <tr style={{ cursor: "pointer", background: isExpanded ? "#F8F9FF" : "transparent" }}
+                      onClick={() => setExpandedId(isExpanded ? null : c.id)}>
+                      <td style={tdStyle}><span style={{ fontFamily: "monospace", fontWeight: 700, color: C.navy }}>{c.emp_no}</span></td>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>{c.emp_name}</td>
+                      <td style={tdStyle}>
+                        <span style={{ fontSize: 11, padding: "3px 8px", borderRadius: 6, background: c.contract_type === "weekend" ? "#FFF3E0" : c.contract_type === "mixed" ? "#E3F2FD" : "#F3E5F5", fontWeight: 700 }}>
+                          {typeLabel(c.contract_type)}
+                        </span>
+                      </td>
+                      <td style={tdStyle}>
+                        <span style={{ fontSize: 11, padding: "3px 10px", borderRadius: 10, background: sc.bg, color: sc.text, fontWeight: 800 }}>
+                          {c.status}
+                        </span>
+                      </td>
+                      <td style={{ ...tdStyle, fontSize: 11 }}>
+                        {dateFmt(c.start_date)}{c.end_date ? ` ~ ${dateFmt(c.end_date)}` : " ~"}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: "right", fontWeight: 700, fontFamily: "monospace" }}>
+                        {c.contract_type === "weekend" ? `${fmt(c.weekend_daily)}원/일` : `${fmt(c.total_salary)}원/월`}
+                      </td>
+                      <td style={{ ...tdStyle, fontSize: 11 }}>{c.work_site || "-"}</td>
+                      <td style={{ ...tdStyle, fontSize: 10, color: C.gray }}>
+                        {c.updated_at ? new Date(c.updated_at).toLocaleDateString("ko-KR") : "-"}
+                      </td>
+                      <td style={tdStyle} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: "flex", gap: 4 }}>
+                          {can("edit") && (
+                            <button onClick={() => onEditContract(c)} title="편집" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>✏️</button>
+                          )}
+                          {can("edit") && c.status === "작성중" && (
+                            <button onClick={() => updateStatus(c.id, "확정")} title="확정" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>✅</button>
+                          )}
+                          {can("edit") && c.status === "확정" && (
+                            <button onClick={() => updateStatus(c.id, "만료")} title="만료처리" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>⏰</button>
+                          )}
+                          {can("edit") && (
+                            <button onClick={() => deleteContract(c.id)} title="삭제" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>🗑</button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+
+                    {/* 확장 상세 */}
+                    {isExpanded && (
+                      <tr>
+                        <td colSpan={9} style={{ padding: 0, background: "#F8F9FF" }}>
+                          <div style={{ padding: "16px 20px", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16 }}>
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 8 }}>📋 계약 정보</div>
+                              <div style={detailRow}>유형: <strong>{typeLabel(c.contract_type)}</strong></div>
+                              <div style={detailRow}>기간: <strong>{dateFmt(c.start_date)} ~ {c.end_date ? dateFmt(c.end_date) : "미정"}</strong></div>
+                              <div style={detailRow}>근무요일: <strong>{c.work_days || "-"}</strong></div>
+                              <div style={detailRow}>근무시간: <strong>{c.work_start || "-"} ~ {c.work_end || "-"}</strong></div>
+                              <div style={detailRow}>휴게: <strong>{c.break_min || 0}분</strong></div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 8 }}>💰 급여</div>
+                              {c.contract_type !== "weekend" && <div style={detailRow}>총 월급: <strong style={{ color: C.navy }}>{fmt(c.total_salary)}원</strong></div>}
+                              {c.contract_type === "weekend" && <div style={detailRow}>일당: <strong style={{ color: C.orange }}>{fmt(c.weekend_daily)}원</strong></div>}
+                              <div style={detailRow}>식대: <strong>{fmt(c.meal_allow)}원</strong></div>
+                              {c.leader_allow > 0 && <div style={detailRow}>팀장수당: <strong>{fmt(c.leader_allow)}원</strong></div>}
+                              <div style={detailRow}>급여일: <strong>매월 {c.pay_day}일</strong></div>
+                            </div>
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 8 }}>⚙️ 기타</div>
+                              <div style={detailRow}>사업장: <strong>{c.work_site || "-"}</strong></div>
+                              <div style={detailRow}>수습: <strong>{c.probation ? `${c.probation_months}개월` : "없음"}</strong></div>
+                              {c.special_terms && <div style={detailRow}>특약: <strong>{c.special_terms.slice(0, 50)}{c.special_terms.length > 50 ? "..." : ""}</strong></div>}
+                              <div style={detailRow}>생성일: <strong>{c.created_at ? new Date(c.created_at).toLocaleDateString("ko-KR") : "-"}</strong></div>
+                            </div>
+                          </div>
+                          {can("edit") && (
+                            <div style={{ padding: "0 20px 16px", display: "flex", gap: 8 }}>
+                              <button onClick={() => onEditContract(c)} style={{ ...btnSmall, background: C.navy, color: C.white }}>✏️ 편집</button>
+                              {c.status === "작성중" && <button onClick={() => updateStatus(c.id, "확정")} style={{ ...btnSmall, background: C.success, color: C.white }}>✅ 확정</button>}
+                              {c.status === "확정" && <button onClick={() => updateStatus(c.id, "만료")} style={{ ...btnSmall, background: C.error, color: C.white }}>⏰ 만료 처리</button>}
+                              {c.status === "만료" && <button onClick={() => updateStatus(c.id, "갱신")} style={{ ...btnSmall, background: C.blue, color: C.white }}>🔄 갱신</button>}
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const detailRow = { fontSize: 12, marginBottom: 4, color: C.dark };
 
 // ── 13. 관리자 초대 관리 ──────────────────────────────
 function AdminInvitePanel() {
@@ -2149,6 +2535,7 @@ function MainApp() {
   const [page, setPage] = useState("dashboard");
   const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
+  const [contractEdit, setContractEdit] = useState(null);
   const [empLoading, setEmpLoading] = useState(true);
 
   // Supabase에서 직원 데이터 로드
@@ -2177,15 +2564,18 @@ function MainApp() {
     await loadEmployees();
   };
 
-  const goContract = (emp) => { setContractEmp(emp); setPage("contract"); };
+  const goContract = (emp) => { setContractEmp(emp); setContractEdit(null); setPage("contract"); };
   const goResign = (emp) => { setPage("resignation"); };
+  const goEditContract = (c) => { setContractEdit(c); setContractEmp(null); setPage("contract"); };
+  const goNewContract = () => { setContractEdit(null); setContractEmp(null); setPage("contract"); };
 
   const navItems = [
     { key: "dashboard", icon: "📊", label: "대시보드" },
     { key: "employees", icon: "👥", label: "직원대장" },
     { key: "contract", icon: "📝", label: "계약서" },
-    { key: "resignation", icon: "📋", label: "사직서" },
-    { key: "certificate", icon: "📄", label: "재직증명서" },
+    { key: "history", icon: "📋", label: "계약 이력" },
+    { key: "resignation", icon: "📄", label: "사직서" },
+    { key: "certificate", icon: "📑", label: "재직증명서" },
     ...(can("settings") ? [{ key: "settings", icon: "⚙️", label: "설정" }] : []),
     ...(can("invite") ? [{ key: "invite", icon: "🔐", label: "관리자 초대" }] : []),
   ];
@@ -2206,7 +2596,7 @@ function MainApp() {
 
         <nav style={{ flex: 1, padding: "12px 8px" }}>
           {navItems.map(item => (
-            <button key={item.key} onClick={() => { setPage(item.key); if (item.key !== "contract") setContractEmp(null); }}
+            <button key={item.key} onClick={() => { setPage(item.key); if (item.key !== "contract") { setContractEmp(null); setContractEdit(null); } }}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
                 borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 4, fontSize: 13, fontWeight: 700,
@@ -2236,7 +2626,8 @@ function MainApp() {
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {page === "dashboard" && <Dashboard employees={employees} />}
         {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onReload={loadEmployees} />}
-        {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} />}
+        {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={() => {}} />}
+        {page === "history" && <ContractHistory employees={employees} onEditContract={goEditContract} onNewContract={goNewContract} />}
         {page === "resignation" && <Resignation employees={employees} />}
         {page === "certificate" && <Certificate employees={employees} />}
         {page === "settings" && <Settings />}
