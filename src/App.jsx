@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, createContext, useContext } from "react";
+import { supabase } from "./supabaseClient";
 
 /* ═══════════════════════════════════════════════════════
    (주)미스터팍 근로계약서 관리 시스템 v3.0
@@ -98,59 +99,94 @@ const AuthCtx = createContext(null);
    - profiles, invitations 테이블 Supabase에 생성
 */
 
-const DEMO_USERS = [
-  { id: "u1", email: "admin@mrpark.co.kr", password: "admin1234", name: "이지섭", role: "super_admin" },
-  { id: "u2", email: "manager@mrpark.co.kr", password: "mgr1234", name: "이효정", role: "admin" },
-  { id: "u3", email: "viewer@mrpark.co.kr", password: "view1234", name: "김민수", role: "viewer" },
-];
-
 function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [profiles, setProfiles] = useState(DEMO_USERS.map(u => ({
-    id: u.id, email: u.email, name: u.name, role: u.role, created_at: "2026-01-01",
-  })));
-  const [invitations, setInvitations] = useState([
-    { id: "inv1", email: "new@example.com", role: "admin", status: "pending", invited_by: "u1", created_at: "2026-03-05", expires_at: "2026-03-12" },
-  ]);
+  const [profiles, setProfiles] = useState([]);
+  const [invitations, setInvitations] = useState([]);
 
-  useEffect(() => { setLoading(false); }, []);
+  // 세션 복원 + 리스너
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user ?? null);
+      if (session?.user) loadData();
+      setLoading(false);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(session?.user ?? null);
+      if (session?.user) loadData();
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
-  const signIn = (email, pw) => {
-    const found = DEMO_USERS.find(u => u.email === email && u.password === pw);
-    if (!found) return { error: "이메일 또는 비밀번호가 올바르지 않습니다." };
-    setUser(found);
+  const loadData = async () => {
+    const [profRes, invRes] = await Promise.all([
+      supabase.from("profiles").select("*").order("created_at"),
+      supabase.from("invitations").select("*").order("created_at", { ascending: false }),
+    ]);
+    if (profRes.data) setProfiles(profRes.data);
+    if (invRes.data) setInvitations(invRes.data);
+  };
+
+  const signIn = async (email, pw) => {
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pw });
+    if (error) return { error: error.message };
+    await loadData();
     return { error: null };
   };
 
-  const signUp = (email, pw, name, inviteId) => {
-    if (DEMO_USERS.find(u => u.email === email)) return { error: "이미 등록된 이메일입니다." };
-    const inv = invitations.find(i => i.id === inviteId && i.status === "pending");
+  const signUp = async (email, pw, name, inviteToken) => {
+    // 초대 토큰 검증
+    const { data: inv } = await supabase.from("invitations")
+      .select("*").eq("token", inviteToken).eq("status", "pending").single();
     if (!inv) return { error: "유효하지 않은 초대입니다." };
-    const newUser = { id: uid(), email, password: pw, name, role: inv.role };
-    DEMO_USERS.push(newUser);
-    setProfiles(p => [...p, { id: newUser.id, email, name, role: inv.role, created_at: today() }]);
-    setInvitations(inv2 => inv2.map(i => i.id === inviteId ? { ...i, status: "accepted" } : i));
-    setUser(newUser);
+    if (new Date(inv.expires_at) < new Date()) return { error: "만료된 초대입니다." };
+    if (inv.email !== email) return { error: `초대된 이메일(${inv.email})과 일치하지 않습니다.` };
+
+    const { error } = await supabase.auth.signUp({
+      email, password: pw,
+      options: { data: { name } }
+    });
+    if (error) return { error: error.message };
+    await loadData();
     return { error: null };
   };
 
-  const signOut = () => setUser(null);
-
-  const sendInvite = (email, role) => {
-    if (invitations.find(i => i.email === email && i.status === "pending")) return { error: "이미 초대된 이메일입니다." };
-    const inv = {
-      id: uid(), email, role, status: "pending", invited_by: user?.id,
-      created_at: today(), expires_at: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10),
-    };
-    setInvitations(p => [...p, inv]);
-    return { error: null, invitation: inv };
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setUser(null); setProfiles([]); setInvitations([]);
   };
 
-  const cancelInvite = (id) => setInvitations(p => p.map(i => i.id === id ? { ...i, status: "cancelled" } : i));
-  const resendInvite = (id) => setInvitations(p => p.map(i => i.id === id ? { ...i, expires_at: new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10) } : i));
-  const removeAdmin = (id) => setProfiles(p => p.filter(pr => pr.id !== id));
-  const updateRole = (id, role) => setProfiles(p => p.map(pr => pr.id === id ? { ...pr, role } : pr));
+  const sendInvite = async (email, role) => {
+    const { data, error } = await supabase.from("invitations")
+      .insert({ email, role, invited_by: user?.id })
+      .select().single();
+    if (error) return { error: error.message };
+    await loadData();
+    return { error: null, invitation: data };
+  };
+
+  const cancelInvite = async (id) => {
+    await supabase.from("invitations").update({ status: "cancelled" }).eq("id", id);
+    await loadData();
+  };
+
+  const resendInvite = async (id) => {
+    await supabase.from("invitations").update({
+      expires_at: new Date(Date.now() + 7 * 86400000).toISOString()
+    }).eq("id", id);
+    await loadData();
+  };
+
+  const removeAdmin = async (id) => {
+    await supabase.from("profiles").delete().eq("id", id);
+    await loadData();
+  };
+
+  const updateRole = async (id, role) => {
+    await supabase.from("profiles").update({ role }).eq("id", id);
+    await loadData();
+  };
 
   const profile = user ? profiles.find(p => p.id === user.id) : null;
   const can = (action) => {
@@ -164,7 +200,7 @@ function AuthProvider({ children }) {
     <AuthCtx.Provider value={{
       user, profile, loading, signIn, signUp, signOut, sendInvite,
       cancelInvite, resendInvite, removeAdmin, updateRole,
-      profiles, invitations, can,
+      profiles, invitations, can, loadData,
     }}>
       {children}
     </AuthCtx.Provider>
@@ -194,11 +230,14 @@ function LoginPage() {
   const [email, setEmail] = useState("");
   const [pw, setPw] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
 
-  const handleLogin = () => {
-    const { error: e } = signIn(email, pw);
-    if (e) setError(e); else setError("");
+  const handleLogin = async () => {
+    setLoading(true); setError("");
+    const { error: e } = await signIn(email, pw);
+    if (e) setError(e);
+    setLoading(false);
   };
 
   if (showInvite) return <InviteAcceptPage onBack={() => setShowInvite(false)} />;
@@ -206,7 +245,6 @@ function LoginPage() {
   return (
     <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${C.navy} 0%, #0a1a5c 100%)`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
       <div style={{ width: 400, maxWidth: "90vw" }}>
-        {/* Logo area */}
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ width: 64, height: 64, borderRadius: 16, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 900, color: C.navy, marginBottom: 12 }}>MP</div>
           <h1 style={{ color: C.white, fontSize: 22, fontWeight: 900, margin: 0 }}>ME.PARK</h1>
@@ -231,26 +269,15 @@ function LoginPage() {
               onKeyDown={e => e.key === "Enter" && handleLogin()} />
           </div>
 
-          <button onClick={handleLogin} style={{ ...btnPrimary, width: "100%", padding: "14px", fontSize: 15 }}>로그인</button>
+          <button onClick={handleLogin} disabled={loading}
+            style={{ ...btnPrimary, width: "100%", padding: "14px", fontSize: 15, opacity: loading ? 0.6 : 1 }}>
+            {loading ? "로그인 중..." : "로그인"}
+          </button>
 
           <div style={{ textAlign: "center", marginTop: 20 }}>
             <button onClick={() => setShowInvite(true)} style={{ background: "none", border: "none", color: C.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
-              초대 링크로 가입하기
+              초대 코드로 가입하기
             </button>
-          </div>
-
-          {/* Demo accounts */}
-          <div style={{ marginTop: 24, padding: 16, background: C.bg, borderRadius: 10, fontSize: 11 }}>
-            <div style={{ fontWeight: 800, color: C.navy, marginBottom: 8 }}>🔑 데모 계정</div>
-            {DEMO_USERS.map(u => (
-              <div key={u.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
-                <span style={{ color: C.gray }}>{u.email}</span>
-                <button onClick={() => { setEmail(u.email); setPw(u.password); }}
-                  style={{ background: C.navy, color: C.white, border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>
-                  {ROLES[u.role]}
-                </button>
-              </div>
-            ))}
           </div>
         </div>
       </div>
@@ -260,28 +287,34 @@ function LoginPage() {
 
 // ── 7. 초대 수락 / 회원가입 페이지 ────────────────────
 function InviteAcceptPage({ onBack }) {
-  const { signUp, invitations } = useAuth();
+  const { signUp } = useAuth();
   const [invCode, setInvCode] = useState("");
-  const [step, setStep] = useState("code"); // code → signup
+  const [step, setStep] = useState("code");
   const [inv, setInv] = useState(null);
+  const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [pw, setPw] = useState("");
   const [pw2, setPw2] = useState("");
   const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const verifyCode = () => {
-    const found = invitations.find(i => i.id === invCode && i.status === "pending");
-    if (!found) { setError("유효하지 않은 초대 코드입니다."); return; }
-    if (new Date(found.expires_at) < new Date()) { setError("만료된 초대입니다."); return; }
-    setInv(found); setStep("signup"); setError("");
+  const verifyCode = async () => {
+    setError("");
+    const { data, error: e } = await supabase.from("invitations")
+      .select("*").eq("token", invCode).eq("status", "pending").single();
+    if (e || !data) { setError("유효하지 않은 초대 코드입니다."); return; }
+    if (new Date(data.expires_at) < new Date()) { setError("만료된 초대입니다."); return; }
+    setInv(data); setEmail(data.email); setStep("signup");
   };
 
-  const handleSignup = () => {
+  const handleSignup = async () => {
     if (!name.trim()) { setError("이름을 입력하세요."); return; }
     if (pw.length < 6) { setError("비밀번호 6자 이상 입력하세요."); return; }
     if (pw !== pw2) { setError("비밀번호가 일치하지 않습니다."); return; }
-    const { error: e } = signUp(inv.email, pw, name, inv.id);
+    setLoading(true); setError("");
+    const { error: e } = await signUp(inv.email, pw, name, inv.token);
     if (e) setError(e);
+    setLoading(false);
   };
 
   return (
@@ -297,13 +330,9 @@ function InviteAcceptPage({ onBack }) {
 
           {step === "code" ? (
             <>
-              <p style={{ fontSize: 13, color: C.gray, marginBottom: 20 }}>초대 메일에서 받은 초대 코드를 입력하세요.</p>
+              <p style={{ fontSize: 13, color: C.gray, marginBottom: 20 }}>관리자로부터 받은 초대 코드를 입력하세요.</p>
               <input value={invCode} onChange={e => setInvCode(e.target.value)} placeholder="초대 코드 입력" style={{ ...inputStyle, padding: "12px 14px", marginBottom: 16 }} />
               <button onClick={verifyCode} style={{ ...btnPrimary, width: "100%", padding: 14 }}>초대 확인</button>
-
-              <div style={{ marginTop: 16, padding: 12, background: C.bg, borderRadius: 8, fontSize: 11, color: C.gray }}>
-                💡 데모 초대 코드: <strong style={{ color: C.navy }}>inv1</strong> (role: admin, email: new@example.com)
-              </div>
             </>
           ) : (
             <>
@@ -323,7 +352,10 @@ function InviteAcceptPage({ onBack }) {
                 <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호 확인</label>
                 <input type="password" value={pw2} onChange={e => setPw2(e.target.value)} placeholder="비밀번호 재입력" style={{ ...inputStyle, padding: "12px 14px" }} />
               </div>
-              <button onClick={handleSignup} style={{ ...btnPrimary, width: "100%", padding: 14 }}>가입 완료</button>
+              <button onClick={handleSignup} disabled={loading}
+                style={{ ...btnPrimary, width: "100%", padding: 14, opacity: loading ? 0.6 : 1 }}>
+                {loading ? "가입 중..." : "가입 완료"}
+              </button>
             </>
           )}
 
@@ -336,17 +368,7 @@ function InviteAcceptPage({ onBack }) {
   );
 }
 
-// ── 8. 샘플 직원 데이터 ───────────────────────────────
-const SAMPLE_EMPLOYEES = [
-  { id: "e1", emp_no: "MP17001", name: "이지섭", position: "대표", site_code_1: "V000", work_code: "C", hire_date: "2018-09-10", status: "재직", base_salary: 5000000, weekend_daily: 0, meal_allow: 200000, leader_allow: 0, childcare_allow: 0, car_allow: 0, tax_type: "4대보험", employment_type: "정규직", phone: "010-1234-5678", probation_months: 0 },
-  { id: "e2", emp_no: "MP23003", name: "이효정", position: "수석팀장", site_code_1: "V000", work_code: "C", hire_date: "2023-03-01", status: "재직", base_salary: 3500000, weekend_daily: 0, meal_allow: 200000, leader_allow: 150000, childcare_allow: 200000, car_allow: 0, tax_type: "4대보험", employment_type: "정규직", phone: "010-2345-6789", probation_months: 0 },
-  { id: "e3", emp_no: "MP25175", name: "박민석C", position: "일반", site_code_1: "V001", work_code: "C", hire_date: "2025-10-15", status: "재직", base_salary: 2400000, weekend_daily: 0, meal_allow: 200000, leader_allow: 0, childcare_allow: 0, car_allow: 0, tax_type: "3.3%", employment_type: "정규직", phone: "010-3456-7890", probation_months: 4 },
-  { id: "e4", emp_no: "MP24115", name: "강희철", position: "일반", site_code_1: "V011", work_code: "E", hire_date: "2024-06-01", status: "재직", base_salary: 0, weekend_daily: 160000, meal_allow: 0, leader_allow: 0, childcare_allow: 0, car_allow: 0, tax_type: "3.3%", employment_type: "정규직", phone: "010-4567-8901", probation_months: 4 },
-  { id: "e5", emp_no: "MP24120", name: "성치원", position: "일반", site_code_1: "V007", work_code: "CG", hire_date: "2024-08-01", status: "재직", base_salary: 2700000, weekend_daily: 0, meal_allow: 200000, leader_allow: 0, childcare_allow: 0, car_allow: 0, tax_type: "3.3%", employment_type: "정규직", phone: "010-5678-9012", probation_months: 4 },
-  { id: "e6", emp_no: "MPA18", name: "김우진", position: "일반", site_code_1: "V000", work_code: "W", hire_date: "2025-12-01", status: "재직", base_salary: 0, weekend_daily: 72000, meal_allow: 0, leader_allow: 0, childcare_allow: 0, car_allow: 0, tax_type: "미신고", employment_type: "알바", phone: "010-6789-0123", probation_months: 0 },
-  { id: "e7", emp_no: "MP25180", name: "김서연", position: "일반", site_code_1: "V013", work_code: "F", hire_date: "2025-11-20", status: "재직", base_salary: 0, weekend_daily: 140000, meal_allow: 0, leader_allow: 0, childcare_allow: 0, car_allow: 0, tax_type: "3.3%", employment_type: "정규직", phone: "010-7890-1234", probation_months: 3 },
-  { id: "e8", emp_no: "MP22050", name: "정대영", position: "센터장", site_code_1: "V007", work_code: "C", hire_date: "2022-04-01", status: "퇴사", resign_date: "2025-12-31", base_salary: 3200000, weekend_daily: 0, meal_allow: 200000, leader_allow: 150000, childcare_allow: 0, car_allow: 0, tax_type: "4대보험", employment_type: "정규직", phone: "010-8901-2345", probation_months: 0 },
-];
+// ── 8. 직원 데이터는 Supabase DB에서 로드 ──────────────
 
 // ── 9. 기본 조항 텍스트 ───────────────────────────────
 const DEFAULT_ARTICLES_WEEKDAY = {
@@ -499,14 +521,15 @@ function Dashboard({ employees }) {
 }
 
 // ── 11. 직원대장 ──────────────────────────────────────
-function EmployeeRoster({ employees, setEmployees, onContract, onResign }) {
+function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign }) {
   const { can } = useAuth();
   const [filter, setFilter] = useState({ site: "", cat: "", status: "재직", tax: "", search: "" });
   const [editEmp, setEditEmp] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const blankEmp = {
-    id: "", emp_no: "", name: "", position: "일반", site_code_1: "", work_code: "C",
+    emp_no: "", name: "", position: "일반", site_code_1: "", work_code: "C",
     hire_date: today(), status: "재직", base_salary: 0, weekend_daily: 0,
     meal_allow: 200000, leader_allow: 0, childcare_allow: 0, car_allow: 0,
     tax_type: "3.3%", employment_type: "정규직", phone: "", probation_months: 4,
@@ -524,17 +547,15 @@ function EmployeeRoster({ employees, setEmployees, onContract, onResign }) {
     return true;
   });
 
-  const saveEmp = (emp) => {
-    if (emp.id) {
-      setEmployees(prev => prev.map(e => e.id === emp.id ? emp : e));
-    } else {
-      setEmployees(prev => [...prev, { ...emp, id: uid() }]);
-    }
+  const saveEmp = async (emp) => {
+    setSaving(true);
+    await saveEmployee(emp);
+    setSaving(false);
     setEditEmp(null); setShowForm(false);
   };
 
-  const deleteEmp = (id) => {
-    if (confirm("정말 삭제하시겠습니까?")) setEmployees(prev => prev.filter(e => e.id !== id));
+  const deleteEmp = async (id) => {
+    if (confirm("정말 삭제하시겠습니까?")) await deleteEmployee(id);
   };
 
   return (
@@ -701,7 +722,7 @@ function EmployeeRoster({ employees, setEmployees, onContract, onResign }) {
             </div>
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
               <button onClick={() => setShowForm(false)} style={btnOutline}>취소</button>
-              <button onClick={() => saveEmp(editEmp)} style={btnPrimary}>저장</button>
+              <button onClick={() => saveEmp(editEmp)} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? "저장 중..." : "저장"}</button>
             </div>
           </div>
         </div>
@@ -1059,13 +1080,12 @@ function AdminInvitePanel() {
   const [newRole, setNewRole] = useState("admin");
   const [msg, setMsg] = useState("");
 
-  const handleSend = () => {
+  const handleSend = async () => {
     if (!newEmail.includes("@")) { setMsg("유효한 이메일을 입력하세요."); return; }
-    const { error } = sendInvite(newEmail, newRole);
+    const { error, invitation } = await sendInvite(newEmail, newRole);
     if (error) { setMsg(error); return; }
-    setMsg(`✅ ${newEmail}에 초대를 발송했습니다.`);
+    setMsg(`✅ ${newEmail}에 초대를 발송했습니다. 초대 코드: ${invitation?.token || ""}`);
     setNewEmail(""); setShowInviteForm(false);
-    setTimeout(() => setMsg(""), 3000);
   };
 
   const statusStyle = (status) => ({
@@ -1178,7 +1198,7 @@ function AdminInvitePanel() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr style={{ background: C.navy }}>
-                {["이메일", "역할", "상태", "발송일", "만료일", "액션"].map(h => (
+                {["이메일", "역할", "상태", "초대코드", "발송일", "만료일", "액션"].map(h => (
                   <th key={h} style={{ padding: "8px 10px", color: C.white, fontWeight: 700, textAlign: "center" }}>{h}</th>
                 ))}
               </tr>
@@ -1189,6 +1209,7 @@ function AdminInvitePanel() {
                   <td style={{ padding: "8px 10px" }}>{inv.email}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center" }}>{ROLES[inv.role]}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center" }}><span style={statusStyle(inv.status)}>{statusLabel[inv.status]}</span></td>
+                  <td style={{ padding: "8px 10px", textAlign: "center", fontFamily: "monospace", fontSize: 10, color: C.navy, fontWeight: 700 }}>{inv.token?.slice(0, 12)}...</td>
                   <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{inv.created_at}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{inv.expires_at}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
@@ -1571,8 +1592,35 @@ function Settings() {
 function MainApp() {
   const { profile, signOut, can } = useAuth();
   const [page, setPage] = useState("dashboard");
-  const [employees, setEmployees] = useState([...SAMPLE_EMPLOYEES]);
+  const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
+  const [empLoading, setEmpLoading] = useState(true);
+
+  // Supabase에서 직원 데이터 로드
+  const loadEmployees = async () => {
+    const { data, error } = await supabase.from("employees").select("*").order("emp_no");
+    if (data) setEmployees(data);
+    setEmpLoading(false);
+  };
+
+  useEffect(() => { loadEmployees(); }, []);
+
+  // 직원 추가/수정
+  const saveEmployee = async (emp) => {
+    const { id, created_at, updated_at, ...rest } = emp;
+    if (id) {
+      await supabase.from("employees").update({ ...rest, updated_at: new Date().toISOString() }).eq("id", id);
+    } else {
+      await supabase.from("employees").insert(rest);
+    }
+    await loadEmployees();
+  };
+
+  // 직원 삭제
+  const deleteEmployee = async (id) => {
+    await supabase.from("employees").delete().eq("id", id);
+    await loadEmployees();
+  };
 
   const goContract = (emp) => { setContractEmp(emp); setPage("contract"); };
   const goResign = (emp) => { setPage("resignation"); };
@@ -1632,7 +1680,7 @@ function MainApp() {
       {/* 메인 콘텐츠 */}
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {page === "dashboard" && <Dashboard employees={employees} />}
-        {page === "employees" && <EmployeeRoster employees={employees} setEmployees={setEmployees} onContract={goContract} onResign={goResign} />}
+        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} />}
         {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} />}
         {page === "resignation" && <Resignation employees={employees} />}
         {page === "certificate" && <Certificate employees={employees} />}
