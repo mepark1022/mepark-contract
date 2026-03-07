@@ -4,8 +4,8 @@ import * as XLSX from "xlsx";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
-   (주)미스터팍 근로계약서 관리 시스템 v5.0
-   Phase 2: 엑셀 Import + Word 출력 + 계약 이력
+   (주)미스터팍 근로계약서 관리 시스템 v6.0
+   Phase 2: 엑셀 Import + Word 출력 + 계약 이력 + 복합/알바 계약서
    ═══════════════════════════════════════════════════════ */
 
 // ── 1. 상수 ──────────────────────────────────────────
@@ -397,6 +397,29 @@ const DEFAULT_ARTICLES_WEEKEND = {
   8: { title: "퇴직금", text: "1년 이상 근무 시 퇴직금을 지급한다." },
   9: { title: "기타", text: "본 계약서에 명시되지 않은 사항은 근로기준법에 따른다. {special_terms}" },
   10: { title: "계약서 교부", text: "본 계약서는 2부를 작성하여 당사자 각각 1부씩 보관한다." },
+};
+const DEFAULT_ARTICLES_MIXED = {
+  1: { title: "계약기간", text: "계약기간은 {start_date}부터 {end_date}까지로 한다." },
+  2: { title: "근무장소", text: "근무장소는 {work_site}으로 한다." },
+  3: { title: "업무내용", text: "업무내용은 발렛파킹 서비스 및 주차관리 업무로 한다." },
+  4: { title: "근무시간", text: "① 평일 근무시간은 {work_start}부터 {work_end}까지로 하며, 휴게시간은 {break_min}분으로 한다.\n② 주말 근무시간은 {we_work_start}부터 {we_work_end}까지로 하며, 휴게시간은 {we_break_min}분으로 한다." },
+  5: { title: "근무일", text: "근무일은 {work_days}로 한다." },
+  6: { title: "휴일", text: "휴일은 근로기준법이 정하는 바에 따른다." },
+  7: { title: "임금", text: "① 평일 근무에 대하여 포괄임금제에 의하여 월 급여 금 {total_salary}원 (비과세 포함)을 지급한다.\n② 주말 근무에 대하여 일당 금 {weekend_daily}원을 지급한다.\n③ 급여 지급일은 매월 {pay_day}일로 한다.\n④ 식대 비과세 {meal_allow}원을 포함한다." },
+  8: { title: "퇴직금", text: "1년 이상 근무 시 퇴직금을 지급한다." },
+  9: { title: "근로조건 변경", text: "근로조건의 변경은 쌍방 합의에 의한다." },
+  10: { title: "기타", text: "본 계약서에 명시되지 않은 사항은 근로기준법에 따른다. {special_terms}" },
+  11: { title: "계약서 교부", text: "본 계약서는 2부를 작성하여 당사자 각각 1부씩 보관한다." },
+};
+const DEFAULT_ARTICLES_PARTTIME = {
+  1: { title: "계약기간", text: "계약기간은 {start_date}부터 {end_date}까지로 한다." },
+  2: { title: "근무장소", text: "근무장소는 {work_site}으로 한다." },
+  3: { title: "업무내용", text: "업무내용은 발렛파킹 서비스 및 주차관리 업무로 한다." },
+  4: { title: "근무시간", text: "근무시간은 {work_start}부터 {work_end}까지로 하며, 휴게시간은 {break_min}분으로 한다." },
+  5: { title: "근무일", text: "근무일은 {work_days}로 한다." },
+  6: { title: "임금", text: "① 일당 금 {weekend_daily}원을 지급한다. (3.3% 세전)\n② 급여 지급일은 매월 {pay_day}일로 한다." },
+  7: { title: "기타", text: "본 계약서에 명시되지 않은 사항은 근로기준법에 따른다. {special_terms}" },
+  8: { title: "계약서 교부", text: "본 계약서는 2부를 작성하여 당사자 각각 1부씩 보관한다." },
 };
 
 // ── 10. 대시보드 ──────────────────────────────────────
@@ -1073,6 +1096,15 @@ function ExcelImportModal({ onClose, onImport, existingEmpNos }) {
 }
 
 // ── 12. 계약서 작성기 ─────────────────────────────────
+const getDefaultArticles = (type) => {
+  switch (type) {
+    case "weekend": return { ...DEFAULT_ARTICLES_WEEKEND };
+    case "mixed": return { ...DEFAULT_ARTICLES_MIXED };
+    case "parttime": return { ...DEFAULT_ARTICLES_PARTTIME };
+    default: return { ...DEFAULT_ARTICLES_WEEKDAY };
+  }
+};
+
 function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
   const { can, user } = useAuth();
   const [selEmpId, setSelEmpId] = useState(initialEmp?.id || "");
@@ -1084,6 +1116,8 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
     weekend_daily: 0, meal_allow: 200000, leader_allow: 0, pay_day: 10,
     special_terms: "", probation: false, probation_months: 4,
     basic_hours: 173.8, annual_hours: 8.75, overtime_hours: 0, holiday_hours: 21,
+    // 복합근무 주말 시간
+    we_work_start: "09:00", we_work_end: "18:00", we_break_min: 60,
   });
   const [articles, setArticles] = useState({ ...DEFAULT_ARTICLES_WEEKDAY });
 
@@ -1094,9 +1128,9 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
     if (initialContract) {
       setContractId(initialContract.id);
       setSelEmpId(initialContract.employee_id || "");
-      const isWeekend = initialContract.contract_type === "weekend";
+      const cType = initialContract.contract_type || "weekday";
       setContract({
-        type: initialContract.contract_type || "weekday",
+        type: cType,
         start_date: initialContract.start_date || today(),
         end_date: initialContract.end_date || "",
         work_site: initialContract.work_site || "",
@@ -1117,11 +1151,14 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
         annual_hours: Number(initialContract.annual_hours) || 8.75,
         overtime_hours: Number(initialContract.overtime_hours) || 0,
         holiday_hours: Number(initialContract.holiday_hours) || 21,
+        we_work_start: initialContract.we_work_start || "09:00",
+        we_work_end: initialContract.we_work_end || "18:00",
+        we_break_min: initialContract.we_break_min || 60,
       });
       if (initialContract.articles) {
         setArticles(initialContract.articles);
       } else {
-        setArticles(isWeekend ? { ...DEFAULT_ARTICLES_WEEKEND } : { ...DEFAULT_ARTICLES_WEEKDAY });
+        setArticles(getDefaultArticles(cType));
       }
     }
   }, [initialContract]);
@@ -1135,15 +1172,19 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
     const emp = employees.find(e => e.id === empId);
     if (!emp) return;
     const cat = getWorkCat(emp.work_code);
-    const isWeekday = cat === "weekday" || cat === "mixed";
-    const isWeekend = cat === "weekend";
     const preset = SITE_PRESETS[emp.site_code_1];
 
+    // 평일 시간 (weekday, mixed 둘 다 사용)
     const wStart = preset ? preset.wdStart : "09:00";
     const wEnd = preset ? preset.wdEnd : "18:00";
     const bMin = preset ? preset.breakMin : 60;
 
-    // Calculate hours
+    // 주말 시간 (mixed 시 사용)
+    const weStart = preset?.weStart || "09:00";
+    const weEnd = preset?.weEnd || "18:00";
+    const weBMin = preset ? Math.min(preset.breakMin, 60) : 60;
+
+    // 평일 시간 계산
     const [sh, sm] = wStart.split(":").map(Number);
     const [eh, em] = wEnd.split(":").map(Number);
     const dailyMin = (eh * 60 + em) - (sh * 60 + sm) - bMin;
@@ -1157,24 +1198,48 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
 
     const totalSal = toNum(emp.base_salary) + toNum(emp.meal_allow) + toNum(emp.leader_allow) + toNum(emp.childcare_allow) + toNum(emp.car_allow);
 
+    // 근무일 텍스트 결정
+    let workDaysText = "월~금";
+    if (cat === "weekend") workDaysText = emp.work_code.includes("2") || emp.work_code === "E" || emp.work_code === "EP" ? "토, 일" : emp.work_code.includes("토") || emp.work_code === "F" || emp.work_code === "FP" ? "토요일" : "일요일";
+    else if (cat === "mixed") {
+      const wc = emp.work_code;
+      if (wc === "AE") workDaysText = "월~수, 토, 일";
+      else if (wc === "CF" || wc === "CPF") workDaysText = "월~금, 토";
+      else if (wc === "CG") workDaysText = "월~금, 일";
+      else if (wc === "FPG") workDaysText = "토, 일";
+      else workDaysText = `주 ${workDaysN}일 + 주말`;
+    }
+    else if (cat === "parttime") workDaysText = "별도 협의";
+    else workDaysText = workDaysN === 5 ? "월~금" : `주 ${workDaysN}일`;
+
     setContract(p => ({
       ...p,
-      type: isWeekend ? "weekend" : isWeekday ? "weekday" : "weekday",
+      type: cat,
       work_site: getSiteName(emp.site_code_1),
-      work_start: wStart, work_end: wEnd, break_min: bMin,
-      work_days: isWeekend ? "토, 일" : workDaysN === 5 ? "월~금" : `주 ${workDaysN}일`,
-      total_salary: totalSal, base_salary: toNum(emp.base_salary),
-      weekend_daily: toNum(emp.weekend_daily), meal_allow: toNum(emp.meal_allow),
-      leader_allow: toNum(emp.leader_allow), pay_day: 10,
-      probation: emp.probation_months > 0, probation_months: emp.probation_months || 4,
-      basic_hours: basicH, annual_hours: annualH, overtime_hours: overtimeH, holiday_hours: holidayH,
+      work_start: (cat === "weekend" || cat === "parttime") ? (preset?.weStart || wStart) : wStart,
+      work_end: (cat === "weekend" || cat === "parttime") ? (preset?.weEnd || wEnd) : wEnd,
+      break_min: bMin,
+      work_days: workDaysText,
+      total_salary: (cat === "weekday" || cat === "mixed") ? totalSal : 0,
+      base_salary: toNum(emp.base_salary),
+      weekend_daily: toNum(emp.weekend_daily),
+      meal_allow: toNum(emp.meal_allow),
+      leader_allow: toNum(emp.leader_allow),
+      pay_day: 10,
+      probation: emp.probation_months > 0,
+      probation_months: emp.probation_months || 4,
+      basic_hours: (cat === "weekday" || cat === "mixed") ? basicH : 0,
+      annual_hours: (cat === "weekday" || cat === "mixed") ? annualH : 0,
+      overtime_hours: (cat === "weekday" || cat === "mixed") ? overtimeH : 0,
+      holiday_hours: (cat === "weekday" || cat === "mixed") ? holidayH : 0,
+      we_work_start: weStart, we_work_end: weEnd, we_break_min: weBMin,
     }));
-    setArticles(isWeekend ? { ...DEFAULT_ARTICLES_WEEKEND } : { ...DEFAULT_ARTICLES_WEEKDAY });
+    setArticles(getDefaultArticles(cat));
   };
 
-  // 임금테이블 산출
+  // 임금테이블 산출 (평일제 + 복합근무 평일 부분)
   const wageTable = useMemo(() => {
-    if (contract.type === "weekend") return null;
+    if (contract.type === "weekend" || contract.type === "parttime") return null;
     const { total_salary, basic_hours, annual_hours, overtime_hours, holiday_hours } = contract;
     const totalH = basic_hours + annual_hours + overtime_hours + holiday_hours;
     if (totalH <= 0 || total_salary <= 0) return null;
@@ -1205,6 +1270,9 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
       .replace(/{work_start}/g, contract.work_start)
       .replace(/{work_end}/g, contract.work_end)
       .replace(/{break_min}/g, String(contract.break_min))
+      .replace(/{we_work_start}/g, contract.we_work_start || "09:00")
+      .replace(/{we_work_end}/g, contract.we_work_end || "18:00")
+      .replace(/{we_break_min}/g, String(contract.we_break_min || 60))
       .replace(/{work_days}/g, contract.work_days)
       .replace(/{total_salary}/g, fmt(contract.total_salary))
       .replace(/{base_salary}/g, fmt(contract.base_salary))
@@ -1239,10 +1307,10 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
   const handleWordExport = async () => {
     if (!selEmp) { alert("직원을 먼저 선택하세요."); return; }
     const empName = selEmp.name;
-    const contractType = contract.type === "weekend" ? "주말제·일당" : contract.type === "mixed" ? "복합근무" : "평일제·월급";
+    const contractType = contract.type === "weekend" ? "주말제·일당" : contract.type === "mixed" ? "복합근무" : contract.type === "parttime" ? "단시간·알바" : "평일제·월급";
 
     // 조항 데이터 수집
-    const allArticles = contract.type === "weekend" ? DEFAULT_ARTICLES_WEEKEND : DEFAULT_ARTICLES_WEEKDAY;
+    const allArticles = getDefaultArticles(contract.type);
     const mergedArticles = { ...allArticles };
     // contract.articles overrides if any
     if (contract.articles) {
@@ -1265,7 +1333,7 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
 
     // 임금 테이블 생성
     const wageRows = [];
-    if (contract.type !== "weekend") {
+    if (contract.type !== "weekend" && contract.type !== "parttime") {
       const basic_hours = contract.basic_hours || 182.49;
       const annual_hours = contract.annual_hours || 8.75;
       const overtime_hours = contract.overtime_hours || 0;
@@ -1321,14 +1389,15 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
 
     // 문서 조항 파라그래프 생성
     const articleParagraphs = [];
-    const maxArt = contract.type === "weekend" ? 10 : 11;
+    const maxArt = contract.type === "weekend" ? 10 : contract.type === "parttime" ? 8 : 11;
 
     for (let i = 1; i <= maxArt; i++) {
       const art = mergedArticles[i];
       if (!art) continue;
       articleParagraphs.push(titlePara(i, art.title));
       // 임금 조항에 테이블 삽입
-      if ((contract.type !== "weekend" && i === 7) || (contract.type === "weekend" && i === 7)) {
+      const wageArtNum = contract.type === "parttime" ? 6 : 7;
+      if (i === wageArtNum && wageTable) {
         if (wageTable) articleParagraphs.push(wageTable);
       }
       const text = replaceVars(art.text);
@@ -1429,6 +1498,9 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
       probation: contract.probation,
       probation_months: contract.probation_months,
       special_terms: contract.special_terms,
+      we_work_start: contract.we_work_start,
+      we_work_end: contract.we_work_end,
+      we_break_min: contract.we_break_min,
       articles: articles,
       updated_at: new Date().toISOString(),
     };
@@ -1485,34 +1557,75 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
         {/* 계약 기본정보 */}
         <div style={cardStyle}>
           <div style={sectionHeader("계약 기본정보")}><span style={{ color: C.white, fontWeight: 800, fontSize: 13 }}>📋 계약 기본정보</span></div>
-          <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>계약 시작일</label>
-              <input type="date" value={contract.start_date} onChange={e => setContract(p => ({ ...p, start_date: e.target.value }))} style={inputStyle} />
+          <div style={{ padding: 16 }}>
+            {/* 계약 유형 전환 */}
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 6 }}>계약 유형</label>
+              <div style={{ display: "flex", gap: 6 }}>
+                {[
+                  ["weekday", "평일제", C.navy],
+                  ["weekend", "주말제", C.orange],
+                  ["mixed", "복합근무", C.skyBlue],
+                  ["parttime", "알바", C.gray],
+                ].map(([k, v, color]) => (
+                  <button key={k} onClick={() => { setContract(p => ({ ...p, type: k })); setArticles(getDefaultArticles(k)); }}
+                    style={{
+                      flex: 1, padding: "8px 4px", borderRadius: 8, fontWeight: 700, fontSize: 11, cursor: "pointer",
+                      border: `2px solid ${contract.type === k ? color : C.border}`,
+                      background: contract.type === k ? color : C.white,
+                      color: contract.type === k ? C.white : C.gray, fontFamily: FONT, transition: "all 0.2s",
+                    }}>
+                    {v}
+                  </button>
+                ))}
+              </div>
             </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>계약 종료일</label>
-              <input type="date" value={contract.end_date} onChange={e => setContract(p => ({ ...p, end_date: e.target.value }))} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>출근시간</label>
-              <input type="time" value={contract.work_start} onChange={e => setContract(p => ({ ...p, work_start: e.target.value }))} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>퇴근시간</label>
-              <input type="time" value={contract.work_end} onChange={e => setContract(p => ({ ...p, work_end: e.target.value }))} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>휴게(분)</label>
-              <NumInput value={contract.break_min} onChange={v => setContract(p => ({ ...p, break_min: v }))} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>근무일</label>
-              <input value={contract.work_days} onChange={e => setContract(p => ({ ...p, work_days: e.target.value }))} style={inputStyle} />
-            </div>
-            <div>
-              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>급여일</label>
-              <NumInput value={contract.pay_day} onChange={v => setContract(p => ({ ...p, pay_day: v }))} />
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>계약 시작일</label>
+                <input type="date" value={contract.start_date} onChange={e => setContract(p => ({ ...p, start_date: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>계약 종료일</label>
+                <input type="date" value={contract.end_date} onChange={e => setContract(p => ({ ...p, end_date: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>{contract.type === "mixed" ? "평일 출근" : "출근시간"}</label>
+                <input type="time" value={contract.work_start} onChange={e => setContract(p => ({ ...p, work_start: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>{contract.type === "mixed" ? "평일 퇴근" : "퇴근시간"}</label>
+                <input type="time" value={contract.work_end} onChange={e => setContract(p => ({ ...p, work_end: e.target.value }))} style={inputStyle} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>{contract.type === "mixed" ? "평일 휴게(분)" : "휴게(분)"}</label>
+                <NumInput value={contract.break_min} onChange={v => setContract(p => ({ ...p, break_min: v }))} />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>근무일</label>
+                <input value={contract.work_days} onChange={e => setContract(p => ({ ...p, work_days: e.target.value }))} style={inputStyle} />
+              </div>
+              {/* 복합근무: 주말 시간 추가 */}
+              {contract.type === "mixed" && (
+                <>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>주말 출근</label>
+                    <input type="time" value={contract.we_work_start} onChange={e => setContract(p => ({ ...p, we_work_start: e.target.value }))} style={{ ...inputStyle, borderColor: C.orange }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>주말 퇴근</label>
+                    <input type="time" value={contract.we_work_end} onChange={e => setContract(p => ({ ...p, we_work_end: e.target.value }))} style={{ ...inputStyle, borderColor: C.orange }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>주말 휴게(분)</label>
+                    <NumInput value={contract.we_break_min} onChange={v => setContract(p => ({ ...p, we_break_min: v }))} style={{ borderColor: C.orange }} />
+                  </div>
+                </>
+              )}
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>급여일</label>
+                <NumInput value={contract.pay_day} onChange={v => setContract(p => ({ ...p, pay_day: v }))} />
+              </div>
             </div>
           </div>
         </div>
@@ -1521,10 +1634,33 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
         <div style={cardStyle}>
           <div style={sectionHeader("급여")}><span style={{ color: C.white, fontWeight: 800, fontSize: 13 }}>💰 급여</span></div>
           <div style={{ padding: 16, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
-            {contract.type !== "weekend" && <div><label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>총 월급 (비과세 포함)</label><NumInput value={contract.total_salary} onChange={v => setContract(p => ({ ...p, total_salary: v }))} /></div>}
-            {contract.type === "weekend" && <div><label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>일당</label><NumInput value={contract.weekend_daily} onChange={v => setContract(p => ({ ...p, weekend_daily: v }))} /></div>}
-            <div><label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>식대</label><NumInput value={contract.meal_allow} onChange={v => setContract(p => ({ ...p, meal_allow: v }))} /></div>
+            {/* 평일제, 복합: 월급 표시 */}
+            {(contract.type === "weekday" || contract.type === "mixed") && (
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>총 월급 (비과세 포함)</label>
+                <NumInput value={contract.total_salary} onChange={v => setContract(p => ({ ...p, total_salary: v }))} />
+              </div>
+            )}
+            {/* 주말제, 복합, 알바: 일당 표시 */}
+            {(contract.type === "weekend" || contract.type === "mixed" || contract.type === "parttime") && (
+              <div>
+                <label style={{ fontSize: 11, fontWeight: 700, color: contract.type === "mixed" ? C.orange : C.gray }}>
+                  {contract.type === "mixed" ? "주말 일당" : "일당"}
+                </label>
+                <NumInput value={contract.weekend_daily} onChange={v => setContract(p => ({ ...p, weekend_daily: v }))} style={contract.type === "mixed" ? { borderColor: C.orange } : {}} />
+              </div>
+            )}
+            <div>
+              <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>식대</label>
+              <NumInput value={contract.meal_allow} onChange={v => setContract(p => ({ ...p, meal_allow: v }))} />
+            </div>
           </div>
+          {/* 복합근무 안내 */}
+          {contract.type === "mixed" && (
+            <div style={{ margin: "0 16px 16px", padding: "10px 14px", background: "#E0F7FA", borderRadius: 8, fontSize: 11, color: C.skyBlue, fontWeight: 600 }}>
+              💡 복합근무: 평일 월급({fmt(contract.total_salary)}원) + 주말 일당({fmt(contract.weekend_daily)}원)이 병행됩니다.
+            </div>
+          )}
         </div>
 
         {/* 수습기간 */}
@@ -1592,7 +1728,7 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
           <div style={{ textAlign: "center", marginBottom: 30 }}>
             <h1 style={{ fontSize: 24, fontWeight: 900, letterSpacing: 8, color: C.dark }}>근 로 계 약 서</h1>
             <div style={{ fontSize: 12, color: C.gray, marginTop: 6 }}>
-              ({contract.type === "weekend" ? "주말제 · 일당" : contract.type === "mixed" ? "복합근무" : "평일제 · 월급"})
+              ({contract.type === "weekend" ? "주말제 · 일당" : contract.type === "mixed" ? "복합근무" : contract.type === "parttime" ? "단시간 · 알바" : "평일제 · 월급"})
             </div>
           </div>
 
@@ -1600,13 +1736,16 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
             <strong>주식회사 미스터팍</strong> (이하 "사용자")와 <strong>{selEmp?.name || "________"}</strong> (이하 "근로자")는 다음과 같이 근로계약을 체결한다.
           </p>
 
-          {/* 조항들 (1~6 or 임금 전) */}
-          {Object.entries(articles).filter(([n]) => Number(n) <= 6).map(([num, art]) => (
-            <div key={num} style={{ marginBottom: 14 }}>
-              <strong>제{num}조 ({art.title})</strong>
-              <div style={{ whiteSpace: "pre-wrap" }}>{replaceVars(art.text)}</div>
-            </div>
-          ))}
+          {/* 조항들 (페이지 1: 임금 조항 전까지) */}
+          {(() => {
+            const wageArtNum = contract.type === "parttime" ? 6 : 7;
+            return Object.entries(articles).filter(([n]) => Number(n) < wageArtNum).map(([num, art]) => (
+              <div key={num} style={{ marginBottom: 14 }}>
+                <strong>제{num}조 ({art.title})</strong>
+                <div style={{ whiteSpace: "pre-wrap" }}>{replaceVars(art.text)}</div>
+              </div>
+            ));
+          })()}
 
           {/* 수습기간 */}
           {contract.probation && (
@@ -1619,18 +1758,26 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
 
           {/* 페이지 2 */}
           <div className="page-break" style={{ borderTop: `2px dashed ${C.lightGray}`, marginTop: 30, paddingTop: 20 }}>
-            {/* 제7조 임금 */}
-            <div style={{ marginBottom: 14 }}>
-              <strong>제7조 (임금)</strong>
-              <div style={{ whiteSpace: "pre-wrap" }}>{replaceVars(articles[7]?.text || "")}</div>
-            </div>
+            {/* 임금 조항 */}
+            {(() => {
+              const wageArtNum = contract.type === "parttime" ? 6 : 7;
+              const wageArt = articles[wageArtNum];
+              return wageArt && (
+                <div style={{ marginBottom: 14 }}>
+                  <strong>제{wageArtNum}조 ({wageArt.title})</strong>
+                  <div style={{ whiteSpace: "pre-wrap" }}>{replaceVars(wageArt.text)}</div>
+                </div>
+              );
+            })()}
 
-            {/* 임금테이블 (평일제) */}
-            {wageTable && contract.type !== "weekend" && (
+            {/* 임금테이블 (평일제 + 복합근무 평일 부분) */}
+            {wageTable && (contract.type === "weekday" || contract.type === "mixed") && (
               <table style={{ width: "100%", borderCollapse: "collapse", margin: "14px 0", fontSize: 12 }}>
                 <thead>
                   <tr style={{ background: C.navy }}>
-                    <th colSpan={2} style={{ color: C.white, padding: 8, textAlign: "left" }}>월간 계약금액</th>
+                    <th colSpan={2} style={{ color: C.white, padding: 8, textAlign: "left" }}>
+                      {contract.type === "mixed" ? "평일 월간 계약금액" : "월간 계약금액"}
+                    </th>
                     <th colSpan={2} style={{ color: C.gold, padding: 8, textAlign: "right", fontWeight: 900, fontSize: 14 }}>금 {fmt(contract.total_salary)}원</th>
                   </tr>
                   <tr style={{ background: C.lightGray }}>
@@ -1658,13 +1805,35 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
               </table>
             )}
 
+            {/* 복합근무: 주말 일당 요약 */}
+            {contract.type === "mixed" && contract.weekend_daily > 0 && (
+              <table style={{ width: "100%", borderCollapse: "collapse", margin: "14px 0", fontSize: 12 }}>
+                <thead>
+                  <tr style={{ background: C.orange }}>
+                    <th style={{ color: C.white, padding: 8, textAlign: "left" }}>주말 일당</th>
+                    <th style={{ color: C.white, padding: 8, textAlign: "right", fontWeight: 900, fontSize: 14 }}>금 {fmt(contract.weekend_daily)}원 / 일</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td style={{ padding: "6px 10px", border: `1px solid ${C.border}`, fontSize: 11, color: C.gray }} colSpan={2}>
+                      주말 근무 시 일당 {fmt(contract.weekend_daily)}원을 별도 지급하며, 근무일수에 따라 정산한다.
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            )}
+
             {/* 나머지 조항 */}
-            {Object.entries(articles).filter(([n]) => Number(n) > 7).map(([num, art]) => (
-              <div key={num} style={{ marginBottom: 14 }}>
-                <strong>제{num}조 ({art.title})</strong>
-                <div style={{ whiteSpace: "pre-wrap" }}>{replaceVars(art.text)}</div>
-              </div>
-            ))}
+            {(() => {
+              const wageArtNum = contract.type === "parttime" ? 6 : 7;
+              return Object.entries(articles).filter(([n]) => Number(n) > wageArtNum).map(([num, art]) => (
+                <div key={num} style={{ marginBottom: 14 }}>
+                  <strong>제{num}조 ({art.title})</strong>
+                  <div style={{ whiteSpace: "pre-wrap" }}>{replaceVars(art.text)}</div>
+                </div>
+              ));
+            })()}
 
             {/* 서명란 */}
             <div style={{ marginTop: 40, textAlign: "center", fontSize: 12, color: C.gray }}>
@@ -2469,7 +2638,12 @@ function Resignation({ employees }) {
 // ── 16. 설정 ──────────────────────────────────────────
 function Settings() {
   const [tab, setTab] = useState("weekday");
-  const [arts, setArts] = useState({ weekday: { ...DEFAULT_ARTICLES_WEEKDAY }, weekend: { ...DEFAULT_ARTICLES_WEEKEND } });
+  const [arts, setArts] = useState({
+    weekday: { ...DEFAULT_ARTICLES_WEEKDAY },
+    weekend: { ...DEFAULT_ARTICLES_WEEKEND },
+    mixed: { ...DEFAULT_ARTICLES_MIXED },
+    parttime: { ...DEFAULT_ARTICLES_PARTTIME },
+  });
 
   return (
     <div>
@@ -2478,10 +2652,15 @@ function Settings() {
       {/* 조항 편집 */}
       <div style={cardStyle}>
         <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>📋 계약서 조항 편집</h3>
-        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-          {[["weekday", "평일제 (11조)"], ["weekend", "주말제 (10조)"]].map(([k, v]) => (
+        <div style={{ display: "flex", gap: 6, marginBottom: 16, flexWrap: "wrap" }}>
+          {[
+            ["weekday", "평일제 (11조)", C.navy],
+            ["weekend", "주말제 (10조)", C.orange],
+            ["mixed", "복합근무 (11조)", C.skyBlue],
+            ["parttime", "알바 (8조)", C.gray],
+          ].map(([k, v, color]) => (
             <button key={k} onClick={() => setTab(k)}
-              style={{ padding: "8px 20px", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer", border: `2px solid ${tab === k ? C.navy : C.border}`, background: tab === k ? C.navy : C.white, color: tab === k ? C.white : C.gray }}>
+              style={{ padding: "8px 16px", borderRadius: 8, fontWeight: 700, fontSize: 12, cursor: "pointer", border: `2px solid ${tab === k ? color : C.border}`, background: tab === k ? color : C.white, color: tab === k ? C.white : C.gray }}>
               {v}
             </button>
           ))}
@@ -2494,7 +2673,7 @@ function Settings() {
               rows={3} style={{ ...inputStyle, fontSize: 12, resize: "vertical" }} />
           </div>
         ))}
-        <button onClick={() => setArts(prev => ({ ...prev, [tab]: tab === "weekday" ? { ...DEFAULT_ARTICLES_WEEKDAY } : { ...DEFAULT_ARTICLES_WEEKEND } }))}
+        <button onClick={() => setArts(prev => ({ ...prev, [tab]: getDefaultArticles(tab) }))}
           style={{ ...btnSmall, background: C.lightGray, color: C.dark }}>기본값 초기화</button>
       </div>
 
