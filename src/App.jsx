@@ -1080,12 +1080,50 @@ function AdminInvitePanel() {
   const [newRole, setNewRole] = useState("admin");
   const [msg, setMsg] = useState("");
 
+  const APP_URL = window.location.origin;
+
   const handleSend = async () => {
     if (!newEmail.includes("@")) { setMsg("유효한 이메일을 입력하세요."); return; }
     const { error, invitation } = await sendInvite(newEmail, newRole);
     if (error) { setMsg(error); return; }
-    setMsg(`✅ ${newEmail}에 초대를 발송했습니다. 초대 코드: ${invitation?.token || ""}`);
+
+    const token = invitation?.token || "";
+    const roleName = ROLES[newRole] || newRole;
+
+    // 이메일 자동 작성 (Gmail 새 창)
+    const subject = encodeURIComponent(`[ME.PARK] 근로계약서 관리 시스템 관리자 초대`);
+    const body = encodeURIComponent(
+`안녕하세요,
+
+(주)미스터팍 ME.PARK 근로계약서 관리 시스템에 ${roleName}(으)로 초대합니다.
+
+━━━━━━━━━━━━━━━━━━━━━━
+📌 초대 코드: ${token}
+🔗 가입 링크: ${APP_URL}
+━━━━━━━━━━━━━━━━━━━━━━
+
+[가입 방법]
+1. 위 가입 링크 접속
+2. "초대 코드로 가입하기" 클릭
+3. 초대 코드 입력 → 이름/비밀번호 설정 → 완료
+
+※ 초대 유효기간: 7일
+※ 문의: 1899-1871
+
+주식회사 미스터팍`
+    );
+
+    window.open(`https://mail.google.com/mail/?view=cm&to=${newEmail}&su=${subject}&body=${body}`, "_blank");
+
+    setMsg(`✅ 초대 생성 완료! 이메일 작성 창이 열렸습니다. (초대코드: ${token})`);
     setNewEmail(""); setShowInviteForm(false);
+  };
+
+  const copyToken = (token) => {
+    navigator.clipboard.writeText(token).then(() => {
+      setMsg("✅ 초대 코드가 클립보드에 복사되었습니다.");
+      setTimeout(() => setMsg(""), 2000);
+    });
   };
 
   const statusStyle = (status) => ({
@@ -1209,13 +1247,21 @@ function AdminInvitePanel() {
                   <td style={{ padding: "8px 10px" }}>{inv.email}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center" }}>{ROLES[inv.role]}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center" }}><span style={statusStyle(inv.status)}>{statusLabel[inv.status]}</span></td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", fontFamily: "monospace", fontSize: 10, color: C.navy, fontWeight: 700 }}>{inv.token?.slice(0, 12)}...</td>
+                  <td style={{ padding: "8px 10px", textAlign: "center", fontFamily: "monospace", fontSize: 10, color: C.navy, fontWeight: 700 }}>
+                    {inv.token?.slice(0, 8)}...
+                    <button onClick={() => copyToken(inv.token)} title="코드 복사" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, marginLeft: 4 }}>📋</button>
+                  </td>
                   <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{inv.created_at}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{inv.expires_at}</td>
                   <td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
                     {inv.status === "pending" && (
                       <>
-                        <button onClick={() => resendInvite(inv.id)} title="재발송" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, marginRight: 4 }}>🔄</button>
+                        <button onClick={async () => {
+                          await resendInvite(inv.id);
+                          const subject = encodeURIComponent(`[ME.PARK] 관리자 초대 (재발송)`);
+                          const body = encodeURIComponent(`안녕하세요,\n\nME.PARK 관리 시스템 초대를 재발송합니다.\n\n📌 초대 코드: ${inv.token}\n🔗 가입 링크: ${APP_URL}\n\n※ 유효기간이 7일 연장되었습니다.\n\n주식회사 미스터팍`);
+                          window.open(`https://mail.google.com/mail/?view=cm&to=${inv.email}&su=${subject}&body=${body}`, "_blank");
+                        }} title="재발송" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, marginRight: 4 }}>🔄</button>
                         <button onClick={() => cancelInvite(inv.id)} title="취소" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>❌</button>
                       </>
                     )}
