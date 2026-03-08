@@ -5069,8 +5069,8 @@ function SiteManagementPage({ employees }) {
   const [siteParking, setSiteParking] = useState({});
   const [saving, setSaving] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newSiteCode, setNewSiteCode] = useState("");
   const [newSiteName, setNewSiteName] = useState("");
+  const [addError, setAddError] = useState("");
   const [customSites, setCustomSites] = useState([]); // DB에서 추가된 사업장
 
   // DB 로드
@@ -5108,6 +5108,14 @@ function SiteManagementPage({ employees }) {
     return [...base, ...customSites.filter(cs => !base.find(b => b.code === cs.code))];
   }, [customSites]);
 
+  // 다음 사업장 코드 자동 계산
+  const nextSiteCode = useMemo(() => {
+    const codes = allSites.map(s => s.code).filter(c => /^V\d+$/.test(c));
+    const nums = codes.map(c => parseInt(c.slice(1)));
+    const max = nums.length > 0 ? Math.max(...nums) : 0;
+    return `V${String(max + 1).padStart(3, "0")}`;
+  }, [allSites]);
+
   const activeSiteEmps = useMemo(() => {
     const map = {};
     allSites.forEach(s => { map[s.code] = 0; });
@@ -5117,22 +5125,22 @@ function SiteManagementPage({ employees }) {
 
   // 사업장 추가
   const handleAddSite = async () => {
-    const code = newSiteCode.trim().toUpperCase();
+    const code = nextSiteCode;
     const name = newSiteName.trim();
-    if (!code || !name) { alert("코드와 이름을 모두 입력하세요"); return; }
-    if (allSites.find(s => s.code === code)) { alert("이미 존재하는 코드입니다"); return; }
+    if (!name) { setAddError("사업장명을 입력하세요"); return; }
+    setAddError("");
     setSaving(true);
     try {
-      const { data, error } = await supabase.from("site_details").upsert(
-        { site_code: code, site_name: name, updated_at: new Date().toISOString() },
-        { onConflict: "site_code" }
-      ).select();
-      if (error) { alert("사업장 등록 실패: " + error.message); setSaving(false); return; }
+      const { data, error } = await supabase.from("site_details")
+        .insert({ site_code: code, site_name: name, updated_at: new Date().toISOString() })
+        .select();
+      if (error) { setAddError("등록 실패: " + error.message); setSaving(false); return; }
+      if (!data || data.length === 0) { setAddError("등록 실패: 데이터가 저장되지 않았습니다. RLS 정책을 확인하세요."); setSaving(false); return; }
       setCustomSites(p => [...p, { code, name }]);
-      setSiteDetails(p => ({ ...p, [code]: data?.[0] || { site_code: code, site_name: name } }));
-      setNewSiteCode(""); setNewSiteName(""); setShowAddForm(false);
+      setSiteDetails(p => ({ ...p, [code]: data[0] }));
+      setNewSiteName(""); setShowAddForm(false);
       setSelectedSite({ code, name });
-    } catch (e) { alert("사업장 등록 중 오류: " + e.message); }
+    } catch (e) { setAddError("등록 중 오류: " + e.message); }
     setSaving(false);
   };
 
@@ -5215,13 +5223,16 @@ function SiteManagementPage({ employees }) {
           {/* 사업장 추가 폼 */}
           {showAddForm && (
             <div style={{ padding: 12, background: "#FFFDE7", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
-                <input value={newSiteCode} onChange={e => setNewSiteCode(e.target.value)} placeholder="코드 (V017)" style={{ ...inputStyle, flex: "0 0 70px", fontSize: 11, padding: "5px 8px" }} />
-                <input value={newSiteName} onChange={e => setNewSiteName(e.target.value)} placeholder="사업장명" style={{ ...inputStyle, flex: 1, fontSize: 11, padding: "5px 8px" }} />
+              <div style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
+                <span style={{ flex: "0 0 60px", fontSize: 12, fontWeight: 800, color: C.navy, textAlign: "center", padding: "5px 0", background: "#fff", borderRadius: 6, border: `1.5px solid ${C.navy}` }}>{nextSiteCode}</span>
+                <input value={newSiteName} onChange={e => { setNewSiteName(e.target.value); setAddError(""); }} placeholder="사업장명 입력" autoFocus
+                  style={{ ...inputStyle, flex: 1, fontSize: 12, padding: "6px 10px" }}
+                  onKeyDown={e => e.key === "Enter" && handleAddSite()} />
               </div>
+              {addError && <div style={{ fontSize: 11, color: C.error, fontWeight: 700, marginBottom: 6, padding: "4px 8px", background: "#FFF0F0", borderRadius: 4 }}>⚠️ {addError}</div>}
               <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={handleAddSite} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "none", background: C.navy, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>등록</button>
-                <button onClick={() => { setShowAddForm(false); setNewSiteCode(""); setNewSiteName(""); }} style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.gray }}>취소</button>
+                <button onClick={handleAddSite} disabled={saving} style={{ flex: 1, padding: "6px 0", borderRadius: 6, border: "none", background: saving ? C.gray : C.navy, color: "#fff", fontSize: 11, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>{saving ? "등록 중..." : "등록"}</button>
+                <button onClick={() => { setShowAddForm(false); setNewSiteName(""); setAddError(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.gray }}>취소</button>
               </div>
             </div>
           )}
