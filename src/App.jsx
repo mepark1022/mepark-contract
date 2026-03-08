@@ -794,6 +794,34 @@ function MainDashboard({ employees, onNavigate, profitState }) {
             </div>
           </div>
 
+          {/* 사업장 현황 */}
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+            <div style={{ background: C.navy, color: "#fff", padding: "9px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between", cursor: "pointer" }}
+              onClick={() => onNavigate("employees")}>
+              <span>사업장 현황</span>
+              <span style={{ color: C.gold, fontSize: 11 }}>{activeSites.length}개 운영 →</span>
+            </div>
+            <div style={{ padding: "8px 14px", maxHeight: 200, overflowY: "auto" }}>
+              {sortedPLs.length > 0 ? sortedPLs.map((s, i) => (
+                <div key={s.code} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderTop: i > 0 ? `1px solid #f0f0f0` : "none" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 10, fontWeight: 700, color: C.navy, flexShrink: 0 }}>{s.code}</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: C.dark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
+                    <span style={{ fontSize: 9, color: C.gray, flexShrink: 0 }}>{s.count}명</span>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                    {s.rev > 0 && <span style={{ fontSize: 10, fontWeight: 700, color: C.dark }}>{pFmt(s.rev)}</span>}
+                    <span style={{ fontSize: 10, fontWeight: 800, color: s.profit >= 0 ? C.success : C.error, minWidth: 36, textAlign: "right" }}>
+                      {s.rev > 0 ? (s.margin >= 0 ? "+" : "") + s.margin.toFixed(0) + "%" : "—"}
+                    </span>
+                  </div>
+                </div>
+              )) : (
+                <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: 8 }}>매출 데이터를 입력해주세요</div>
+              )}
+            </div>
+          </div>
+
           {/* 재무 요약 */}
           {finKPI.hasData && (
             <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
