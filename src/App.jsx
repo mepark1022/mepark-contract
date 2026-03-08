@@ -4287,6 +4287,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const [costTab, setCostTab] = useState("revenue");
   const [savingStatus, setSavingStatus] = useState(null); // ★ Phase C: 저장 상태 표시
   const saveTimerRef = useRef(null);
+  const detailTimerRef = useRef(null); // ★ 계약현황탭 저장용 타이머
 
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
@@ -4434,6 +4435,36 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
 
   const pcardStyle = { background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" };
   const pSectionTitle = (text) => <div style={{ fontSize: 15, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `2px solid ${C.gold}` }}>{text}</div>;
+
+  // ★ costTotals (비용입력 합계 — 기존 CostInputView에서 이동)
+  const costTotals = useMemo(() => {
+    const t = { contract: 0, valet: 0, parking: 0, count: 0, lFixed: 0, lSub: 0, rev: 0, profit: 0 };
+    FIELD_SITES.forEach(site => {
+      const detail = siteDetailsMap[site.code] || {};
+      t.contract += toNum(detail.monthly_contract);
+      t.valet += toNum(monthRevenue[site.code]);
+      t.parking += parkingBySite[site.code] || 0;
+      t.count += laborBySite[site.code]?.count || 0;
+      t.lFixed += toNum(monthLabor[site.code]?.fixed);
+      t.lSub += toNum(monthLabor[site.code]?.sub);
+    });
+    t.rev = t.valet + t.parking;
+    t.labor = t.lFixed + t.lSub;
+    t.profit = t.rev - t.labor;
+    return t;
+  }, [monthRevenue, monthLabor, parkingBySite, laborBySite, siteDetailsMap]);
+
+  // ★ handleDetailChange (비용입력 계약현황탭 — 기존 CostInputView에서 이동)
+  const handleDetailChange = (code, field, value) => {
+    if (detailTimerRef.current) clearTimeout(detailTimerRef.current);
+    detailTimerRef.current = setTimeout(() => {
+      setSavingStatus("saving");
+      saveDetailToDB?.(code, field, value).then(() => {
+        setSavingStatus("saved");
+        setTimeout(() => setSavingStatus(null), 1500);
+      });
+    }, 800);
+  };
 
   const copyPrevMonth = async () => {
     const [y, m] = currentMonth.split("-").map(Number);
@@ -4666,39 +4697,8 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
     );
   };
 
-  // ── 비용 입력 ──
-  const CostInputView = () => {
-    // 계약현황탭 저장 헬퍼
-    const detailTimerRef = useRef(null);
-    const handleDetailChange = (code, field, value) => {
-      if (detailTimerRef.current) clearTimeout(detailTimerRef.current);
-      detailTimerRef.current = setTimeout(() => {
-        setSavingStatus("saving");
-        saveDetailToDB?.(code, field, value).then(() => {
-          setSavingStatus("saved");
-          setTimeout(() => setSavingStatus(null), 1500);
-        });
-      }, 800);
-    };
-
-    // 합계 계산
-    const costTotals = useMemo(() => {
-      const t = { contract: 0, valet: 0, parking: 0, count: 0, lFixed: 0, lSub: 0, rev: 0, profit: 0 };
-      FIELD_SITES.forEach(site => {
-        const detail = siteDetailsMap[site.code] || {};
-        t.contract += toNum(detail.monthly_contract);
-        t.valet += toNum(monthRevenue[site.code]);
-        t.parking += parkingBySite[site.code] || 0;
-        t.count += laborBySite[site.code]?.count || 0;
-        t.lFixed += toNum(monthLabor[site.code]?.fixed);
-        t.lSub += toNum(monthLabor[site.code]?.sub);
-      });
-      t.rev = t.valet + t.parking;
-      t.labor = t.lFixed + t.lSub;
-      t.profit = t.rev - t.labor;
-      return t;
-    }, [monthRevenue, monthLabor, parkingBySite, laborBySite, siteDetailsMap]);
-
+  // ── 비용 입력 (렌더 함수 — 인라인 컴포넌트 아님) ──
+  const renderCostInput = () => {
     return (
       <div>
         {pSectionTitle("✏️ 비용 입력 — " + currentMonth)}
@@ -4751,7 +4751,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                       <td style={{ padding: "6px 4px", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap" }}>{site.name}</td>
                       <td style={{ padding: "6px 4px", textAlign: "right", color: C.gray, fontSize: 10 }}>{toNum(detail.monthly_contract) > 0 ? pFmt(detail.monthly_contract) : "—"}</td>
                       <td style={{ padding: "4px 4px", width: 115 }}>
-                        <NumInput value={valetRev} onChange={v => setRev(site.code, v)}
+                        <BlurSaveNum value={valetRev} onSave={v => setRev(site.code, v)}
                           style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} />
                       </td>
                       <td style={{ padding: "6px 4px", textAlign: "right", color: parkRev > 0 ? C.navy : C.gray, fontWeight: parkRev > 0 ? 700 : 400, fontSize: 10 }}>
@@ -4759,11 +4759,11 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                       </td>
                       <td style={{ padding: "6px 4px", textAlign: "center", color: C.gray, fontSize: 11 }}>{headcount}명</td>
                       <td style={{ padding: "4px 2px", width: 110, borderLeft: `2px solid ${C.navy}`, background: i % 2 === 0 ? "#EFF6FF" : "#E8F0FE" }}>
-                        <NumInput value={lFixed} onChange={v => setLabor(site.code, "fixed", v)}
+                        <BlurSaveNum value={lFixed} onSave={v => setLabor(site.code, "fixed", v)}
                           style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11, background: "transparent", border: "1.5px solid #B3D4FC" }} />
                       </td>
                       <td style={{ padding: "4px 2px", width: 110, borderLeft: `1px solid ${C.border}`, background: i % 2 === 0 ? "#FFF8E1" : "#FFF3CD" }}>
-                        <NumInput value={lSub} onChange={v => setLabor(site.code, "sub", v)}
+                        <BlurSaveNum value={lSub} onSave={v => setLabor(site.code, "sub", v)}
                           style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11, background: "transparent", border: `1.5px solid ${C.gold}` }} />
                       </td>
                       <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 700, fontSize: 11, color: margin === null ? C.gray : margin >= 0 ? C.success : C.error }}>
@@ -4858,7 +4858,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                       )}
                     </td>
                     <td style={{ padding: "4px 6px", width: 160 }}>
-                      <NumInput value={oh.amount} onChange={v => setOH(i, "amount", v)}
+                      <BlurSaveNum value={oh.amount} onSave={v => setOH(i, "amount", v)}
                         style={{ ...inputStyle, textAlign: "right", padding: "6px 8px", fontSize: 12 }} />
                     </td>
                     <td style={{ padding: "6px", textAlign: "center" }}>
@@ -4998,11 +4998,11 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   );
 
   // ── 서브페이지 라우팅 ──
-  if (subPage === "site_pl") return <SitePLView />;
-  if (subPage === "cost_input") return <CostInputView />;
-  if (subPage === "comparison") return <ComparisonView />;
-  if (subPage === "alloc_settings") return <AllocSettingsView />;
-  return <SummaryView />;
+  if (subPage === "site_pl") return SitePLView();
+  if (subPage === "cost_input") return renderCostInput();
+  if (subPage === "comparison") return ComparisonView();
+  if (subPage === "alloc_settings") return AllocSettingsView();
+  return SummaryView();
 }
 
 // ── 16-2. 사업장 현황 관리 ─────────────────────────────
