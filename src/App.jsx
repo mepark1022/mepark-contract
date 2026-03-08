@@ -550,7 +550,7 @@ const DEFAULT_ARTICLES_PARTTIME = {
 
 // ── 10. 메인 대시보드 (통합 홈) ── Phase C 업그레이드 ──────
 function MainDashboard({ employees, onNavigate, profitState }) {
-  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [], monthlyParkingData = [] } = profitState;
+  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [], monthlyParkingData = [], laborData = {}, siteDetailsMap = {} } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
   const [chartPeriod, setChartPeriod] = useState("mtd"); // ★ Phase C: 기본 이번달
@@ -597,6 +597,17 @@ function MainDashboard({ employees, onNavigate, profitState }) {
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
   const prevRevenue = revenueData[prevMonth] || {};
+  const monthLabor = laborData[currentMonth] || {};
+
+  // ★ 월주차 사업장별 매출 집계 (자동)
+  const parkingBySite = useMemo(() => {
+    const map = {};
+    (monthlyParkingData || []).forEach(p => {
+      if (!map[p.site_code]) map[p.site_code] = 0;
+      map[p.site_code] += toNum(p.monthly_fee);
+    });
+    return map;
+  }, [monthlyParkingData]);
 
   const laborBySite = useMemo(() => {
     const map = {};
@@ -634,8 +645,12 @@ function MainDashboard({ employees, onNavigate, profitState }) {
 
   const sitePLs = useMemo(() => {
     return FIELD_SITES.map(site => {
-      const rev = toNum(monthRevenue[site.code]);
-      const labor = laborBySite[site.code]?.total || 0;
+      const valetRev = toNum(monthRevenue[site.code]);
+      const parkingRev = parkingBySite[site.code] || 0;
+      const rev = valetRev + parkingRev;
+      const laborFixed = toNum(monthLabor[site.code]?.fixed);
+      const laborSub = toNum(monthLabor[site.code]?.sub);
+      const labor = laborFixed + laborSub;
       const overhead = allocated[site.code] || 0;
       const profit = rev - labor - overhead;
       const margin = rev > 0 ? (profit / rev) * 100 : 0;
@@ -643,10 +658,10 @@ function MainDashboard({ employees, onNavigate, profitState }) {
       const laborRatio = rev > 0 ? (labor / rev) * 100 : 0;
       // ★ Phase B: 전월대비
       const prevRev = toNum(prevRevenue[site.code]);
-      const momChange = prevRev > 0 ? ((rev - prevRev) / prevRev) * 100 : null;
-      return { ...site, rev, labor, overhead, profit, margin, count, laborRatio, momChange };
+      const momChange = prevRev > 0 ? ((valetRev - prevRev) / prevRev) * 100 : null;
+      return { ...site, valetRev, parkingRev, rev, labor, overhead, profit, margin, count, laborRatio, momChange };
     }).filter(s => s.rev > 0 || s.count > 0);
-  }, [monthRevenue, prevRevenue, laborBySite, allocated]);
+  }, [monthRevenue, prevRevenue, monthLabor, parkingBySite, laborBySite, allocated]);
 
   const sortedPLs = useMemo(() => {
     const arr = [...sitePLs];
@@ -4091,7 +4106,7 @@ const pFmtFull = (n) => (n == null || n === "" || isNaN(n)) ? "0" : Math.round(N
 const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
 function ProfitabilityPage({ employees, subPage, profitState }) {
-  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB } = profitState;
+  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, monthlyParkingData } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
@@ -4101,6 +4116,17 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
 
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
+  const monthLabor = laborData[currentMonth] || {};
+
+  // ★ 월주차 사업장별 매출 집계 (자동)
+  const parkingBySite = useMemo(() => {
+    const map = {};
+    (monthlyParkingData || []).forEach(p => {
+      if (!map[p.site_code]) map[p.site_code] = 0;
+      map[p.site_code] += toNum(p.monthly_fee);
+    });
+    return map;
+  }, [monthlyParkingData]);
 
   // ★ Phase C: 매출 변경 → state + DB 저장
   const setRev = (code, val) => {
@@ -4109,6 +4135,26 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
     saveTimerRef.current = setTimeout(() => {
       setSavingStatus("saving");
       saveRevenueToDB?.(currentMonth, code, val).then(() => {
+        setSavingStatus("saved");
+        setTimeout(() => setSavingStatus(null), 1500);
+      });
+    }, 800);
+  };
+
+  // ★ 인건비(고정/대체) 변경 → state + DB 저장
+  const setLabor = (code, field, val) => {
+    setLaborData(p => ({
+      ...p,
+      [currentMonth]: {
+        ...p[currentMonth],
+        [code]: { ...(p[currentMonth]?.[code] || { fixed: 0, sub: 0 }), [field]: val }
+      }
+    }));
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      setSavingStatus("saving");
+      const dbField = field === "fixed" ? "labor_fixed" : "labor_sub";
+      saveLaborToDB?.(currentMonth, code, dbField, val).then(() => {
         setSavingStatus("saved");
         setTimeout(() => setSavingStatus(null), 1500);
       });
@@ -4174,19 +4220,23 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
     return result;
   }, [monthRevenue, monthOverhead, laborBySite]);
 
-  // 사업장별 PL
+  // 사업장별 PL (★ 발렛비+월주차 = 총매출, 인건비 = 수동입력 고정+대체)
   const sitePLs = useMemo(() => {
     return FIELD_SITES.map(site => {
-      const rev = toNum(monthRevenue[site.code]);
-      const labor = laborBySite[site.code]?.total || 0;
+      const valetRev = toNum(monthRevenue[site.code]);
+      const parkingRev = parkingBySite[site.code] || 0;
+      const rev = valetRev + parkingRev;
+      const laborFixed = toNum(monthLabor[site.code]?.fixed);
+      const laborSub = toNum(monthLabor[site.code]?.sub);
+      const labor = laborFixed + laborSub;
       const overhead = allocated[site.code]?.total || 0;
       const totalCost = labor + overhead;
       const profit = rev - totalCost;
       const margin = rev > 0 ? (profit / rev) * 100 : 0;
       const count = laborBySite[site.code]?.count || 0;
-      return { ...site, rev, labor, overhead, totalCost, profit, margin, count };
+      return { ...site, valetRev, parkingRev, rev, laborFixed, laborSub, labor, overhead, totalCost, profit, margin, count };
     });
-  }, [monthRevenue, laborBySite, allocated]);
+  }, [monthRevenue, monthLabor, parkingBySite, laborBySite, allocated]);
 
   const sortedPLs = useMemo(() => {
     const arr = [...sitePLs].filter(s => s.rev > 0 || s.count > 0);
@@ -4214,13 +4264,21 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const copyPrevMonth = async () => {
     const [y, m] = currentMonth.split("-").map(Number);
     const pm = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+    setSavingStatus("saving");
     if (revenueData[pm]) {
       setRevenueData(p => ({ ...p, [currentMonth]: { ...p[pm] } }));
-      // ★ Phase C: DB 배치 저장
-      setSavingStatus("saving");
       const revEntries = Object.entries(revenueData[pm]);
       for (const [code, val] of revEntries) {
         await saveRevenueToDB?.(currentMonth, code, val);
+      }
+    }
+    // ★ 인건비 데이터도 복사
+    if (laborData[pm]) {
+      setLaborData(p => ({ ...p, [currentMonth]: JSON.parse(JSON.stringify(p[pm])) }));
+      const labEntries = Object.entries(laborData[pm]);
+      for (const [code, vals] of labEntries) {
+        if (vals.fixed) await saveLaborToDB?.(currentMonth, code, "labor_fixed", vals.fixed);
+        if (vals.sub) await saveLaborToDB?.(currentMonth, code, "labor_sub", vals.sub);
       }
     }
     if (overheadData[pm]) {
@@ -4435,6 +4493,24 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
 
   // ── 비용 입력 ──
   const CostInputView = () => {
+    // 합계 계산
+    const costTotals = useMemo(() => {
+      const t = { contract: 0, valet: 0, parking: 0, count: 0, lFixed: 0, lSub: 0, rev: 0, profit: 0 };
+      FIELD_SITES.forEach(site => {
+        const detail = siteDetailsMap[site.code] || {};
+        t.contract += toNum(detail.monthly_contract);
+        t.valet += toNum(monthRevenue[site.code]);
+        t.parking += parkingBySite[site.code] || 0;
+        t.count += laborBySite[site.code]?.count || 0;
+        t.lFixed += toNum(monthLabor[site.code]?.fixed);
+        t.lSub += toNum(monthLabor[site.code]?.sub);
+      });
+      t.rev = t.valet + t.parking;
+      t.labor = t.lFixed + t.lSub;
+      t.profit = t.rev - t.labor;
+      return t;
+    }, [monthRevenue, monthLabor, parkingBySite, laborBySite, siteDetailsMap]);
+
     return (
       <div>
         {pSectionTitle("✏️ 비용 입력 — " + currentMonth)}
@@ -4444,7 +4520,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
           {[["revenue", "💰 사업장 매출"], ["overhead", "🏢 간접비"]].map(([k, v]) => (
             <button key={k} onClick={() => setCostTab(k)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${costTab === k ? C.navy : C.border}`, background: costTab === k ? C.navy : "#fff", color: costTab === k ? "#fff" : C.gray }}>{v}</button>
           ))}
-          {/* ★ Phase C: DB 저장 상태 표시 */}
+          {/* ★ DB 저장 상태 표시 */}
           {savingStatus && (
             <span style={{ fontSize: 11, fontWeight: 700, color: savingStatus === "saving" ? C.orange : C.success, marginLeft: "auto" }}>
               {savingStatus === "saving" ? "💾 저장 중..." : "✅ DB 저장 완료"}
@@ -4455,32 +4531,68 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
         {costTab === "revenue" ? (
           <div style={{ ...pcardStyle, overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-              <thead><tr style={{ background: C.navy }}>
-                {["코드", "사업장", "매출 (월)", "인원", "인건비", "이익률"].map(h => <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>)}
-              </tr></thead>
+              <thead>
+                <tr style={{ background: C.navy }}>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>코드</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "left", whiteSpace: "nowrap" }}>사업장</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>월계약금</th>
+                  <th style={{ padding: "8px 4px", color: C.gold, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>발렛비</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>월주차(자동)</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>인원</th>
+                  <th colSpan={2} style={{ padding: "8px 4px", color: C.gold, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap", borderLeft: "1px solid rgba(255,255,255,0.2)" }}>인건비 (고정 / 대체)</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>이익률</th>
+                </tr>
+              </thead>
               <tbody>
                 {FIELD_SITES.map((site, i) => {
-                  const pl = sitePLs.find(s => s.code === site.code) || {};
+                  const detail = siteDetailsMap[site.code] || {};
+                  const valetRev = toNum(monthRevenue[site.code]);
+                  const parkRev = parkingBySite[site.code] || 0;
+                  const totalRev = valetRev + parkRev;
+                  const lFixed = toNum(monthLabor[site.code]?.fixed);
+                  const lSub = toNum(monthLabor[site.code]?.sub);
+                  const totalLabor = lFixed + lSub;
+                  const siteOH = allocated[site.code]?.total || 0;
+                  const profit = totalRev - totalLabor - siteOH;
+                  const margin = totalRev > 0 ? (profit / totalRev) * 100 : null;
+                  const headcount = laborBySite[site.code]?.count || 0;
                   return (
                     <tr key={site.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
-                      <td style={{ padding: "6px", textAlign: "center", fontWeight: 600, color: C.navy }}>{site.code}</td>
-                      <td style={{ padding: "6px", fontWeight: 600 }}>{site.name}</td>
-                      <td style={{ padding: "4px 6px", width: 160 }}>
-                        <NumInput value={toNum(monthRevenue[site.code])} onChange={v => setRev(site.code, v)}
-                          style={{ ...inputStyle, textAlign: "right", padding: "6px 8px", fontSize: 12 }} />
+                      <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 600, color: C.navy, fontSize: 10 }}>{site.code}</td>
+                      <td style={{ padding: "6px 4px", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap" }}>{site.name}</td>
+                      <td style={{ padding: "6px 4px", textAlign: "right", color: C.gray, fontSize: 10 }}>{toNum(detail.monthly_contract) > 0 ? pFmt(detail.monthly_contract) : "—"}</td>
+                      <td style={{ padding: "4px 4px", width: 120 }}>
+                        <NumInput value={valetRev} onChange={v => setRev(site.code, v)}
+                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} />
                       </td>
-                      <td style={{ padding: "6px", textAlign: "center", color: C.gray }}>{pl.count || 0}명</td>
-                      <td style={{ padding: "6px", textAlign: "right", color: C.orange, fontWeight: 700 }}>{pFmt(pl.labor || 0)}</td>
-                      <td style={{ padding: "6px", textAlign: "center", fontWeight: 700, color: (pl.margin || 0) >= 0 ? C.success : C.error }}>{pl.rev > 0 ? (pl.margin || 0).toFixed(1) + "%" : "—"}</td>
+                      <td style={{ padding: "6px 4px", textAlign: "right", color: parkRev > 0 ? C.navy : C.gray, fontWeight: parkRev > 0 ? 700 : 400, fontSize: 10 }}>
+                        {parkRev > 0 ? pFmt(parkRev) : "—"}
+                      </td>
+                      <td style={{ padding: "6px 4px", textAlign: "center", color: C.gray, fontSize: 11 }}>{headcount}명</td>
+                      <td style={{ padding: "4px 2px", width: 110, borderLeft: `1px solid ${C.border}` }}>
+                        <NumInput value={lFixed} onChange={v => setLabor(site.code, "fixed", v)}
+                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} placeholder="고정" />
+                      </td>
+                      <td style={{ padding: "4px 2px", width: 110 }}>
+                        <NumInput value={lSub} onChange={v => setLabor(site.code, "sub", v)}
+                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} placeholder="대체" />
+                      </td>
+                      <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 700, fontSize: 11, color: margin === null ? C.gray : margin >= 0 ? C.success : C.error }}>
+                        {margin !== null ? margin.toFixed(1) + "%" : "—"}
+                      </td>
                     </tr>
                   );
                 })}
+                {/* 합계행 */}
                 <tr style={{ background: C.navy }}>
-                  <td colSpan={2} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
-                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(totals.rev)}</td>
-                  <td style={{ padding: "8px 6px", color: "#fff", textAlign: "center" }}>{totals.count}명</td>
-                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmt(totals.labor)}</td>
-                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{totals.rev > 0 ? ((totals.profit / totals.rev) * 100).toFixed(1) + "%" : "—"}</td>
+                  <td colSpan={2} style={{ padding: "8px 4px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+                  <td style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "right", fontSize: 10 }}>{costTotals.contract > 0 ? pFmt(costTotals.contract) : ""}</td>
+                  <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "right", fontSize: 11 }}>{pFmtFull(costTotals.valet)}</td>
+                  <td style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "right", fontSize: 10 }}>{costTotals.parking > 0 ? pFmt(costTotals.parking) : ""}</td>
+                  <td style={{ padding: "8px 4px", color: "#fff", textAlign: "center" }}>{costTotals.count}명</td>
+                  <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "right", fontSize: 11, borderLeft: "1px solid rgba(255,255,255,0.2)" }}>{pFmtFull(costTotals.lFixed)}</td>
+                  <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "right", fontSize: 11 }}>{pFmtFull(costTotals.lSub)}</td>
+                  <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{costTotals.rev > 0 ? ((costTotals.profit / costTotals.rev) * 100).toFixed(1) + "%" : "—"}</td>
                 </tr>
               </tbody>
             </table>
@@ -5895,6 +6007,8 @@ function MainApp() {
   const [profitMonth, setProfitMonth] = useState("2026-02");
   const [revenueData, setRevenueData] = useState({});
   const [overheadData, setOverheadData] = useState({});
+  const [laborData, setLaborData] = useState({});       // ★ 인건비(고정/대체)
+  const [siteDetailsMap, setSiteDetailsMap] = useState({}); // ★ 사업장 상세(월계약금 등)
 
   // ★ Phase B: monthly_summary 로딩 (재무 KPI + 기간연산)
   const [monthlySummary, setMonthlySummary] = useState([]);
@@ -5915,11 +6029,18 @@ function MainApp() {
     if (data) setChartTransactions(data);
   };
 
-  // ★ Phase C: 비용입력 DB 저장 (site_revenue)
+  // ★ Phase C: 비용입력 DB 저장 (site_revenue - 발렛비)
   const saveRevenueToDB = useCallback(async (month, siteCode, amount) => {
     const { error } = await supabase.from("site_revenue")
       .upsert({ site_code: siteCode, month, revenue: Math.round(amount) }, { onConflict: "site_code,month" });
     if (error) console.error("site_revenue save error:", error);
+  }, []);
+
+  // ★ 인건비(고정/대체) DB 저장 (site_revenue 동일 테이블)
+  const saveLaborToDB = useCallback(async (month, siteCode, field, value) => {
+    const { error } = await supabase.from("site_revenue")
+      .upsert({ site_code: siteCode, month, [field]: Math.round(value) }, { onConflict: "site_code,month" });
+    if (error) console.error("labor save error:", error);
   }, []);
 
   // ★ Phase C: 비용입력 DB 저장 (site_overhead)
@@ -5934,11 +6055,15 @@ function MainApp() {
     const { data: revRows } = await supabase.from("site_revenue").select("*");
     if (revRows && revRows.length > 0) {
       const revMap = {};
+      const labMap = {};
       revRows.forEach(r => {
         if (!revMap[r.month]) revMap[r.month] = {};
         revMap[r.month][r.site_code] = r.revenue;
+        if (!labMap[r.month]) labMap[r.month] = {};
+        labMap[r.month][r.site_code] = { fixed: r.labor_fixed || 0, sub: r.labor_sub || 0 };
       });
       setRevenueData(revMap);
+      setLaborData(labMap);
     }
     const { data: ohRows } = await supabase.from("site_overhead").select("*");
     if (ohRows && ohRows.length > 0) {
@@ -5948,6 +6073,16 @@ function MainApp() {
         ohMap[r.month].push({ key: r.item_key, label: r.item_label, method: r.alloc_method, amount: r.amount });
       });
       setOverheadData(ohMap);
+    }
+  };
+
+  // ★ 사업장 상세정보 로딩 (월계약금 등)
+  const loadSiteDetails = async () => {
+    const { data } = await supabase.from("site_details").select("*");
+    if (data) {
+      const map = {};
+      data.forEach(d => { map[d.site_code] = d; });
+      setSiteDetailsMap(map);
     }
   };
 
@@ -5961,8 +6096,10 @@ function MainApp() {
   const profitState = {
     profitMonth, setProfitMonth,
     revenueData, setRevenueData, overheadData, setOverheadData,
+    laborData, setLaborData,
+    siteDetailsMap,
     monthlySummary, chartTransactions,
-    saveRevenueToDB, saveOverheadToDB,
+    saveRevenueToDB, saveOverheadToDB, saveLaborToDB,
     monthlyParkingData,
   };
 
@@ -5973,7 +6110,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); }, []);
+  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); loadSiteDetails(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
