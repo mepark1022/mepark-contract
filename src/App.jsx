@@ -3545,6 +3545,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
+  const [costTab, setCostTab] = useState("revenue");
 
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
@@ -3836,7 +3837,6 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
 
   // ── 비용 입력 ──
   const CostInputView = () => {
-    const [costTab, setCostTab] = useState("revenue");
     return (
       <div>
         {pSectionTitle("✏️ 비용 입력 — " + currentMonth)}
