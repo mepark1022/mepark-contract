@@ -3029,11 +3029,11 @@ const LABEL_CATEGORY_MAP = {
 };
 
 const FILE_PATTERNS = [
-  { type: "bank_label",    pattern: /은행_거래내역_라벨/, label: "은행 거래내역 라벨", icon: "🏦", priority: 1 },
-  { type: "bank",          pattern: /은행_거래내역(?!_라벨)/, label: "은행 거래내역", icon: "🏧", priority: 2 },
+  { type: "bank_label",    pattern: /은행[\s_]*거래내역[\s_]*라벨/, label: "은행 거래내역 라벨", icon: "🏦", priority: 1 },
+  { type: "bank",          pattern: /은행[\s_]*거래내역(?![\s_]*라벨)/, label: "은행 거래내역", icon: "🏧", priority: 2 },
   { type: "tax_invoice",   pattern: /세금계산서/, label: "세금계산서", icon: "🧾", priority: 1 },
-  { type: "card_approval", pattern: /카드_승인내역/, label: "카드 승인내역", icon: "💳", priority: 1 },
-  { type: "card_billing",  pattern: /카드_청구내역/, label: "카드 청구내역 라벨", icon: "📋", priority: 2 },
+  { type: "card_approval", pattern: /카드[\s_]*승인내역/, label: "카드 승인내역", icon: "💳", priority: 1 },
+  { type: "card_billing",  pattern: /카드[\s_]*청구내역/, label: "카드 청구내역 라벨", icon: "📋", priority: 2 },
   { type: "cash_receipt",  pattern: /현금영수증/, label: "현금영수증", icon: "🧾", priority: 1 },
 ];
 
