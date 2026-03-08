@@ -575,13 +575,22 @@ function MeParkDatePicker({ value, onChange, style: st, label }) {
 // ── 6. 로그인 페이지 ──────────────────────────────────
 function LoginPage() {
   const { signIn } = useAuth();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => {
+    try { return localStorage.getItem("mepark_saved_email") || ""; } catch { return ""; }
+  });
   const [pw, setPw] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [rememberEmail, setRememberEmail] = useState(() => {
+    try { return !!localStorage.getItem("mepark_saved_email"); } catch { return false; }
+  });
 
   const handleLogin = async () => {
     setLoading(true); setError("");
+    try {
+      if (rememberEmail) localStorage.setItem("mepark_saved_email", email);
+      else localStorage.removeItem("mepark_saved_email");
+    } catch {}
     const { error: e } = await signIn(email, pw);
     if (e) setError(e);
     setLoading(false);
@@ -607,11 +616,25 @@ function LoginPage() {
               style={{ ...inputStyle, padding: "12px 14px", fontSize: 14 }}
               onKeyDown={e => e.key === "Enter" && handleLogin()} />
           </div>
-          <div style={{ marginBottom: 24 }}>
+          <div style={{ marginBottom: 14 }}>
             <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호</label>
             <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••"
               style={{ ...inputStyle, padding: "12px 14px", fontSize: 14 }}
               onKeyDown={e => e.key === "Enter" && handleLogin()} />
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}
+              onClick={() => setRememberEmail(v => !v)}>
+              <div style={{
+                width: 18, height: 18, borderRadius: 4, border: `2px solid ${rememberEmail ? C.navy : "#D0D5DD"}`,
+                background: rememberEmail ? C.navy : C.white, display: "flex", alignItems: "center", justifyContent: "center",
+                transition: "all 0.15s", flexShrink: 0,
+              }}>
+                {rememberEmail && <span style={{ color: C.white, fontSize: 11, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+              </div>
+              <span style={{ fontSize: 12, color: C.gray, fontWeight: 500 }}>아이디 저장</span>
+            </label>
           </div>
 
           <button onClick={handleLogin} disabled={loading}
