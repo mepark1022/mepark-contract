@@ -392,6 +392,118 @@ function NumInput({ value, onChange, style: st, placeholder, ...rest }) {
   );
 }
 
+// ── 5-2. ME.PARK 커스텀 달력 컴포넌트 ─────────────────
+function MeParkDatePicker({ value, onChange, style: st, label }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  const today = new Date();
+  const parsed = value ? new Date(value + "T00:00:00") : null;
+  const [viewYear, setViewYear] = useState(parsed?.getFullYear() || today.getFullYear());
+  const [viewMonth, setViewMonth] = useState(parsed ? parsed.getMonth() : today.getMonth());
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  useEffect(() => {
+    if (value) {
+      const d = new Date(value + "T00:00:00");
+      if (!isNaN(d)) { setViewYear(d.getFullYear()); setViewMonth(d.getMonth()); }
+    }
+  }, [value]);
+
+  const daysInMonth = new Date(viewYear, viewMonth + 1, 0).getDate();
+  const firstDay = new Date(viewYear, viewMonth, 1).getDay();
+  const dayLabels = ["일", "월", "화", "수", "목", "금", "토"];
+
+  const handleSelect = (day) => {
+    const m = String(viewMonth + 1).padStart(2, "0");
+    const d = String(day).padStart(2, "0");
+    onChange(`${viewYear}-${m}-${d}`);
+    setOpen(false);
+  };
+
+  const prevMonth = () => { if (viewMonth === 0) { setViewMonth(11); setViewYear(y => y - 1); } else setViewMonth(m => m - 1); };
+  const nextMonth = () => { if (viewMonth === 11) { setViewMonth(0); setViewYear(y => y + 1); } else setViewMonth(m => m + 1); };
+
+  const displayVal = value ? value.replace(/-/g, ".") : "";
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <div onClick={() => setOpen(!open)} style={{
+        ...inputStyle, ...st, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between",
+        background: open ? "#f8f9ff" : "#fff", borderColor: open ? C.navy : "#D8DCE3"
+      }}>
+        <span style={{ color: displayVal ? C.dark : "#aaa", fontSize: 12 }}>{displayVal || "날짜 선택"}</span>
+        <span style={{ fontSize: 14, color: C.navy }}>📅</span>
+      </div>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 999,
+          background: "#fff", borderRadius: 12, boxShadow: "0 8px 32px rgba(20,40,160,0.18)", border: `1.5px solid ${C.navy}`,
+          width: 280, overflow: "hidden", fontFamily: FONT
+        }}>
+          {/* 헤더: 네이비 */}
+          <div style={{ background: C.navy, padding: "10px 12px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <button onClick={prevMonth} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", padding: "2px 8px", borderRadius: 4 }}>◀</button>
+            <span style={{ color: "#fff", fontSize: 13, fontWeight: 800 }}>{viewYear}년 {viewMonth + 1}월</span>
+            <button onClick={nextMonth} style={{ background: "none", border: "none", color: "#fff", fontSize: 16, cursor: "pointer", padding: "2px 8px", borderRadius: 4 }}>▶</button>
+          </div>
+          {/* 요일 헤더 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "6px 8px 2px", borderBottom: `1px solid ${C.border}` }}>
+            {dayLabels.map((d, i) => (
+              <div key={d} style={{ textAlign: "center", fontSize: 10, fontWeight: 700, padding: "4px 0",
+                color: i === 0 ? C.error : i === 6 ? "#1976D2" : C.gray }}>{d}</div>
+            ))}
+          </div>
+          {/* 날짜 그리드 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", padding: "4px 8px 8px", gap: 2 }}>
+            {Array.from({ length: firstDay }).map((_, i) => <div key={`e${i}`} />)}
+            {Array.from({ length: daysInMonth }).map((_, i) => {
+              const day = i + 1;
+              const dayOfWeek = (firstDay + i) % 7;
+              const isSelected = parsed && parsed.getFullYear() === viewYear && parsed.getMonth() === viewMonth && parsed.getDate() === day;
+              const isToday = today.getFullYear() === viewYear && today.getMonth() === viewMonth && today.getDate() === day;
+              return (
+                <div key={day} onClick={() => handleSelect(day)} style={{
+                  textAlign: "center", padding: "6px 0", fontSize: 12, fontWeight: isSelected ? 800 : 500,
+                  cursor: "pointer", borderRadius: 8, transition: "all 0.15s",
+                  background: isSelected ? C.gold : "transparent",
+                  color: isSelected ? C.navy : dayOfWeek === 0 ? C.error : dayOfWeek === 6 ? "#1976D2" : C.dark,
+                  border: isToday && !isSelected ? `1.5px solid ${C.navy}` : "1.5px solid transparent",
+                }}
+                  onMouseEnter={e => { if (!isSelected) e.target.style.background = "#f0f3ff"; }}
+                  onMouseLeave={e => { if (!isSelected) e.target.style.background = "transparent"; }}
+                >
+                  {day}
+                </div>
+              );
+            })}
+          </div>
+          {/* 하단: 오늘 버튼 + 초기화 */}
+          <div style={{ borderTop: `1px solid ${C.border}`, padding: "6px 8px", display: "flex", justifyContent: "space-between" }}>
+            <button onClick={() => { onChange(""); setOpen(false); }} style={{
+              background: "none", border: "none", fontSize: 11, color: C.gray, cursor: "pointer", fontWeight: 600, fontFamily: FONT
+            }}>✕ 초기화</button>
+            <button onClick={() => {
+              const m = String(today.getMonth() + 1).padStart(2, "0");
+              const d = String(today.getDate()).padStart(2, "0");
+              onChange(`${today.getFullYear()}-${m}-${d}`);
+              setOpen(false);
+            }} style={{
+              background: C.navy, border: "none", borderRadius: 6, padding: "4px 12px",
+              fontSize: 11, color: "#fff", cursor: "pointer", fontWeight: 700, fontFamily: FONT
+            }}>오늘</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 6. 로그인 페이지 ──────────────────────────────────
 function LoginPage() {
   const { signIn } = useAuth();
@@ -4676,12 +4788,12 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                     <tr key={site.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
                       <td style={{ padding: "6px", textAlign: "center", fontWeight: 600, color: C.navy, fontSize: 10 }}>{site.code}</td>
                       <td style={{ padding: "6px", fontWeight: 600, fontSize: 11 }}>{site.name}</td>
-                      <td style={{ padding: "4px 6px", width: 130 }}>
-                        <input type="date" value={d.start_date || ""} onChange={e => handleDetailChange(site.code, "start_date", e.target.value)}
+                      <td style={{ padding: "4px 6px", width: 140 }}>
+                        <MeParkDatePicker value={d.start_date || ""} onChange={v => handleDetailChange(site.code, "start_date", v)}
                           style={{ ...inputStyle, padding: "5px 6px", fontSize: 11 }} />
                       </td>
-                      <td style={{ padding: "4px 6px", width: 130 }}>
-                        <input type="date" value={d.contract_end_date || ""} onChange={e => handleDetailChange(site.code, "contract_end_date", e.target.value)}
+                      <td style={{ padding: "4px 6px", width: 140 }}>
+                        <MeParkDatePicker value={d.contract_end_date || ""} onChange={v => handleDetailChange(site.code, "contract_end_date", v)}
                           style={{ ...inputStyle, padding: "5px 6px", fontSize: 11 }} />
                       </td>
                       <td style={{ padding: "4px 6px", width: 130 }}>
@@ -4955,11 +5067,22 @@ function SiteManagementPage({ employees }) {
     if (selectedSite?.code === code) setSelectedSite(null);
   };
 
-  const updateDetail = async (code, field, value) => {
+  // ★ 디바운스 타이머 ref (키스트로크마다 DB 호출 방지)
+  const detailSaveTimers = useRef({});
+  const updateDetail = (code, field, value) => {
+    // 1) 즉시 state 업데이트 (UI 반영)
     setSiteDetails(p => ({ ...p, [code]: { ...p[code], site_code: code, [field]: value } }));
-    setSaving(true);
-    await supabase.from("site_details").upsert({ site_code: code, [field]: value, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
-    setSaving(false);
+    // 2) DB 저장은 디바운스 (800ms)
+    const timerKey = `${code}_${field}`;
+    if (detailSaveTimers.current[timerKey]) clearTimeout(detailSaveTimers.current[timerKey]);
+    detailSaveTimers.current[timerKey] = setTimeout(async () => {
+      setSaving(true);
+      const siteName = allSites.find(s => s.code === code)?.name || code;
+      const { error } = await supabase.from("site_details")
+        .upsert({ site_code: code, site_name: siteName, [field]: value, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
+      if (error) console.error("site_details save error:", error);
+      setSaving(false);
+    }, 800);
   };
 
   const addParking = async (code) => {
@@ -5060,11 +5183,11 @@ function SiteManagementPage({ employees }) {
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
                   <div>
                     <label style={labelStyle}>서비스 시작일</label>
-                    <input type="date" value={detail.start_date || ""} onChange={e => updateDetail(sel.code, "start_date", e.target.value)} style={fieldStyle} />
+                    <MeParkDatePicker value={detail.start_date || ""} onChange={v => updateDetail(sel.code, "start_date", v)} style={fieldStyle} />
                   </div>
                   <div>
                     <label style={labelStyle}>계약 만기일</label>
-                    <input type="date" value={detail.contract_end_date || ""} onChange={e => updateDetail(sel.code, "contract_end_date", e.target.value)} style={fieldStyle} />
+                    <MeParkDatePicker value={detail.contract_end_date || ""} onChange={v => updateDetail(sel.code, "contract_end_date", v)} style={fieldStyle} />
                   </div>
                   <div>
                     <label style={labelStyle}>월 계약금액</label>
@@ -5332,11 +5455,11 @@ function MonthlyParkingPage({ employees }) {
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
             <div>
               <label style={labelSt}>계약 시작일</label>
-              <input type="date" value={form.contract_start} onChange={e => setForm(p => ({ ...p, contract_start: e.target.value }))} style={fieldSt} />
+              <MeParkDatePicker value={form.contract_start} onChange={v => setForm(p => ({ ...p, contract_start: v }))} style={fieldSt} />
             </div>
             <div>
               <label style={labelSt}>계약 종료일</label>
-              <input type="date" value={form.contract_end} onChange={e => setForm(p => ({ ...p, contract_end: e.target.value }))} style={fieldSt} />
+              <MeParkDatePicker value={form.contract_end} onChange={v => setForm(p => ({ ...p, contract_end: v }))} style={fieldSt} />
             </div>
             <div>
               <label style={labelSt}>월 주차비</label>
