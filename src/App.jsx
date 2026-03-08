@@ -674,17 +674,33 @@ function MainDashboard({ employees, onNavigate, profitState }) {
     const isMonthly = ["6m", "12m", "ytd"].includes(chartPeriod);
     const grouped = {};
 
+    // 주별 키: 해당 주의 월요일 날짜 기준
+    const getMonday = (d) => {
+      const dt = new Date(d);
+      const day = dt.getDay();
+      const diff = dt.getDate() - day + (day === 0 ? -6 : 1);
+      return new Date(dt.setDate(diff));
+    };
+    const fmtMD = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
+
     filtered.forEach(tx => {
       const d = new Date(tx.tx_date);
-      let key;
-      if (isDaily) key = tx.tx_date?.slice(0, 10);
-      else if (isMonthly) key = tx.tx_date?.slice(0, 7);
-      else {
-        const onejan = new Date(d.getFullYear(), 0, 1);
-        const weekNum = Math.ceil(((d - onejan) / 86400000 + onejan.getDay() + 1) / 7);
-        key = `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+      let key, label;
+      if (isDaily) {
+        key = tx.tx_date?.slice(0, 10);
+        label = `${d.getMonth() + 1}/${d.getDate()}`;
+      } else if (isMonthly) {
+        key = tx.tx_date?.slice(0, 7);
+        label = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}`;
+      } else {
+        // 주별: 월요일~일요일 범위 표시
+        const mon = getMonday(d);
+        const sun = new Date(mon);
+        sun.setDate(sun.getDate() + 6);
+        key = mon.toISOString().slice(0, 10); // 정렬용 (2026-03-02)
+        label = `${fmtMD(mon)}~${fmtMD(sun)}`;
       }
-      if (!grouped[key]) grouped[key] = { key, inAmt: 0, outAmt: 0, balance: 0 };
+      if (!grouped[key]) grouped[key] = { key, label, inAmt: 0, outAmt: 0, balance: 0 };
       grouped[key].inAmt += toNum(tx.amount_in);
       grouped[key].outAmt += toNum(tx.amount_out);
       if (toNum(tx.balance_after) > 0) grouped[key].balance = toNum(tx.balance_after);
@@ -825,13 +841,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
           <ResponsiveContainer width="100%" height={300}>
             <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="key" tick={{ fontSize: 10, fill: C.gray }} tickLine={false}
-                tickFormatter={v => {
-                  if (v.includes("W")) return v.slice(5);
-                  if (v.length === 7) return v.slice(5) + "월";
-                  if (v.length === 10) return v.slice(8) + "일";
-                  return v;
-                }} />
+              <XAxis dataKey="label" tick={{ fontSize: 10, fill: C.gray }} tickLine={false} />
               <YAxis yAxisId="amount" tick={{ fontSize: 10, fill: C.gray }} tickLine={false} axisLine={false}
                 tickFormatter={chartFmt} />
               <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 10, fill: C.gold }} tickLine={false} axisLine={false}
@@ -839,11 +849,6 @@ function MainDashboard({ employees, onNavigate, profitState }) {
               <Tooltip
                 contentStyle={{ borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }}
                 formatter={(v, name) => [pFmtFull(v) + "원", name]}
-                labelFormatter={v => {
-                  if (v.includes("W")) return v;
-                  if (v.length === 7) return v + "월";
-                  return v;
-                }}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
               <Bar yAxisId="amount" dataKey="inAmt" fill={C.navy} name="입금" radius={[3, 3, 0, 0]} barSize={chartData.length > 30 ? 6 : 14} />
