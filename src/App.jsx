@@ -4121,7 +4121,7 @@ function MainApp() {
             <div style={{ width: 36, height: 36, borderRadius: 10, background: C.gold, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: C.navy }}>MP</div>
             <div>
               <div style={{ color: C.white, fontSize: 14, fontWeight: 900 }}>ME.PARK</div>
-              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>계약관리 & 수익분석</div>
+              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>ERP시스템</div>
             </div>
           </div>
         </div>
