@@ -442,16 +442,43 @@ function NumInput({ value, onChange, style: st, placeholder, ...rest }) {
 
 // ── 5-1.5 BlurSaveNum — 포커스 해제 시에만 저장하는 숫자 입력 ──
 function BlurSaveNum({ value, onSave, style: st, placeholder, ...rest }) {
-  const [localVal, setLocalVal] = useState(String(value ?? "0"));
-  const [focused, setFocused] = useState(false);
-  // 외부 value가 변경되면 (사업장 전환 등) 동기화
-  useEffect(() => { if (!focused) setLocalVal(String(value ?? "0")); }, [value, focused]);
+  const inputRef = useRef(null);
+  const focusedRef = useRef(false);
+  const localRef = useRef(String(value ?? "0"));
+  const [display, setDisplay] = useState(fmt(value || 0));
+  const lastValueRef = useRef(value);
+
+  // 외부 value가 변경되면 (다른 사업장, 월 전환 등) — 포커스 중이 아닐 때만 반영
+  if (value !== lastValueRef.current && !focusedRef.current) {
+    lastValueRef.current = value;
+    localRef.current = String(value ?? "0");
+    // display는 아래 render에서 결정
+  }
+
+  const formatted = (value === "" || value == null || value === 0) ? "0" : fmt(value);
+
   return (
-    <input inputMode="decimal" placeholder={placeholder} style={{ ...inputStyle, ...st }}
-      value={focused ? localVal : (value === "" || value == null || value === 0 ? "0" : fmt(value))}
-      onFocus={() => { setFocused(true); setLocalVal(String(value ?? "0")); }}
-      onChange={e => { const raw = e.target.value.replace(/,/g, ""); setLocalVal(raw); }}
-      onBlur={() => { setFocused(false); const n = Number(localVal.replace(/,/g, "")); onSave(isNaN(n) ? 0 : n); }}
+    <input ref={inputRef} inputMode="decimal" placeholder={placeholder}
+      style={{ ...inputStyle, ...st }}
+      value={focusedRef.current ? display : formatted}
+      onFocus={() => {
+        focusedRef.current = true;
+        localRef.current = String(value ?? "0");
+        setDisplay(localRef.current);
+      }}
+      onChange={e => {
+        const raw = e.target.value.replace(/[^0-9.-]/g, "");
+        localRef.current = raw;
+        setDisplay(raw);
+      }}
+      onBlur={() => {
+        focusedRef.current = false;
+        const n = Number(localRef.current.replace(/,/g, ""));
+        const finalVal = isNaN(n) ? 0 : n;
+        lastValueRef.current = finalVal;
+        setDisplay(fmt(finalVal));
+        onSave(finalVal);
+      }}
       {...rest}
     />
   );
@@ -4431,8 +4458,19 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const [editLabel, setEditLabel] = useState(null);
   const [costTab, setCostTab] = useState("revenue");
   const [savingStatus, setSavingStatus] = useState(null); // ★ Phase C: 저장 상태 표시
-  const saveTimerRef = useRef(null);
+  const saveTimersRef = useRef({}); // ★ 필드별 독립 타이머 (서로 취소 방지)
   const detailTimerRef = useRef(null); // ★ 계약현황탭 저장용 타이머
+
+  const debounceSave = (key, saveFn) => {
+    if (saveTimersRef.current[key]) clearTimeout(saveTimersRef.current[key]);
+    saveTimersRef.current[key] = setTimeout(() => {
+      setSavingStatus("saving");
+      saveFn().then(() => {
+        setSavingStatus("saved");
+        setTimeout(() => setSavingStatus(null), 1500);
+      }).catch(() => setSavingStatus(null));
+    }, 800);
+  };
 
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
@@ -4451,14 +4489,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   // ★ Phase C: 매출 변경 → state + DB 저장
   const setRev = (code, val) => {
     setRevenueData(p => ({ ...p, [currentMonth]: { ...p[currentMonth], [code]: val } }));
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      setSavingStatus("saving");
-      saveRevenueToDB?.(currentMonth, code, val).then(() => {
-        setSavingStatus("saved");
-        setTimeout(() => setSavingStatus(null), 1500);
-      });
-    }, 800);
+    debounceSave(`rev_${code}`, () => saveRevenueToDB?.(currentMonth, code, val));
   };
 
   // ★ 인건비(고정/대체) 변경 → state + DB 저장
@@ -4470,15 +4501,8 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
         [code]: { ...(p[currentMonth]?.[code] || { fixed: 0, sub: 0 }), [field]: val }
       }
     }));
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      setSavingStatus("saving");
-      const dbField = field === "fixed" ? "labor_fixed" : "labor_sub";
-      saveLaborToDB?.(currentMonth, code, dbField, val).then(() => {
-        setSavingStatus("saved");
-        setTimeout(() => setSavingStatus(null), 1500);
-      });
-    }, 800);
+    const dbField = field === "fixed" ? "labor_fixed" : "labor_sub";
+    debounceSave(`lab_${code}_${field}`, () => saveLaborToDB?.(currentMonth, code, dbField, val));
   };
 
   // ★ Phase C: 간접비 변경 → state + DB 저장
@@ -4486,16 +4510,8 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
     setOverheadData(p => {
       const arr = [...(p[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o })))];
       arr[idx] = { ...arr[idx], [field]: val };
-      // DB 저장 (debounced)
       const item = arr[idx];
-      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-      saveTimerRef.current = setTimeout(() => {
-        setSavingStatus("saving");
-        saveOverheadToDB?.(currentMonth, item.key, item.label, item.amount, item.method).then(() => {
-          setSavingStatus("saved");
-          setTimeout(() => setSavingStatus(null), 1500);
-        });
-      }, 800);
+      debounceSave(`oh_${item.key}`, () => saveOverheadToDB?.(currentMonth, item.key, item.label, item.amount, item.method));
       return { ...p, [currentMonth]: arr };
     });
   };
