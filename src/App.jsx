@@ -4777,7 +4777,7 @@ function SiteManagementPage({ employees }) {
   );
 }
 
-// ── 16-3. 견적 계산기 (2026 인건비) ──────────────────────
+// ── 16-3. 견적 계산기 (2026 인건비) — 원본 완전 이식 ─────
 function SalaryCalculatorPage() {
   const SC_DAYS = ["월", "화", "수", "목", "금", "토", "일"];
   const SC_MW = 10320;
@@ -4797,217 +4797,343 @@ function SalaryCalculatorPage() {
     return Math.max(0, Math.round(tax - dd[Math.min(dep, 7)]));
   }
 
-  function cRate(hrRate, mbH, mwH, moH, mnH, meal, dep) {
-    const bp = hrRate * mbH, wp = hrRate * mwH, op = hrRate * 0.5 * moH, np = hrRate * 0.5 * mnH;
-    const mNT = Math.min(meal, 200000), gross = bp + wp + op + np + mNT, tb = bp + wp + op + np;
-    const npB = Math.min(tb, 6370000), npE = Math.round(npB * 0.0475);
-    const hiE = Math.round(tb * 0.03595), ltE = Math.round(hiE * 0.1314), eiE = Math.round(tb * 0.009);
-    const insE = npE + hiE + ltE + eiE, itax = getIT(tb - insE, dep), ltax = Math.round(itax * 0.1);
+  function calcForRate(hrRate, mbH, mwH, moH, mnH, meal, dep) {
+    const basicPay = hrRate * mbH, wlPay = hrRate * mwH, otPay = hrRate * 0.5 * moH, ntPay = hrRate * 0.5 * mnH;
+    const mealNT = Math.min(meal, 200000), gross = basicPay + wlPay + otPay + ntPay + mealNT;
+    const taxBase = basicPay + wlPay + otPay + ntPay;
+    const npBase = Math.min(taxBase, 6370000), npE = Math.round(npBase * 0.0475);
+    const hiE = Math.round(taxBase * 0.03595), ltE = Math.round(hiE * 0.1314), eiE = Math.round(taxBase * 0.009);
+    const insE = npE + hiE + ltE + eiE, itax = getIT(taxBase - insE, dep), ltax = Math.round(itax * 0.1);
     const totDed = insE + itax + ltax, net = gross - totDed;
-    const npR = Math.round(npB * 0.0475), hiR = Math.round(tb * 0.03595), ltR = Math.round(hiR * 0.1314);
-    const eiR = Math.round(tb * 0.0105), wiR = Math.round(tb * 0.0147);
+    const npR = Math.round(npBase * 0.0475), hiR = Math.round(taxBase * 0.03595), ltR = Math.round(hiR * 0.1314);
+    const eiR = Math.round(taxBase * 0.0105), wiR = Math.round(taxBase * 0.0147);
     const insR = npR + hiR + ltR + eiR + wiR, totCost = gross + insR;
-    const thH = mbH + mwH, hrCost = thH > 0 ? totCost / thH : 0;
-    return { hrRate, bp, wp, op, np, mNT, gross, npE, hiE, ltE, eiE, insE, itax, ltax, totDed, net, npR, hiR, ltR, eiR, wiR, insR, totCost, hrCost };
+    const totalPaidH = mbH + mwH, hrCost = totalPaidH > 0 ? totCost / totalPaidH : 0;
+    return { hrRate, basicPay, wlPay, otPay, ntPay, mealNT, gross, npE, hiE, ltE, eiE, insE, itax, ltax, totDed, net, npR, hiR, ltR, eiR, wiR, insR, totCost, hrCost };
   }
 
-  const [sm, setSm] = useState("simple");
+  const defaultDay = (work) => ({ work, start: "09:00", end: "18:00", breakMin: 60 });
+
+  const [scheduleMode, setScheduleMode] = useState("simple");
   const [simple, setSimple] = useState({ start: "09:00", end: "18:00", breakMin: 60, daysPerWeek: 5 });
-  const [weekly, setWeekly] = useState(SC_DAYS.map((_, i) => ({ work: i < 5, start: "09:00", end: "18:00", breakMin: 60 })));
+  const [weekly, setWeekly] = useState(SC_DAYS.map((_, i) => defaultDay(i < 5)));
   const [hrMode, setHrMode] = useState("both");
   const [customHr, setCustomHr] = useState(13000);
   const [dep, setDep] = useState(1);
   const [meal, setMeal] = useState(200000);
+  const [activeTab, setActiveTab] = useState("input");
 
   const calc = useMemo(() => {
-    let dWH = 0, wWH = 0, nHW = 0, wDays = 0;
-    if (sm === "simple") {
-      const s = tt(simple.start), e = tt(simple.end);
-      const aM = Math.max(0, e - s - simple.breakMin); dWH = aM / 60; wDays = simple.daysPerWeek; wWH = dWH * wDays;
-      const e2 = e < s ? e + 1440 : e, ns = Math.max(s, 1320), ne = Math.min(e2, 1800);
-      nHW = (ns < ne ? (ne - ns) / 60 : 0) * wDays;
+    let dailyWorkH = 0, weeklyWorkH = 0, nightHperWeek = 0, workingDays = 0;
+    if (scheduleMode === "simple") {
+      const sm = tt(simple.start), em = tt(simple.end);
+      const actualM = Math.max(0, em - sm - simple.breakMin);
+      dailyWorkH = actualM / 60; workingDays = simple.daysPerWeek; weeklyWorkH = dailyWorkH * workingDays;
+      const e2 = em < sm ? em + 1440 : em, ns = Math.max(sm, 22 * 60), ne = Math.min(e2, 30 * 60);
+      nightHperWeek = (ns < ne ? (ne - ns) / 60 : 0) * workingDays;
     } else {
       weekly.forEach(d => {
         if (!d.work) return;
-        const s = tt(d.start), e = tt(d.end);
-        wWH += Math.max(0, e - s - d.breakMin) / 60; wDays++;
-        const e2 = e < s ? e + 1440 : e, ns = Math.max(s, 1320), ne = Math.min(e2, 1800);
-        nHW += ns < ne ? (ne - ns) / 60 : 0;
+        const sm = tt(d.start), em = tt(d.end);
+        weeklyWorkH += Math.max(0, em - sm - d.breakMin) / 60; workingDays++;
+        const e2 = em < sm ? em + 1440 : em, ns = Math.max(sm, 22 * 60), ne = Math.min(e2, 30 * 60);
+        nightHperWeek += ns < ne ? (ne - ns) / 60 : 0;
       });
-      dWH = wDays > 0 ? wWH / wDays : 0;
+      dailyWorkH = workingDays > 0 ? weeklyWorkH / workingDays : 0;
     }
-    const hasWL = wWH >= 15, wlH = hasWL ? (wDays > 0 ? wWH / wDays : 0) : 0;
-    const mbH = wWH * SC_WEEKS, mwH = wlH * SC_WEEKS, mnH = nHW * SC_WEEKS;
-    const dOT = Math.max(0, dWH - 8), wOT = Math.max(0, wWH - 40);
-    const moH = Math.max(dOT * wDays, wOT) * SC_WEEKS;
-    const minR = cRate(SC_MW, mbH, mwH, moH, mnH, meal, dep);
-    const cusR = cRate(customHr, mbH, mwH, moH, mnH, meal, dep);
-    return { dWH, wWH, mbH, mwH, moH, mnH, hasWL, wDays, minR, cusR };
-  }, [sm, simple, weekly, customHr, dep, meal]);
+    const hasWL = weeklyWorkH >= 15, wlHperWeek = hasWL ? (workingDays > 0 ? weeklyWorkH / workingDays : 0) : 0;
+    const monthlyBasicH = weeklyWorkH * SC_WEEKS, monthlyWLH = wlHperWeek * SC_WEEKS, monthlyNightH = nightHperWeek * SC_WEEKS;
+    const dailyOT = Math.max(0, dailyWorkH - 8), weeklyOT = Math.max(0, weeklyWorkH - 40);
+    const monthlyOTH = Math.max(dailyOT * workingDays, weeklyOT) * SC_WEEKS;
+    const minResult = calcForRate(SC_MW, monthlyBasicH, monthlyWLH, monthlyOTH, monthlyNightH, meal, dep);
+    const customResult = calcForRate(customHr, monthlyBasicH, monthlyWLH, monthlyOTH, monthlyNightH, meal, dep);
+    return { dailyWorkH, weeklyWorkH, monthlyBasicH, monthlyWLH, monthlyOTH, monthlyNightH, hasWL, workingDays, minResult, customResult };
+  }, [scheduleMode, simple, weekly, customHr, dep, meal]);
 
-  const TI = ({ label, value, onChange }) => (
+  // 스타일 상수
+  const S = {
+    card: { background: "#fff", borderRadius: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", border: "1px solid #f0f0f0", padding: 16, marginBottom: 14 },
+    sectionTitle: { fontSize: 13, fontWeight: 900, color: "#1e3a8a", paddingBottom: 8, marginBottom: 12, borderBottom: "2px solid #3b82f6" },
+    pillGroup: { display: "flex", gap: 6, background: "#f3f4f6", padding: 4, borderRadius: 12, marginBottom: 14 },
+    pill: (active) => ({ flex: 1, padding: "9px 0", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none", textAlign: "center", background: active ? "#fff" : "transparent", color: active ? "#1e40af" : "#9ca3af", boxShadow: active ? "0 1px 4px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }),
+    label: { display: "block", fontSize: 11, fontWeight: 700, color: "#9ca3af", marginBottom: 4, letterSpacing: "0.05em", textTransform: "uppercase" },
+    input: { width: "100%", padding: "9px 12px", border: "2px solid #e5e7eb", borderRadius: 12, fontSize: 13, background: "#f9fafb", outline: "none", fontFamily: FONT },
+    inputFocus: { borderColor: "#3b82f6", background: "#fff" },
+  };
+
+  const TimeInput = ({ label, value, onChange }) => (
     <div>
-      <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.gray, marginBottom: 3 }}>{label}</label>
-      <input type="time" value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} />
+      <label style={S.label}>{label}</label>
+      <input type="time" value={value} onChange={e => onChange(e.target.value)} style={S.input} />
     </div>
   );
 
-  const RB = ({ r, label, accent }) => {
-    const isM = accent === "green";
+  const ResultBlock = ({ r, label, accent }) => {
+    const isMW = accent === "green";
+    const bc = isMW ? "#6ee7b7" : "#93c5fd";
+    const bg = isMW ? "#ecfdf5" : "#eff6ff";
+    const tc = isMW ? "#065f46" : "#1e3a8a";
+    const vc = isMW ? "#047857" : "#1d4ed8";
     return (
-      <div style={{ borderRadius: 12, border: `2px solid ${isM ? C.success : C.navy}`, background: isM ? "#F0FFF4" : "#F0F4FF", padding: 14, marginBottom: 12 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
-          <span style={{ fontSize: 12, fontWeight: 800, color: isM ? C.success : C.navy }}>{label}</span>
+      <div style={{ borderRadius: 16, border: `2px solid ${bc}`, background: bg, padding: 16, marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <span style={{ fontSize: 13, fontWeight: 900, color: tc }}>{label}</span>
           <div style={{ textAlign: "right" }}>
-            <span style={{ fontSize: 20, fontWeight: 900, color: isM ? C.success : C.navy }}>{sf(r.hrRate)}</span>
-            <span style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>원/h</span>
+            <div style={{ fontSize: 20, fontWeight: 900, color: vc, fontFamily: "monospace" }}>{sf(r.hrRate)}<span style={{ fontSize: 13, fontWeight: 700 }}>원/h</span></div>
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>시급</div>
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
           {[
-            ["총 지급액", r.gross, isM ? C.success : C.navy],
-            ["실수령액", r.net, "#16A34A"],
-            ["공제액", r.totDed, C.error],
-            ["사업주 총비용", r.totCost, C.orange],
-          ].map(([l, v, c]) => (
-            <div key={l} style={{ background: "#fff", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
-              <div style={{ fontSize: 14, fontWeight: 800, color: c }}>{sf(v)}<span style={{ fontSize: 10, color: C.gray }}>원</span></div>
-              <div style={{ fontSize: 9, color: C.gray, marginTop: 2 }}>{l}</div>
+            ["총 지급액(세전)", r.gross, vc],
+            ["💚 실수령액", r.net, "#15803d"],
+            ["공제액 합계", r.totDed, "#dc2626"],
+            ["사업주 총비용", r.totCost, "#ea580c"],
+          ].map(([l, v, color]) => (
+            <div key={l} style={{ background: "#fff", borderRadius: 12, padding: 12, textAlign: "center", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color, fontFamily: "monospace" }}>{sf(v)}<span style={{ fontSize: 11 }}>원</span></div>
+              <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{l}</div>
             </div>
           ))}
         </div>
-        <div style={{ background: "#fff", borderRadius: 8, padding: 10, fontSize: 11 }}>
-          {[["국민연금(4.75%)", r.npE], ["건강보험(3.595%)", r.hiE], ["장기요양(×13.14%)", r.ltE], ["고용보험(0.9%)", r.eiE], ["소득세+지방세", r.itax + r.ltax]].map(([l, v]) => (
-            <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
-              <span style={{ color: C.gray }}>{l}</span>
-              <span style={{ fontWeight: 700, color: C.error }}>-{sf(v)}</span>
+        <div style={{ background: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 6 }}>근로자 공제 상세</div>
+          {[
+            ["국민연금(4.75%)", r.npE], ["건강보험(3.595%)", r.hiE], ["장기요양(×13.14%)", r.ltE],
+            ["고용보험(0.9%)", r.eiE], ["소득세+지방세", r.itax + r.ltax],
+          ].map(([l, v]) => (
+            <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
+              <span style={{ color: "#9ca3af" }}>{l}</span>
+              <span style={{ fontWeight: 700, color: "#ef4444", fontFamily: "monospace" }}>-{sf(v)}원</span>
             </div>
           ))}
-          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 4, marginTop: 4, display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
-            <span style={{ color: C.gray }}>사업주 보험</span>
-            <span style={{ color: C.orange }}>+{sf(r.insR)}</span>
+          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 6, marginTop: 6, display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700 }}>
+            <span style={{ color: "#4b5563" }}>사업주 부담 보험</span>
+            <span style={{ color: "#f97316", fontFamily: "monospace" }}>+{sf(r.insR)}원</span>
           </div>
         </div>
-        <div style={{ textAlign: "center", padding: "8px 0", marginTop: 8, borderRadius: 8, fontSize: 12, fontWeight: 800, background: isM ? "#D1FAE5" : "#DBEAFE", color: isM ? C.success : C.navy }}>
-          시간당 인건비 {sf(r.hrCost)}원/h
+        <div style={{ textAlign: "center", padding: "10px 0", borderRadius: 12, fontSize: 13, fontWeight: 900, background: isMW ? "#d1fae5" : "#dbeafe", color: tc }}>
+          💼 시간당 실질 인건비 <span style={{ fontFamily: "monospace" }}>{sf(r.hrCost)}원/h</span>
         </div>
       </div>
     );
   };
 
   return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 16px" }}>💼 2026 인건비 견적 계산기</h2>
-      <p style={{ fontSize: 11, color: C.gray, marginTop: -12, marginBottom: 16 }}>근무시간 입력 → 시급·월급 자동 계산 · 최저임금 {sf(SC_MW)}원 기준</p>
+    <div style={{ paddingBottom: 20 }}>
+      {/* 헤더 */}
+      <div style={{ background: "linear-gradient(135deg, #1d4ed8 0%, #312e81 100%)", color: "#fff", padding: "20px 24px", borderRadius: 16, marginBottom: 16 }}>
+        <h1 style={{ fontSize: 20, fontWeight: 900, margin: 0, letterSpacing: "-0.02em" }}>💼 2026 인건비 견적 계산기</h1>
+        <p style={{ fontSize: 12, color: "#93c5fd", marginTop: 4 }}>근무시간 입력 → 시급·월급 자동 계산 · 최저임금 {sf(SC_MW)}원 기준</p>
+      </div>
+
+      {/* 모바일 탭 */}
+      <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", background: "#fff", borderRadius: "12px 12px 0 0", marginBottom: 16, overflow: "hidden" }}>
+        {[["input", "⏰ 근무 입력"], ["result", "💰 견적 결과"]].map(([k, v]) => (
+          <button key={k} onClick={() => setActiveTab(k)} style={{
+            flex: 1, padding: "14px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none",
+            borderBottom: activeTab === k ? "3px solid #1d4ed8" : "3px solid transparent",
+            background: activeTab === k ? "#eff6ff" : "#fff", color: activeTab === k ? "#1d4ed8" : "#9ca3af",
+          }}>{v}</button>
+        ))}
+      </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-        {/* 좌: 입력 */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {/* 근무시간 */}
-          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>⏰ 근무시간</div>
-            <div style={{ display: "flex", gap: 4, background: C.lightGray, padding: 2, borderRadius: 8, marginBottom: 10 }}>
-              {[["simple", "일괄"], ["weekly", "요일별"]].map(([k, v]) => (
-                <button key={k} onClick={() => setSm(k)} style={{ flex: 1, padding: "5px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", background: sm === k ? "#fff" : "transparent", color: sm === k ? C.navy : C.gray }}>{v}</button>
+        {/* ── 입력 패널 ── */}
+        <div style={{ display: activeTab === "input" ? "block" : "none" }}>
+
+          {/* 근무 시간 */}
+          <div style={S.card}>
+            <h3 style={S.sectionTitle}>⏰ 실제 근무 시간 입력</h3>
+            <div style={S.pillGroup}>
+              {[["simple", "📅 일괄(전 요일 동일)"], ["weekly", "🗓 요일별 개별 설정"]].map(([k, v]) => (
+                <button key={k} onClick={() => setScheduleMode(k)} style={S.pill(scheduleMode === k)}>{v}</button>
               ))}
             </div>
-            {sm === "simple" ? (
+
+            {scheduleMode === "simple" ? (
               <div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
-                  <TI label="출근" value={simple.start} onChange={v => setSimple(p => ({ ...p, start: v }))} />
-                  <TI label="퇴근" value={simple.end} onChange={v => setSimple(p => ({ ...p, end: v }))} />
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
+                  <TimeInput label="출근" value={simple.start} onChange={v => setSimple(p => ({ ...p, start: v }))} />
+                  <TimeInput label="퇴근" value={simple.end} onChange={v => setSimple(p => ({ ...p, end: v }))} />
                   <div>
-                    <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.gray, marginBottom: 3 }}>휴게(분)</label>
-                    <input type="number" value={simple.breakMin} min={0} step={30} onChange={e => setSimple(p => ({ ...p, breakMin: parseInt(e.target.value) || 0 }))}
-                      style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} />
+                    <label style={S.label}>휴게(분)</label>
+                    <input type="number" value={simple.breakMin} min={0} max={480} step={30}
+                      onChange={e => setSimple(p => ({ ...p, breakMin: parseInt(e.target.value) || 0 }))} style={S.input} />
                   </div>
                 </div>
-                <div style={{ display: "flex", gap: 4 }}>
-                  {[5, 6, 7].map(n => (
-                    <button key={n} onClick={() => setSimple(p => ({ ...p, daysPerWeek: n }))}
-                      style={{ flex: 1, padding: "6px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${simple.daysPerWeek === n ? C.navy : C.border}`, background: simple.daysPerWeek === n ? C.navy : "#fff", color: simple.daysPerWeek === n ? "#fff" : C.gray }}>주 {n}일</button>
-                  ))}
+                <div>
+                  <label style={{ ...S.label, marginBottom: 8 }}>주 근무일수</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
+                    {[5, 6, 7].map(n => (
+                      <button key={n} onClick={() => setSimple(p => ({ ...p, daysPerWeek: n }))} style={{
+                        padding: "9px 0", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer",
+                        border: `2px solid ${simple.daysPerWeek === n ? "#2563eb" : "#e5e7eb"}`,
+                        background: simple.daysPerWeek === n ? "#2563eb" : "#fff",
+                        color: simple.daysPerWeek === n ? "#fff" : "#6b7280", boxShadow: simple.daysPerWeek === n ? "0 2px 6px rgba(37,99,235,0.3)" : "none",
+                      }}>주 {n}일</button>
+                    ))}
+                    <input type="number" value={simple.daysPerWeek} min={1} max={7}
+                      onChange={e => setSimple(p => ({ ...p, daysPerWeek: parseInt(e.target.value) || 5 }))}
+                      style={{ ...S.input, textAlign: "center" }} />
+                  </div>
+                </div>
+                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: 12, marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#2563eb" }}>⚡ 일 실근무시간</span>
+                  <span style={{ fontSize: 20, fontWeight: 900, color: "#1e3a8a", fontFamily: "monospace" }}>
+                    {Math.max(0, (tt(simple.end) - tt(simple.start) - simple.breakMin) / 60).toFixed(1)}시간
+                  </span>
                 </div>
               </div>
             ) : (
-              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div>
                 {SC_DAYS.map((day, i) => (
-                  <div key={day} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0" }}>
-                    <button onClick={() => setWeekly(w => w.map((d, j) => j === i ? { ...d, work: !d.work } : d))}
-                      style={{ width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer", background: weekly[i].work ? C.navy : "#ddd", position: "relative" }}>
-                      <div style={{ width: 14, height: 14, background: "#fff", borderRadius: "50%", position: "absolute", top: 3, left: weekly[i].work ? 19 : 3, transition: "all 0.15s" }} />
-                    </button>
-                    <span style={{ width: 14, fontSize: 11, fontWeight: 800, color: i >= 5 ? C.error : C.dark }}>{day}</span>
-                    {weekly[i].work ? (
-                      <div style={{ display: "flex", gap: 4, flex: 1, alignItems: "center" }}>
-                        <input type="time" value={weekly[i].start} onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, start: e.target.value } : d))} style={{ ...inputStyle, flex: 1, fontSize: 10, padding: "3px 4px" }} />
-                        <span style={{ fontSize: 10, color: C.gray }}>~</span>
-                        <input type="time" value={weekly[i].end} onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, end: e.target.value } : d))} style={{ ...inputStyle, flex: 1, fontSize: 10, padding: "3px 4px" }} />
-                        <input type="number" value={weekly[i].breakMin} min={0} step={30} onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, breakMin: parseInt(e.target.value) || 0 } : d))} style={{ ...inputStyle, width: 40, fontSize: 10, padding: "3px 4px", textAlign: "center" }} />
+                  <div key={day} style={{ borderRadius: 12, border: `2px solid ${weekly[i].work ? "#bfdbfe" : "#f3f4f6"}`, background: weekly[i].work ? "#eff6ff" : "#f9fafb", padding: 10, marginBottom: 6 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <button onClick={() => setWeekly(w => w.map((d, j) => j === i ? { ...d, work: !d.work } : d))}
+                        style={{ width: 42, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: weekly[i].work ? "#2563eb" : "#d1d5db", position: "relative", flexShrink: 0 }}>
+                        <div style={{ width: 16, height: 16, background: "#fff", borderRadius: "50%", position: "absolute", top: 4, left: weekly[i].work ? 23 : 3, transition: "all 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
+                      </button>
+                      <span style={{ width: 16, fontSize: 13, fontWeight: 900, color: i >= 5 ? "#ef4444" : "#374151", flexShrink: 0 }}>{day}</span>
+                      {weekly[i].work ? (
+                        <div style={{ display: "flex", gap: 6, flex: 1, alignItems: "center" }}>
+                          <input type="time" value={weekly[i].start}
+                            onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, start: e.target.value } : d))}
+                            style={{ flex: 1, padding: "5px 8px", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 12, background: "#fff" }} />
+                          <span style={{ fontSize: 12, color: "#d1d5db" }}>~</span>
+                          <input type="time" value={weekly[i].end}
+                            onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, end: e.target.value } : d))}
+                            style={{ flex: 1, padding: "5px 8px", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 12, background: "#fff" }} />
+                          <input type="number" value={weekly[i].breakMin} min={0} step={30}
+                            onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, breakMin: parseInt(e.target.value) || 0 } : d))}
+                            style={{ width: 52, padding: "5px 6px", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 12, textAlign: "center", background: "#fff" }} />
+                          <span style={{ fontSize: 11, color: "#9ca3af", flexShrink: 0 }}>분</span>
+                        </div>
+                      ) : <span style={{ fontSize: 12, color: "#9ca3af", marginLeft: 4 }}>휴무</span>}
+                    </div>
+                    {weekly[i].work && (
+                      <div style={{ marginTop: 4, marginLeft: 66, fontSize: 12, color: "#3b82f6", fontWeight: 600 }}>
+                        실근무 {Math.max(0, (tt(weekly[i].end) - tt(weekly[i].start) - weekly[i].breakMin) / 60).toFixed(1)}시간
                       </div>
-                    ) : <span style={{ fontSize: 10, color: C.gray }}>휴무</span>}
+                    )}
                   </div>
                 ))}
               </div>
             )}
           </div>
-          {/* 시급 + 기타 */}
-          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 14 }}>
-            <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>💰 시급 · 기타</div>
-            <div style={{ display: "flex", gap: 4, background: C.lightGray, padding: 2, borderRadius: 8, marginBottom: 10 }}>
-              {[["min", "최저임금"], ["custom", "직접입력"], ["both", "비교"]].map(([k, v]) => (
-                <button key={k} onClick={() => setHrMode(k)} style={{ flex: 1, padding: "5px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", background: hrMode === k ? "#fff" : "transparent", color: hrMode === k ? C.navy : C.gray }}>{v}</button>
+
+          {/* 시급 기준 */}
+          <div style={S.card}>
+            <h3 style={S.sectionTitle}>💰 시급 기준 설정</h3>
+            <div style={S.pillGroup}>
+              {[["min", "최저임금만"], ["custom", "직접 입력"], ["both", "둘 다 비교"]].map(([k, v]) => (
+                <button key={k} onClick={() => setHrMode(k)} style={S.pill(hrMode === k)}>{v}</button>
               ))}
             </div>
             {(hrMode === "custom" || hrMode === "both") && (
-              <div style={{ marginBottom: 10 }}>
-                <label style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>시급 (원)</label>
-                <input type="number" value={customHr} min={SC_MW} step={100} onChange={e => setCustomHr(parseInt(e.target.value) || SC_MW)}
-                  style={{ ...inputStyle, fontSize: 14, fontWeight: 800, textAlign: "right", marginTop: 3 }} />
-                {customHr < SC_MW && <p style={{ fontSize: 10, color: C.error, fontWeight: 700, margin: "4px 0 0" }}>❌ 최저임금 위반</p>}
+              <div>
+                <label style={S.label}>설정 시급 (원)</label>
+                <input type="number" value={customHr} min={SC_MW} step={100}
+                  onChange={e => setCustomHr(parseInt(e.target.value) || SC_MW)}
+                  style={{ ...S.input, fontSize: 17, fontWeight: 800, fontFamily: "monospace" }} />
+                {customHr < SC_MW && <p style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, marginTop: 4 }}>❌ 2026 최저임금({sf(SC_MW)}원) 위반!</p>}
               </div>
             )}
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+          </div>
+
+          {/* 기타 */}
+          <div style={S.card}>
+            <h3 style={S.sectionTitle}>⚙️ 기타</h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
               <div>
-                <label style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>식대 비과세</label>
-                <input type="number" value={meal} step={10000} max={200000} onChange={e => setMeal(parseInt(e.target.value) || 0)} style={{ ...inputStyle, fontSize: 12, marginTop: 3 }} />
+                <label style={S.label}>식대 비과세</label>
+                <input type="number" value={meal} step={10000} max={200000}
+                  onChange={e => setMeal(parseInt(e.target.value) || 0)} style={S.input} />
+                <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>최대 200,000원</p>
               </div>
               <div>
-                <label style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>부양가족</label>
-                <select value={dep} onChange={e => setDep(parseInt(e.target.value))} style={{ ...inputStyle, fontSize: 12, marginTop: 3 }}>
-                  {[1, 2, 3, 4, 5, 6, 7].map(n => <option key={n} value={n}>{n}명{n === 1 ? " (본인)" : ""}</option>)}
+                <label style={S.label}>부양가족</label>
+                <select value={dep} onChange={e => setDep(parseInt(e.target.value))} style={S.input}>
+                  {[1, 2, 3, 4, 5, 6, 7].map(n => <option key={n} value={n}>{n}명{n === 1 ? " (본인만)" : ""}</option>)}
                 </select>
               </div>
             </div>
           </div>
+
           {/* 근무시간 분석 */}
-          <div style={{ background: C.navy, borderRadius: 12, padding: 14, color: "#fff" }}>
-            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>📊 근무시간 분석</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
-              {[["일 실근무", calc.dWH.toFixed(1) + "h"], ["주 실근무", calc.wWH.toFixed(1) + "h"], ["월 기본", calc.mbH.toFixed(1) + "h"],
-                ["월 주휴", calc.hasWL ? calc.mwH.toFixed(1) + "h" : "미해당"], ["월 연장", calc.moH.toFixed(1) + "h"], ["월 야간", calc.mnH.toFixed(1) + "h"]
+          <div style={{ background: "linear-gradient(135deg, #334155 0%, #0f172a 100%)", color: "#fff", borderRadius: 16, padding: 16 }}>
+            <h3 style={{ fontSize: 13, fontWeight: 900, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>📊 근무시간 분석 <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>(자동 계산)</span></h3>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+              {[
+                ["일 실근무", `${calc.dailyWorkH.toFixed(1)}h`], ["주 실근무", `${calc.weeklyWorkH.toFixed(1)}h`],
+                ["월 기본시간", `${calc.monthlyBasicH.toFixed(1)}h`], ["월 주휴시간", calc.hasWL ? `${calc.monthlyWLH.toFixed(1)}h` : "미해당"],
+                ["월 연장시간", `${calc.monthlyOTH.toFixed(1)}h`], ["월 야간시간", `${calc.monthlyNightH.toFixed(1)}h`],
               ].map(([l, v]) => (
-                <div key={l} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 8, padding: "6px 8px", textAlign: "center" }}>
-                  <div style={{ fontSize: 13, fontWeight: 800 }}>{v}</div>
-                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.6)" }}>{l}</div>
+                <div key={l} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 12, padding: 8, textAlign: "center" }}>
+                  <div style={{ fontSize: 15, fontWeight: 900 }}>{v}</div>
+                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{l}</div>
                 </div>
               ))}
+            </div>
+            <div style={{ marginTop: 10, fontSize: 12 }}>
+              {!calc.hasWL && <p style={{ color: "#fde047" }}>⚠️ 주 15시간 미만 — 주휴수당 미발생</p>}
+              {calc.monthlyOTH > 0 && <p style={{ color: "#fdba74" }}>⚡ 연장근무 가산수당(×1.5) 자동 적용</p>}
+              {calc.monthlyNightH > 0 && <p style={{ color: "#c4b5fd" }}>🌙 야간가산수당(×0.5) 자동 적용</p>}
             </div>
           </div>
         </div>
 
-        {/* 우: 결과 */}
-        <div>
-          {(hrMode === "min" || hrMode === "both") && <RB r={calc.minR} label="✅ 최저임금 기준" accent="green" />}
-          {(hrMode === "custom" || hrMode === "both") && <RB r={calc.cusR} label="⭐ 설정 시급 기준" accent="blue" />}
+        {/* ── 결과 패널 ── */}
+        <div style={{ display: activeTab === "result" ? "block" : "none" }}>
+          {(hrMode === "min" || hrMode === "both") && <ResultBlock r={calc.minResult} label="✅ 최저임금 기준" accent="green" />}
+          {(hrMode === "custom" || hrMode === "both") && <ResultBlock r={calc.customResult} label="⭐ 설정 시급 기준" accent="blue" />}
+
+          {/* 비교표 */}
           {hrMode === "both" && (
-            <div style={{ background: "#FFF8E1", border: `1px solid ${C.gold}`, borderRadius: 10, padding: 12, fontSize: 12, fontWeight: 700, textAlign: "center", color: C.dark }}>
-              월 차액 (사업주): <span style={{ fontWeight: 900, color: C.navy }}>{sf(Math.abs(calc.cusR.totCost - calc.minR.totCost))}원</span>
-              {calc.cusR.totCost > calc.minR.totCost ? " 추가 부담" : " 절감"}
+            <div style={S.card}>
+              <h3 style={S.sectionTitle}>📊 최저임금 vs 설정시급 비교</h3>
+              <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: "#f9fafb" }}>
+                    <td style={{ padding: 10, fontWeight: 700, color: "#9ca3af", borderRadius: "12px 0 0 0" }}>항목</td>
+                    <td style={{ padding: 10, fontWeight: 700, color: "#047857", textAlign: "right" }}>최저임금</td>
+                    <td style={{ padding: 10, fontWeight: 700, color: "#1d4ed8", textAlign: "right", borderRadius: "0 12px 0 0" }}>설정시급</td>
+                  </tr>
+                </thead>
+                <tbody>
+                  {[
+                    ["시급", sf(calc.minResult.hrRate) + "원", sf(calc.customResult.hrRate) + "원"],
+                    ["총 지급액", sf(calc.minResult.gross) + "원", sf(calc.customResult.gross) + "원"],
+                    ["실수령액", sf(calc.minResult.net) + "원", sf(calc.customResult.net) + "원"],
+                    ["총 공제액", sf(calc.minResult.totDed) + "원", sf(calc.customResult.totDed) + "원"],
+                    ["사업주 보험", sf(calc.minResult.insR) + "원", sf(calc.customResult.insR) + "원"],
+                    ["사업주 총비용", sf(calc.minResult.totCost) + "원", sf(calc.customResult.totCost) + "원"],
+                    ["시간당 인건비", sf(calc.minResult.hrCost) + "원", sf(calc.customResult.hrCost) + "원"],
+                  ].map(([l, a, b]) => (
+                    <tr key={l} style={{ borderTop: "1px solid #f3f4f6" }}>
+                      <td style={{ padding: 10, color: "#9ca3af" }}>{l}</td>
+                      <td style={{ padding: 10, fontWeight: 700, color: "#047857", textAlign: "right", fontFamily: "monospace" }}>{a}</td>
+                      <td style={{ padding: 10, fontWeight: 700, color: "#1d4ed8", textAlign: "right", fontFamily: "monospace" }}>{b}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style={{ marginTop: 12, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 12, fontSize: 12, fontWeight: 500, color: "#92400e" }}>
+                💡 월 차액 (사업주 기준):&nbsp;
+                <span style={{ fontWeight: 900, color: "#78350f" }}>
+                  {sf(Math.abs(calc.customResult.totCost - calc.minResult.totCost))}원
+                  {calc.customResult.totCost > calc.minResult.totCost ? " 추가 부담" : " 절감"}
+                </span>
+              </div>
             </div>
           )}
-          <div style={{ marginTop: 12, fontSize: 10, color: C.gray, lineHeight: 1.8 }}>
-            <strong>2026년 기준</strong> · 최저임금 {sf(SC_MW)}원 · 국민연금 9.5% · 건강보험 7.19% · 연장 ×1.5 · 야간 ×0.5
+
+          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, fontSize: 12, color: "#9ca3af", lineHeight: 2 }}>
+            <p style={{ fontWeight: 700, color: "#4b5563", marginBottom: 4 }}>📌 2026년 법적 기준</p>
+            <p>• 최저임금 <strong style={{ color: "#374151" }}>{sf(SC_MW)}원</strong> / 최저월급 2,156,880원 (209h)</p>
+            <p>• 국민연금 9.5% (각 4.75%) · 건강보험 7.19% · 장기요양 13.14%</p>
+            <p>• 연장(1일 8h·주 40h 초과) ×1.5 / 야간(22~06시) ×0.5 가산</p>
+            <p>• 소득세는 간이세액표 기준 추정치 · 정확한 처리는 노무사 확인 권장</p>
           </div>
         </div>
       </div>
