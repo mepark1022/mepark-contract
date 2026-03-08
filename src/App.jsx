@@ -23,7 +23,7 @@ const C = {
 const FONT = "'Noto Sans KR', sans-serif";
 
 // 카카오 지도 API (JavaScript 앱키)
-const KAKAO_MAP_KEY = "YOUR_KAKAO_JAVASCRIPT_KEY"; // ← 카카오 개발자센터에서 발급
+const KAKAO_MAP_KEY = "c7b46fd78613ab48353a0e0666838807";
 
 const SITES = [
   { code: "V000", name: "기획운영팀(본사)" }, { code: "V001", name: "강원빌딩" },
