@@ -4915,10 +4915,11 @@ function SalaryCalculatorPage() {
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>견적서</title>
       <link rel="stylesheet" href="${FONT_LINK}">
       <style>
-        @page{size:A4;margin:15mm}
+        @page{size:A4;margin:8mm 10mm}
         *{margin:0;padding:0;box-sizing:border-box}
         body{font-family:'Noto Sans KR','맑은 고딕','Malgun Gothic',sans-serif;color:#222;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      </style></head><body>${el.innerHTML}</body></html>`);
+        .print-wrap{transform:scale(0.88);transform-origin:top center}
+      </style></head><body><div class="print-wrap">${el.innerHTML}</div></body></html>`);
     w.document.close();
     setTimeout(() => { w.print(); w.close(); }, 400);
   };
@@ -5568,7 +5569,7 @@ function MainApp() {
   ];
 
   const calcNavItems = [
-    { key: "salary_calc", icon: "💼", label: "인건비 견적" },
+    { key: "salary_calc", icon: "📋", label: "인건비 견적" },
   ];
 
   return (
