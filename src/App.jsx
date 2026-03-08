@@ -4777,363 +4777,658 @@ function SiteManagementPage({ employees }) {
   );
 }
 
-// ── 16-3. 견적 계산기 (2026 인건비) — 원본 완전 이식 ─────
+
+// ── 16-3. 발렛맨 서비스 견적 시스템 (원본 완전 이식) ─────
+
+/* ═══════════════════════════════════════════
+   (주)미스터팍 발렛맨 서비스 견적 시스템
+   좌: 견적산출표  |  우: 견적서 폼 (실시간 연동)
+   ═══════════════════════════════════════════ */
+
+/* Google Font: Noto Sans KR (숫자 가독성용) */
+const FONT_LINK = "https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700;900&display=swap";
+const numFont = "'Noto Sans KR', sans-serif";
+
+const QC = {
+  navy: "#1428A0",
+  navyLight: "#1e3ab8",
+  gold: "#F5B731",
+  goldLight: "#fdf0d0",
+  dark: "#222222",
+  gray: "#666666",
+  lightGray: "#f2f3f7",
+  border: "#dde0e8",
+  white: "#ffffff",
+  red: "#E53935",
+  green: "#43A047",
+};
+
+const QC_WEEKS = 4.345;
+const qFmt = (n) => Math.round(n).toLocaleString("ko-KR");
+
+/* 사업주 4대보험 계산 */
+function calcEmployerIns(gross) {
+  const npBase = Math.min(gross, 6370000);
+  const np = Math.round(npBase * 0.0475);
+  const hi = Math.round(gross * 0.03595);
+  const lt = Math.round(hi * 0.1314);
+  const ei = Math.round(gross * 0.0105);
+  const wi = Math.round(gross * 0.0147);
+  return { np, hi, lt, ei, wi, total: np + hi + lt + ei + wi };
+}
+
+/* 평일 인건비 산출 */
+function calcWeekday(salary, headcount, start, end, breakMin) {
+  const sh = parseInt(start.split(":")[0]), sm = parseInt(start.split(":")[1]);
+  const eh = parseInt(end.split(":")[0]), em = parseInt(end.split(":")[1]);
+  const totalMin = (eh * 60 + em) - (sh * 60 + sm);
+  const actualH = Math.max(0, (totalMin - breakMin) / 60);
+  const weeklyH = actualH * 5;
+  const hasWL = weeklyH >= 15;
+  const wlH = hasWL ? actualH : 0;
+  const monthlyBasicH = weeklyH * QC_WEEKS;
+  const monthlyWLH = wlH * QC_WEEKS;
+  const ins = calcEmployerIns(salary);
+  const retirement = Math.round(salary / 12);
+  const perPerson = salary + ins.total + retirement;
+  const totalPaidH = monthlyBasicH + monthlyWLH;
+  const hrCost = totalPaidH > 0 ? Math.round(perPerson / totalPaidH) : 0;
+  return { salary, ins, retirement, perPerson, total: perPerson * headcount, hrCost, actualH, weeklyH, hasWL, headcount };
+}
+
+/* 주말 인건비 산출 */
+function calcWeekend(dailyPay, headcount, days, start, end, breakMin) {
+  const sh = parseInt(start.split(":")[0]), sm = parseInt(start.split(":")[1]);
+  const eh = parseInt(end.split(":")[0]), em = parseInt(end.split(":")[1]);
+  const totalMin = (eh * 60 + em) - (sh * 60 + sm);
+  const actualH = Math.max(0, (totalMin - breakMin) / 60);
+  const monthlyPay = dailyPay * days * 5;
+  const ins = calcEmployerIns(monthlyPay);
+  const retirement = Math.round(monthlyPay / 12);
+  const perPerson = monthlyPay + ins.total + retirement;
+  const hrCost = actualH > 0 ? Math.round(perPerson / (actualH * days * QC_WEEKS)) : 0;
+  return { dailyPay, monthlyPay, ins, retirement, perPerson, total: perPerson * headcount, hrCost, actualH, days, headcount };
+}
+
 function SalaryCalculatorPage() {
-  const SC_DAYS = ["월", "화", "수", "목", "금", "토", "일"];
-  const SC_MW = 10320;
-  const SC_WEEKS = 4.345;
-  const tt = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
-  const sf = (n) => Math.round(n).toLocaleString("ko-KR");
+  /* ── 견적산출표 state ── */
+  const [wdSalary, setWdSalary] = useState(2200000);
+  const [wdHead, setWdHead] = useState(1);
+  const [wdStart, setWdStart] = useState("09:00");
+  const [wdEnd, setWdEnd] = useState("18:00");
+  const [wdBreak, setWdBreak] = useState(60);
 
-  function getIT(taxable, dep) {
-    let tax = 0;
-    if (taxable <= 1060000) tax = 0;
-    else if (taxable <= 1500000) tax = (taxable - 1060000) * 0.06;
-    else if (taxable <= 3000000) tax = 26400 + (taxable - 1500000) * 0.15;
-    else if (taxable <= 4500000) tax = 251400 + (taxable - 3000000) * 0.24;
-    else if (taxable <= 8000000) tax = 611400 + (taxable - 4500000) * 0.35;
-    else tax = 1836400 + (taxable - 8000000) * 0.38;
-    const dd = [0, 0, 14000, 21000, 28000, 35000, 42000, 49000];
-    return Math.max(0, Math.round(tax - dd[Math.min(dep, 7)]));
-  }
+  const [weChecked, setWeChecked] = useState({ sat: true, sun: true });
+  const [wePay, setWePay] = useState(120000);
+  const [weHead, setWeHead] = useState(1);
+  const [weStart, setWeStart] = useState("09:00");
+  const [weEnd, setWeEnd] = useState("18:00");
+  const [weBreak, setWeBreak] = useState(60);
 
-  function calcForRate(hrRate, mbH, mwH, moH, mnH, meal, dep) {
-    const basicPay = hrRate * mbH, wlPay = hrRate * mwH, otPay = hrRate * 0.5 * moH, ntPay = hrRate * 0.5 * mnH;
-    const mealNT = Math.min(meal, 200000), gross = basicPay + wlPay + otPay + ntPay + mealNT;
-    const taxBase = basicPay + wlPay + otPay + ntPay;
-    const npBase = Math.min(taxBase, 6370000), npE = Math.round(npBase * 0.0475);
-    const hiE = Math.round(taxBase * 0.03595), ltE = Math.round(hiE * 0.1314), eiE = Math.round(taxBase * 0.009);
-    const insE = npE + hiE + ltE + eiE, itax = getIT(taxBase - insE, dep), ltax = Math.round(itax * 0.1);
-    const totDed = insE + itax + ltax, net = gross - totDed;
-    const npR = Math.round(npBase * 0.0475), hiR = Math.round(taxBase * 0.03595), ltR = Math.round(hiR * 0.1314);
-    const eiR = Math.round(taxBase * 0.0105), wiR = Math.round(taxBase * 0.0147);
-    const insR = npR + hiR + ltR + eiR + wiR, totCost = gross + insR;
-    const totalPaidH = mbH + mwH, hrCost = totalPaidH > 0 ? totCost / totalPaidH : 0;
-    return { hrRate, basicPay, wlPay, otPay, ntPay, mealNT, gross, npE, hiE, ltE, eiE, insE, itax, ltax, totDed, net, npR, hiR, ltR, eiR, wiR, insR, totCost, hrCost };
-  }
+  const [opSupport, setOpSupport] = useState(2000000);
+  const [insurance, setInsurance] = useState(500000);
 
-  const defaultDay = (work) => ({ work, start: "09:00", end: "18:00", breakMin: 60 });
+  /* ── 에누리 ── */
+  const [discountMode, setDiscountMode] = useState("amount"); // "amount" | "percent"
+  const [discountValue, setDiscountValue] = useState(0);
 
-  const [scheduleMode, setScheduleMode] = useState("simple");
-  const [simple, setSimple] = useState({ start: "09:00", end: "18:00", breakMin: 60, daysPerWeek: 5 });
-  const [weekly, setWeekly] = useState(SC_DAYS.map((_, i) => defaultDay(i < 5)));
-  const [hrMode, setHrMode] = useState("both");
-  const [customHr, setCustomHr] = useState(13000);
-  const [dep, setDep] = useState(1);
-  const [meal, setMeal] = useState(200000);
-  const [activeTab, setActiveTab] = useState("input");
+  /* ── 견적서 폼 state ── */
+  const [clientSite, setClientSite] = useState("");
+  const [contractType, setContractType] = useState("협의 (참고자료)");
+  const [contractPeriod, setContractPeriod] = useState("기본 1년");
+  const [operatingHours, setOperatingHours] = useState("추후협의 (09-18시 예시)");
 
-  const calc = useMemo(() => {
-    let dailyWorkH = 0, weeklyWorkH = 0, nightHperWeek = 0, workingDays = 0;
-    if (scheduleMode === "simple") {
-      const sm = tt(simple.start), em = tt(simple.end);
-      const actualM = Math.max(0, em - sm - simple.breakMin);
-      dailyWorkH = actualM / 60; workingDays = simple.daysPerWeek; weeklyWorkH = dailyWorkH * workingDays;
-      const e2 = em < sm ? em + 1440 : em, ns = Math.max(sm, 22 * 60), ne = Math.min(e2, 30 * 60);
-      nightHperWeek = (ns < ne ? (ne - ns) / 60 : 0) * workingDays;
-    } else {
-      weekly.forEach(d => {
-        if (!d.work) return;
-        const sm = tt(d.start), em = tt(d.end);
-        weeklyWorkH += Math.max(0, em - sm - d.breakMin) / 60; workingDays++;
-        const e2 = em < sm ? em + 1440 : em, ns = Math.max(sm, 22 * 60), ne = Math.min(e2, 30 * 60);
-        nightHperWeek += ns < ne ? (ne - ns) / 60 : 0;
-      });
-      dailyWorkH = workingDays > 0 ? weeklyWorkH / workingDays : 0;
+  const printRef = useRef(null);
+
+  /* ── 폰트 로드 ── */
+  useEffect(() => {
+    if (!document.querySelector(`link[href="${FONT_LINK}"]`)) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = FONT_LINK;
+      document.head.appendChild(link);
     }
-    const hasWL = weeklyWorkH >= 15, wlHperWeek = hasWL ? (workingDays > 0 ? weeklyWorkH / workingDays : 0) : 0;
-    const monthlyBasicH = weeklyWorkH * SC_WEEKS, monthlyWLH = wlHperWeek * SC_WEEKS, monthlyNightH = nightHperWeek * SC_WEEKS;
-    const dailyOT = Math.max(0, dailyWorkH - 8), weeklyOT = Math.max(0, weeklyWorkH - 40);
-    const monthlyOTH = Math.max(dailyOT * workingDays, weeklyOT) * SC_WEEKS;
-    const minResult = calcForRate(SC_MW, monthlyBasicH, monthlyWLH, monthlyOTH, monthlyNightH, meal, dep);
-    const customResult = calcForRate(customHr, monthlyBasicH, monthlyWLH, monthlyOTH, monthlyNightH, meal, dep);
-    return { dailyWorkH, weeklyWorkH, monthlyBasicH, monthlyWLH, monthlyOTH, monthlyNightH, hasWL, workingDays, minResult, customResult };
-  }, [scheduleMode, simple, weekly, customHr, dep, meal]);
+  }, []);
 
-  // 스타일 상수
-  const S = {
-    card: { background: "#fff", borderRadius: 16, boxShadow: "0 1px 4px rgba(0,0,0,0.06)", border: "1px solid #f0f0f0", padding: 16, marginBottom: 14 },
-    sectionTitle: { fontSize: 13, fontWeight: 900, color: "#1e3a8a", paddingBottom: 8, marginBottom: 12, borderBottom: "2px solid #3b82f6" },
-    pillGroup: { display: "flex", gap: 6, background: "#f3f4f6", padding: 4, borderRadius: 12, marginBottom: 14 },
-    pill: (active) => ({ flex: 1, padding: "9px 0", borderRadius: 9, fontSize: 12, fontWeight: 700, cursor: "pointer", border: "none", textAlign: "center", background: active ? "#fff" : "transparent", color: active ? "#1e40af" : "#9ca3af", boxShadow: active ? "0 1px 4px rgba(0,0,0,0.08)" : "none", transition: "all 0.15s" }),
-    label: { display: "block", fontSize: 11, fontWeight: 700, color: "#9ca3af", marginBottom: 4, letterSpacing: "0.05em", textTransform: "uppercase" },
-    input: { width: "100%", padding: "9px 12px", border: "2px solid #e5e7eb", borderRadius: 12, fontSize: 13, background: "#f9fafb", outline: "none", fontFamily: FONT },
-    inputFocus: { borderColor: "#3b82f6", background: "#fff" },
+  /* ── 계산 ── */
+  const weDays = (weChecked.sat ? 1 : 0) + (weChecked.sun ? 1 : 0);
+
+  const weekday = useMemo(() => calcWeekday(wdSalary, wdHead, wdStart, wdEnd, wdBreak), [wdSalary, wdHead, wdStart, wdEnd, wdBreak]);
+  const weekend = useMemo(() => calcWeekend(wePay, weHead, weDays, weStart, weEnd, weBreak), [wePay, weHead, weDays, weStart, weEnd, weBreak]);
+
+  const laborWeekday = weekday.total;
+  const laborWeekend = weDays > 0 ? weekend.total : 0;
+  const rawSubtotal = laborWeekday + laborWeekend + opSupport + insurance;
+  const discountAmt = discountMode === "percent" ? Math.round(rawSubtotal * discountValue / 100) : discountValue;
+  const subtotal = Math.max(0, rawSubtotal - discountAmt);
+  const vat = Math.round(subtotal * 0.1);
+  const grandTotal = subtotal + vat;
+
+  const today = new Date();
+  const dateStr = `${today.getFullYear()}년 ${today.getMonth()+1}월 ${today.getDate()}일`;
+
+  /* ── 인쇄 ── */
+  const handlePrint = () => {
+    const el = printRef.current;
+    if (!el) return;
+    const w = window.open("", "_blank");
+    w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>견적서</title>
+      <link rel="stylesheet" href="${FONT_LINK}">
+      <style>
+        @page{size:A4;margin:15mm}
+        *{margin:0;padding:0;box-sizing:border-box}
+        body{font-family:'Noto Sans KR','맑은 고딕','Malgun Gothic',sans-serif;color:#222;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      </style></head><body>${el.innerHTML}</body></html>`);
+    w.document.close();
+    setTimeout(() => { w.print(); w.close(); }, 400);
   };
 
-  const TimeInput = ({ label, value, onChange }) => (
-    <div>
-      <label style={S.label}>{label}</label>
-      <input type="time" value={value} onChange={e => onChange(e.target.value)} style={S.input} />
+  /* ═══ 공통 스타일 ═══ */
+  const sectionHeader = (num, title, sub) => (
+    <div style={{ background: QC.navy, borderRadius: "12px 12px 0 0", padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+      <div style={{ width: 24, height: 24, borderRadius: "50%", background: QC.gold, color: QC.navy, fontWeight: 900, fontSize: 13, display: "flex", alignItems: "center", justifyContent: "center" }}>{num}</div>
+      <span style={{ color: QC.white, fontWeight: 800, fontSize: 14 }}>{title}</span>
+      {sub && <span style={{ color: "rgba(255,255,255,0.55)", fontSize: 11 }}>{sub}</span>}
     </div>
   );
 
-  const ResultBlock = ({ r, label, accent }) => {
-    const isMW = accent === "green";
-    const bc = isMW ? "#6ee7b7" : "#93c5fd";
-    const bg = isMW ? "#ecfdf5" : "#eff6ff";
-    const tc = isMW ? "#065f46" : "#1e3a8a";
-    const vc = isMW ? "#047857" : "#1d4ed8";
-    return (
-      <div style={{ borderRadius: 16, border: `2px solid ${bc}`, background: bg, padding: 16, marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-          <span style={{ fontSize: 13, fontWeight: 900, color: tc }}>{label}</span>
-          <div style={{ textAlign: "right" }}>
-            <div style={{ fontSize: 20, fontWeight: 900, color: vc, fontFamily: "monospace" }}>{sf(r.hrRate)}<span style={{ fontSize: 13, fontWeight: 700 }}>원/h</span></div>
-            <div style={{ fontSize: 11, color: "#9ca3af" }}>시급</div>
-          </div>
-        </div>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 12 }}>
-          {[
-            ["총 지급액(세전)", r.gross, vc],
-            ["💚 실수령액", r.net, "#15803d"],
-            ["공제액 합계", r.totDed, "#dc2626"],
-            ["사업주 총비용", r.totCost, "#ea580c"],
-          ].map(([l, v, color]) => (
-            <div key={l} style={{ background: "#fff", borderRadius: 12, padding: 12, textAlign: "center", boxShadow: "0 1px 2px rgba(0,0,0,0.04)" }}>
-              <div style={{ fontSize: 15, fontWeight: 900, color, fontFamily: "monospace" }}>{sf(v)}<span style={{ fontSize: 11 }}>원</span></div>
-              <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 2 }}>{l}</div>
-            </div>
-          ))}
-        </div>
-        <div style={{ background: "#fff", borderRadius: 12, padding: 12, marginBottom: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 6 }}>근로자 공제 상세</div>
-          {[
-            ["국민연금(4.75%)", r.npE], ["건강보험(3.595%)", r.hiE], ["장기요양(×13.14%)", r.ltE],
-            ["고용보험(0.9%)", r.eiE], ["소득세+지방세", r.itax + r.ltax],
-          ].map(([l, v]) => (
-            <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "3px 0" }}>
-              <span style={{ color: "#9ca3af" }}>{l}</span>
-              <span style={{ fontWeight: 700, color: "#ef4444", fontFamily: "monospace" }}>-{sf(v)}원</span>
-            </div>
-          ))}
-          <div style={{ borderTop: "1px solid #e5e7eb", paddingTop: 6, marginTop: 6, display: "flex", justifyContent: "space-between", fontSize: 12, fontWeight: 700 }}>
-            <span style={{ color: "#4b5563" }}>사업주 부담 보험</span>
-            <span style={{ color: "#f97316", fontFamily: "monospace" }}>+{sf(r.insR)}원</span>
-          </div>
-        </div>
-        <div style={{ textAlign: "center", padding: "10px 0", borderRadius: 12, fontSize: 13, fontWeight: 900, background: isMW ? "#d1fae5" : "#dbeafe", color: tc }}>
-          💼 시간당 실질 인건비 <span style={{ fontFamily: "monospace" }}>{sf(r.hrCost)}원/h</span>
-        </div>
-      </div>
-    );
-  };
+  const inputStyle = { width: "100%", padding: "8px 12px", border: `1.5px solid ${QC.border}`, borderRadius: 8, fontSize: 14, fontFamily: "inherit", background: QC.white, outline: "none" };
+  const labelStyle = { display: "block", fontSize: 11, fontWeight: 700, color: QC.gray, marginBottom: 4 };
+  const chipActive = { padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 800, border: `2px solid ${QC.navy}`, background: QC.navy, color: QC.white, cursor: "pointer" };
+  const chipInactive = { padding: "6px 16px", borderRadius: 8, fontSize: 12, fontWeight: 700, border: `2px solid ${QC.border}`, background: QC.white, color: QC.gray, cursor: "pointer" };
 
   return (
-    <div style={{ paddingBottom: 20 }}>
-      {/* 헤더 */}
-      <div style={{ background: "linear-gradient(135deg, #1d4ed8 0%, #312e81 100%)", color: "#fff", padding: "20px 24px", borderRadius: 16, marginBottom: 16 }}>
-        <h1 style={{ fontSize: 20, fontWeight: 900, margin: 0, letterSpacing: "-0.02em" }}>💼 2026 인건비 견적 계산기</h1>
-        <p style={{ fontSize: 12, color: "#93c5fd", marginTop: 4 }}>근무시간 입력 → 시급·월급 자동 계산 · 최저임금 {sf(SC_MW)}원 기준</p>
+    <div style={{ minHeight: "100vh", background: "#eef0f5", fontFamily: "'맑은 고딕','Malgun Gothic',sans-serif" }}>
+
+      {/* ═══ 헤더 ═══ */}
+      <div style={{ background: QC.navy, padding: "14px 24px", display: "flex", alignItems: "center", gap: 12, boxShadow: "0 2px 12px rgba(20,40,160,0.3)" }}>
+        <div style={{ width: 36, height: 36, borderRadius: "50%", background: QC.gold, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 14, color: QC.navy }}>P</div>
+        <div>
+          <div style={{ color: QC.white, fontWeight: 900, fontSize: 16, letterSpacing: -0.5 }}>(주)미스터팍 발렛맨 서비스</div>
+          <div style={{ color: "rgba(255,255,255,0.5)", fontSize: 11 }}>견적 산출 · 견적서 자동 생성 시스템 · 2026</div>
+        </div>
       </div>
 
-      {/* 모바일 탭 */}
-      <div style={{ display: "flex", borderBottom: "1px solid #e5e7eb", background: "#fff", borderRadius: "12px 12px 0 0", marginBottom: 16, overflow: "hidden" }}>
-        {[["input", "⏰ 근무 입력"], ["result", "💰 견적 결과"]].map(([k, v]) => (
-          <button key={k} onClick={() => setActiveTab(k)} style={{
-            flex: 1, padding: "14px 0", fontSize: 13, fontWeight: 700, cursor: "pointer", border: "none",
-            borderBottom: activeTab === k ? "3px solid #1d4ed8" : "3px solid transparent",
-            background: activeTab === k ? "#eff6ff" : "#fff", color: activeTab === k ? "#1d4ed8" : "#9ca3af",
-          }}>{v}</button>
-        ))}
-      </div>
+      {/* ═══ 2컬럼 레이아웃 ═══ */}
+      <div style={{ display: "flex", gap: 0, maxWidth: 1440, margin: "0 auto", minHeight: "calc(100vh - 64px)" }}>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
-        {/* ── 입력 패널 ── */}
-        <div style={{ display: activeTab === "input" ? "block" : "none" }}>
+        {/* ──────────────────────────────────
+            좌측: 견적산출표
+        ────────────────────────────────── */}
+        <div style={{ flex: "0 0 520px", background: "#f6f7fb", padding: "20px 16px", overflowY: "auto", maxHeight: "calc(100vh - 64px)", borderRight: `1px solid ${QC.border}` }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: QC.navy, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 16 }}>📊</span> 견적 산출표
+            <span style={{ fontSize: 10, color: QC.gray, fontWeight: 500 }}>좌측 입력 → 우측 견적서 자동 반영</span>
+          </div>
 
-          {/* 근무 시간 */}
-          <div style={S.card}>
-            <h3 style={S.sectionTitle}>⏰ 실제 근무 시간 입력</h3>
-            <div style={S.pillGroup}>
-              {[["simple", "📅 일괄(전 요일 동일)"], ["weekly", "🗓 요일별 개별 설정"]].map(([k, v]) => (
-                <button key={k} onClick={() => setScheduleMode(k)} style={S.pill(scheduleMode === k)}>{v}</button>
-              ))}
-            </div>
+          {/* ── 1. 인건비 ── */}
+          <div style={{ background: QC.white, borderRadius: 12, marginBottom: 12, overflow: "hidden", border: `1px solid ${QC.border}` }}>
+            {sectionHeader("1", "인건비", "급여 + 사업주 4대보험 + 퇴직충당금")}
+            <div style={{ padding: 16 }}>
 
-            {scheduleMode === "simple" ? (
-              <div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 12 }}>
-                  <TimeInput label="출근" value={simple.start} onChange={v => setSimple(p => ({ ...p, start: v }))} />
-                  <TimeInput label="퇴근" value={simple.end} onChange={v => setSimple(p => ({ ...p, end: v }))} />
+              {/* 평일 */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ background: QC.navy, color: QC.white, fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 6 }}>평일</span>
+                  <span style={{ fontSize: 11, color: QC.gray }}>월 ~ 금 (주 5일)</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 80px", gap: 8, marginBottom: 8 }}>
                   <div>
-                    <label style={S.label}>휴게(분)</label>
-                    <input type="number" value={simple.breakMin} min={0} max={480} step={30}
-                      onChange={e => setSimple(p => ({ ...p, breakMin: parseInt(e.target.value) || 0 }))} style={S.input} />
+                    <label style={labelStyle}>급여 (월급 총액)</label>
+                    <input type="text" value={qFmt(wdSalary)} onChange={e => setWdSalary(parseInt(e.target.value.replace(/,/g,"")) || 0)} style={{ ...inputStyle, fontWeight: 700, fontSize: 15, textAlign: "right" }} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>인원 (명)</label>
+                    <input type="number" value={wdHead} min={1} onChange={e => setWdHead(parseInt(e.target.value) || 1)} style={{ ...inputStyle, textAlign: "center", fontWeight: 700 }} />
                   </div>
                 </div>
-                <div>
-                  <label style={{ ...S.label, marginBottom: 8 }}>주 근무일수</label>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 8 }}>
-                    {[5, 6, 7].map(n => (
-                      <button key={n} onClick={() => setSimple(p => ({ ...p, daysPerWeek: n }))} style={{
-                        padding: "9px 0", borderRadius: 12, fontSize: 13, fontWeight: 700, cursor: "pointer",
-                        border: `2px solid ${simple.daysPerWeek === n ? "#2563eb" : "#e5e7eb"}`,
-                        background: simple.daysPerWeek === n ? "#2563eb" : "#fff",
-                        color: simple.daysPerWeek === n ? "#fff" : "#6b7280", boxShadow: simple.daysPerWeek === n ? "0 2px 6px rgba(37,99,235,0.3)" : "none",
-                      }}>주 {n}일</button>
-                    ))}
-                    <input type="number" value={simple.daysPerWeek} min={1} max={7}
-                      onChange={e => setSimple(p => ({ ...p, daysPerWeek: parseInt(e.target.value) || 5 }))}
-                      style={{ ...S.input, textAlign: "center" }} />
-                  </div>
+                <label style={labelStyle}>근무시간</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                  <input type="time" value={wdStart} onChange={e => setWdStart(e.target.value)} style={{ ...inputStyle, flex: 1, textAlign: "center" }} />
+                  <span style={{ color: QC.gray }}>~</span>
+                  <input type="time" value={wdEnd} onChange={e => setWdEnd(e.target.value)} style={{ ...inputStyle, flex: 1, textAlign: "center" }} />
+                  <input type="number" value={wdBreak} min={0} step={30} onChange={e => setWdBreak(parseInt(e.target.value) || 0)} style={{ ...inputStyle, width: 56, textAlign: "center" }} />
+                  <span style={{ fontSize: 11, color: QC.gray, whiteSpace: "nowrap" }}>분 휴게</span>
                 </div>
-                <div style={{ background: "#eff6ff", border: "1px solid #bfdbfe", borderRadius: 12, padding: 12, marginTop: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontSize: 13, fontWeight: 700, color: "#2563eb" }}>⚡ 일 실근무시간</span>
-                  <span style={{ fontSize: 20, fontWeight: 900, color: "#1e3a8a", fontFamily: "monospace" }}>
-                    {Math.max(0, (tt(simple.end) - tt(simple.start) - simple.breakMin) / 60).toFixed(1)}시간
-                  </span>
+                <div style={{ display: "flex", gap: 12, fontSize: 11, color: QC.navy, fontWeight: 700 }}>
+                  <span>실근무 {weekday.actualH.toFixed(1)}h/일</span>
+                  <span>주 {weekday.weeklyH.toFixed(1)}h</span>
+                  {weekday.hasWL && <span style={{ color: QC.green }}>✓ 주휴포함</span>}
+                </div>
+
+                {/* 1인 산출내역 */}
+                <div style={{ marginTop: 10, background: QC.lightGray, borderRadius: 8, padding: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: QC.navy, marginBottom: 6 }}>1인 산출내역</div>
+                  {[
+                    ["급여", weekday.salary],
+                    ["사업주 4대보험", weekday.ins.total],
+                    ["퇴직충당금 (÷12)", weekday.retirement],
+                  ].map(([l, v]) => (
+                    <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
+                      <span style={{ color: QC.gray }}>{l}</span>
+                      <span style={{ fontWeight: 700, fontFamily: numFont }}>{qFmt(v)}원</span>
+                    </div>
+                  ))}
+                  <div style={{ borderTop: `1px solid ${QC.border}`, marginTop: 4, paddingTop: 4, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                    <span style={{ fontWeight: 800 }}>1인 합계</span>
+                    <span style={{ fontWeight: 900, color: QC.navy, fontSize: 13, fontFamily: numFont }}>{qFmt(weekday.perPerson)}원</span>
+                  </div>
+                  <div style={{ marginTop: 6, background: QC.navy, color: QC.white, borderRadius: 6, padding: "5px 0", textAlign: "center", fontSize: 11, fontWeight: 800 }}>
+                    환산시급 <span style={{ fontFamily: numFont }}>{qFmt(weekday.hrCost)}</span>원/h
+                  </div>
                 </div>
               </div>
-            ) : (
+
+              {/* 구분선 */}
+              <div style={{ borderTop: `1.5px dashed ${QC.border}`, margin: "12px 0" }} />
+
+              {/* 주말 */}
               <div>
-                {SC_DAYS.map((day, i) => (
-                  <div key={day} style={{ borderRadius: 12, border: `2px solid ${weekly[i].work ? "#bfdbfe" : "#f3f4f6"}`, background: weekly[i].work ? "#eff6ff" : "#f9fafb", padding: 10, marginBottom: 6 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <button onClick={() => setWeekly(w => w.map((d, j) => j === i ? { ...d, work: !d.work } : d))}
-                        style={{ width: 42, height: 24, borderRadius: 12, border: "none", cursor: "pointer", background: weekly[i].work ? "#2563eb" : "#d1d5db", position: "relative", flexShrink: 0 }}>
-                        <div style={{ width: 16, height: 16, background: "#fff", borderRadius: "50%", position: "absolute", top: 4, left: weekly[i].work ? 23 : 3, transition: "all 0.15s", boxShadow: "0 1px 3px rgba(0,0,0,0.15)" }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <span style={{ background: QC.gold, color: QC.navy, fontSize: 11, fontWeight: 800, padding: "3px 10px", borderRadius: 6 }}>주말</span>
+                  {["토", "일"].map(d => {
+                    const key = d === "토" ? "sat" : "sun";
+                    const active = weChecked[key];
+                    return (
+                      <button key={d} onClick={() => setWeChecked(p => ({ ...p, [key]: !p[key] }))}
+                        style={{ ...(active ? chipActive : chipInactive), background: active ? QC.red : QC.white, borderColor: active ? QC.red : QC.border, color: active ? QC.white : QC.gray, padding: "4px 12px", fontSize: 13, fontWeight: 900 }}>
+                        {d}
                       </button>
-                      <span style={{ width: 16, fontSize: 13, fontWeight: 900, color: i >= 5 ? "#ef4444" : "#374151", flexShrink: 0 }}>{day}</span>
-                      {weekly[i].work ? (
-                        <div style={{ display: "flex", gap: 6, flex: 1, alignItems: "center" }}>
-                          <input type="time" value={weekly[i].start}
-                            onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, start: e.target.value } : d))}
-                            style={{ flex: 1, padding: "5px 8px", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 12, background: "#fff" }} />
-                          <span style={{ fontSize: 12, color: "#d1d5db" }}>~</span>
-                          <input type="time" value={weekly[i].end}
-                            onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, end: e.target.value } : d))}
-                            style={{ flex: 1, padding: "5px 8px", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 12, background: "#fff" }} />
-                          <input type="number" value={weekly[i].breakMin} min={0} step={30}
-                            onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, breakMin: parseInt(e.target.value) || 0 } : d))}
-                            style={{ width: 52, padding: "5px 6px", border: "1px solid #bfdbfe", borderRadius: 8, fontSize: 12, textAlign: "center", background: "#fff" }} />
-                          <span style={{ fontSize: 11, color: "#9ca3af", flexShrink: 0 }}>분</span>
-                        </div>
-                      ) : <span style={{ fontSize: 12, color: "#9ca3af", marginLeft: 4 }}>휴무</span>}
-                    </div>
-                    {weekly[i].work && (
-                      <div style={{ marginTop: 4, marginLeft: 66, fontSize: 12, color: "#3b82f6", fontWeight: 600 }}>
-                        실근무 {Math.max(0, (tt(weekly[i].end) - tt(weekly[i].start) - weekly[i].breakMin) / 60).toFixed(1)}시간
+                    );
+                  })}
+                  <span style={{ fontSize: 11, color: QC.gray, marginLeft: "auto" }}>주 {weDays}일</span>
+                </div>
+
+                {weDays > 0 && (
+                  <>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 80px", gap: 8, marginBottom: 8 }}>
+                      <div>
+                        <label style={labelStyle}>일당 (1일 금액)</label>
+                        <input type="text" value={qFmt(wePay)} onChange={e => setWePay(parseInt(e.target.value.replace(/,/g,"")) || 0)} style={{ ...inputStyle, fontWeight: 700, fontSize: 15, textAlign: "right" }} />
                       </div>
-                    )}
-                  </div>
+                      <div>
+                        <label style={labelStyle}>인원 (명)</label>
+                        <input type="number" value={weHead} min={1} onChange={e => setWeHead(parseInt(e.target.value) || 1)} style={{ ...inputStyle, textAlign: "center", fontWeight: 700 }} />
+                      </div>
+                    </div>
+                    <label style={labelStyle}>근무시간</label>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <input type="time" value={weStart} onChange={e => setWeStart(e.target.value)} style={{ ...inputStyle, flex: 1, textAlign: "center" }} />
+                      <span style={{ color: QC.gray }}>~</span>
+                      <input type="time" value={weEnd} onChange={e => setWeEnd(e.target.value)} style={{ ...inputStyle, flex: 1, textAlign: "center" }} />
+                      <input type="number" value={weBreak} min={0} step={30} onChange={e => setWeBreak(parseInt(e.target.value) || 0)} style={{ ...inputStyle, width: 56, textAlign: "center" }} />
+                      <span style={{ fontSize: 11, color: QC.gray, whiteSpace: "nowrap" }}>분 휴게</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: QC.navy, fontWeight: 700 }}>
+                      실근무 {weekend.actualH.toFixed(1)}h/일
+                    </div>
+
+                    <div style={{ marginTop: 10, background: QC.lightGray, borderRadius: 8, padding: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: QC.navy, marginBottom: 6 }}>1인 산출내역</div>
+                      {[
+                        [`일당 × ${weDays}일 × 5주`, weekend.monthlyPay],
+                        ["사업주 4대보험", weekend.ins.total],
+                        ["퇴직충당금 (÷12)", weekend.retirement],
+                      ].map(([l, v]) => (
+                        <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 11, marginBottom: 2 }}>
+                          <span style={{ color: QC.gray }}>{l}</span>
+                          <span style={{ fontWeight: 700, fontFamily: numFont }}>{qFmt(v)}원</span>
+                        </div>
+                      ))}
+                      <div style={{ borderTop: `1px solid ${QC.border}`, marginTop: 4, paddingTop: 4, display: "flex", justifyContent: "space-between", fontSize: 12 }}>
+                        <span style={{ fontWeight: 800 }}>1인 합계</span>
+                        <span style={{ fontWeight: 900, color: QC.navy, fontSize: 13, fontFamily: numFont }}>{qFmt(weekend.perPerson)}원</span>
+                      </div>
+                      <div style={{ marginTop: 6, background: QC.navy, color: QC.white, borderRadius: 6, padding: "5px 0", textAlign: "center", fontSize: 11, fontWeight: 800 }}>
+                        환산시급 <span style={{ fontFamily: numFont }}>{qFmt(weekend.hrCost)}</span>원/h
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── 2. 운영지원금 ── */}
+          <div style={{ background: QC.white, borderRadius: 12, marginBottom: 12, overflow: "hidden", border: `1px solid ${QC.border}` }}>
+            {sectionHeader("2", "운영지원금", "운영관리 + 사고 리스크 대비금")}
+            <div style={{ padding: 16 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                {[1000000, 2000000, 3000000, 4000000, 5000000].map(v => (
+                  <button key={v} onClick={() => setOpSupport(v)}
+                    style={opSupport === v ? chipActive : chipInactive}>
+                    {v / 10000}만
+                  </button>
                 ))}
               </div>
-            )}
-          </div>
-
-          {/* 시급 기준 */}
-          <div style={S.card}>
-            <h3 style={S.sectionTitle}>💰 시급 기준 설정</h3>
-            <div style={S.pillGroup}>
-              {[["min", "최저임금만"], ["custom", "직접 입력"], ["both", "둘 다 비교"]].map(([k, v]) => (
-                <button key={k} onClick={() => setHrMode(k)} style={S.pill(hrMode === k)}>{v}</button>
-              ))}
-            </div>
-            {(hrMode === "custom" || hrMode === "both") && (
-              <div>
-                <label style={S.label}>설정 시급 (원)</label>
-                <input type="number" value={customHr} min={SC_MW} step={100}
-                  onChange={e => setCustomHr(parseInt(e.target.value) || SC_MW)}
-                  style={{ ...S.input, fontSize: 17, fontWeight: 800, fontFamily: "monospace" }} />
-                {customHr < SC_MW && <p style={{ fontSize: 12, color: "#ef4444", fontWeight: 700, marginTop: 4 }}>❌ 2026 최저임금({sf(SC_MW)}원) 위반!</p>}
-              </div>
-            )}
-          </div>
-
-          {/* 기타 */}
-          <div style={S.card}>
-            <h3 style={S.sectionTitle}>⚙️ 기타</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <label style={S.label}>식대 비과세</label>
-                <input type="number" value={meal} step={10000} max={200000}
-                  onChange={e => setMeal(parseInt(e.target.value) || 0)} style={S.input} />
-                <p style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>최대 200,000원</p>
-              </div>
-              <div>
-                <label style={S.label}>부양가족</label>
-                <select value={dep} onChange={e => setDep(parseInt(e.target.value))} style={S.input}>
-                  {[1, 2, 3, 4, 5, 6, 7].map(n => <option key={n} value={n}>{n}명{n === 1 ? " (본인만)" : ""}</option>)}
-                </select>
-              </div>
+              <input type="text" value={qFmt(opSupport)} onChange={e => setOpSupport(parseInt(e.target.value.replace(/,/g,"")) || 0)}
+                style={{ ...inputStyle, fontWeight: 800, fontSize: 16, textAlign: "right" }} />
+              <div style={{ textAlign: "right", fontSize: 11, color: QC.gray, marginTop: 4 }}>월 운영지원금</div>
             </div>
           </div>
 
-          {/* 근무시간 분석 */}
-          <div style={{ background: "linear-gradient(135deg, #334155 0%, #0f172a 100%)", color: "#fff", borderRadius: 16, padding: 16 }}>
-            <h3 style={{ fontSize: 13, fontWeight: 900, marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>📊 근무시간 분석 <span style={{ fontSize: 11, color: "#94a3b8", fontWeight: 400 }}>(자동 계산)</span></h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-              {[
-                ["일 실근무", `${calc.dailyWorkH.toFixed(1)}h`], ["주 실근무", `${calc.weeklyWorkH.toFixed(1)}h`],
-                ["월 기본시간", `${calc.monthlyBasicH.toFixed(1)}h`], ["월 주휴시간", calc.hasWL ? `${calc.monthlyWLH.toFixed(1)}h` : "미해당"],
-                ["월 연장시간", `${calc.monthlyOTH.toFixed(1)}h`], ["월 야간시간", `${calc.monthlyNightH.toFixed(1)}h`],
-              ].map(([l, v]) => (
-                <div key={l} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 12, padding: 8, textAlign: "center" }}>
-                  <div style={{ fontSize: 15, fontWeight: 900 }}>{v}</div>
-                  <div style={{ fontSize: 10, color: "#94a3b8", marginTop: 2 }}>{l}</div>
+          {/* ── 3. 발렛보험비 ── */}
+          <div style={{ background: QC.white, borderRadius: 12, marginBottom: 12, overflow: "hidden", border: `1px solid ${QC.border}` }}>
+            {sectionHeader("3", "발렛보험비", "50만 ~ 200만원 (10만원 단위)")}
+            <div style={{ padding: 16 }}>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                {[500000, 1000000, 1500000, 2000000].map(v => (
+                  <button key={v} onClick={() => setInsurance(v)}
+                    style={insurance === v ? chipActive : chipInactive}>
+                    {v / 10000}만
+                  </button>
+                ))}
+              </div>
+              <input type="text" value={qFmt(insurance)} onChange={e => setInsurance(parseInt(e.target.value.replace(/,/g,"")) || 0)}
+                style={{ ...inputStyle, fontWeight: 800, fontSize: 16, textAlign: "right" }} />
+              <div style={{ textAlign: "right", fontSize: 11, color: QC.gray, marginTop: 4 }}>월 발렛보험비</div>
+            </div>
+          </div>
+
+          {/* ── 합계 요약 ── */}
+          <div style={{ background: QC.navy, borderRadius: 12, padding: 16, marginBottom: 12 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+              <span style={{ color: "rgba(255,255,255,0.6)", fontSize: 12 }}>견적 합 소계</span>
+            </div>
+            {[
+              ["1. 인건비 (평일)", laborWeekday],
+              ["1. 인건비 (주말)", laborWeekend],
+              ["2. 운영지원금", opSupport],
+              ["3. 발렛보험비", insurance],
+            ].map(([l, v]) => (
+              <div key={l} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "rgba(255,255,255,0.75)", marginBottom: 3 }}>
+                <span>{l}</span>
+                <span style={{ fontWeight: 700, fontFamily: numFont }}>{qFmt(v)}원</span>
+              </div>
+            ))}
+
+            {/* 에누리 표시 */}
+            {discountAmt > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#ff9800", marginTop: 4 }}>
+                <span>에누리 ({discountMode === "percent" ? `${discountValue}%` : "직접입력"})</span>
+                <span style={{ fontWeight: 800, fontFamily: numFont }}>-{qFmt(discountAmt)}원</span>
+              </div>
+            )}
+
+            <div style={{ borderTop: "1px solid rgba(255,255,255,0.2)", marginTop: 8, paddingTop: 10 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span style={{ color: QC.gold, fontWeight: 800, fontSize: 13 }}>총 견적금액 (부가세 별도)</span>
+                <span style={{ color: QC.gold, fontWeight: 900, fontSize: 22, fontFamily: numFont }}>{qFmt(subtotal)}원</span>
+              </div>
+              {discountAmt > 0 && (
+                <div style={{ textAlign: "right", fontSize: 10, color: "rgba(255,255,255,0.35)", textDecoration: "line-through", marginTop: 1 }}>
+                  {qFmt(rawSubtotal)}원
                 </div>
-              ))}
+              )}
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 4 }}>
+                <span>+ 부가세 (10%)</span>
+                <span style={{ fontFamily: numFont }}>{qFmt(vat)}원</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 14, color: QC.white, fontWeight: 900, marginTop: 4 }}>
+                <span>합계 (VAT 포함)</span>
+                <span style={{ fontFamily: numFont }}>{qFmt(grandTotal)}원</span>
+              </div>
             </div>
-            <div style={{ marginTop: 10, fontSize: 12 }}>
-              {!calc.hasWL && <p style={{ color: "#fde047" }}>⚠️ 주 15시간 미만 — 주휴수당 미발생</p>}
-              {calc.monthlyOTH > 0 && <p style={{ color: "#fdba74" }}>⚡ 연장근무 가산수당(×1.5) 자동 적용</p>}
-              {calc.monthlyNightH > 0 && <p style={{ color: "#c4b5fd" }}>🌙 야간가산수당(×0.5) 자동 적용</p>}
+          </div>
+
+          {/* ── 에누리 ── */}
+          <div style={{ background: QC.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${QC.border}` }}>
+            <div style={{ background: "#ff9800", padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 16 }}>🏷️</span>
+              <span style={{ color: QC.white, fontWeight: 800, fontSize: 14 }}>에누리 (할인)</span>
+              {discountAmt > 0 && <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>-{qFmt(discountAmt)}원 적용중</span>}
+            </div>
+            <div style={{ padding: 16 }}>
+              {/* 모드 선택 */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 10 }}>
+                {[["amount", "금액 직접입력"], ["percent", "% 할인율"]].map(([k, v]) => (
+                  <button key={k} onClick={() => { setDiscountMode(k); setDiscountValue(0); }}
+                    style={discountMode === k ? { ...chipActive, background: "#ff9800", borderColor: "#ff9800" } : chipInactive}>
+                    {v}
+                  </button>
+                ))}
+                {discountAmt > 0 && (
+                  <button onClick={() => setDiscountValue(0)}
+                    style={{ ...chipInactive, color: QC.red, borderColor: QC.red, marginLeft: "auto", fontSize: 11 }}>
+                    초기화
+                  </button>
+                )}
+              </div>
+
+              {discountMode === "percent" ? (
+                <>
+                  {/* % 버튼 */}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {[3, 5, 7, 10, 15, 20].map(p => (
+                      <button key={p} onClick={() => setDiscountValue(p)}
+                        style={discountValue === p
+                          ? { ...chipActive, background: "#ff9800", borderColor: "#ff9800" }
+                          : chipInactive}>
+                        {p}%
+                      </button>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <input type="number" value={discountValue} min={0} max={50} step={1}
+                      onChange={e => setDiscountValue(Math.min(50, Math.max(0, parseInt(e.target.value) || 0)))}
+                      style={{ ...inputStyle, width: 80, textAlign: "center", fontWeight: 800, fontSize: 18 }} />
+                    <span style={{ fontWeight: 800, color: "#ff9800", fontSize: 16 }}>%</span>
+                    <span style={{ fontSize: 12, color: QC.gray, marginLeft: "auto" }}>= -{qFmt(discountAmt)}원</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* 금액 버튼 */}
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                    {[100000, 200000, 300000, 500000].map(v => (
+                      <button key={v} onClick={() => setDiscountValue(v)}
+                        style={discountValue === v
+                          ? { ...chipActive, background: "#ff9800", borderColor: "#ff9800" }
+                          : chipInactive}>
+                        {v / 10000}만
+                      </button>
+                    ))}
+                  </div>
+                  <input type="text" value={qFmt(discountValue)}
+                    onChange={e => setDiscountValue(Math.max(0, parseInt(e.target.value.replace(/,/g,"")) || 0))}
+                    style={{ ...inputStyle, fontWeight: 800, fontSize: 16, textAlign: "right" }} />
+                  {discountValue > 0 && rawSubtotal > 0 && (
+                    <div style={{ textAlign: "right", fontSize: 11, color: "#ff9800", marginTop: 4, fontWeight: 700 }}>
+                      할인율 약 {(discountAmt / rawSubtotal * 100).toFixed(1)}%
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
         </div>
 
-        {/* ── 결과 패널 ── */}
-        <div style={{ display: activeTab === "result" ? "block" : "none" }}>
-          {(hrMode === "min" || hrMode === "both") && <ResultBlock r={calc.minResult} label="✅ 최저임금 기준" accent="green" />}
-          {(hrMode === "custom" || hrMode === "both") && <ResultBlock r={calc.customResult} label="⭐ 설정 시급 기준" accent="blue" />}
+        {/* ──────────────────────────────────
+            우측: 견적서 폼
+        ────────────────────────────────── */}
+        <div style={{ flex: 1, padding: "20px 24px", overflowY: "auto", maxHeight: "calc(100vh - 64px)" }}>
 
-          {/* 비교표 */}
-          {hrMode === "both" && (
-            <div style={S.card}>
-              <h3 style={S.sectionTitle}>📊 최저임금 vs 설정시급 비교</h3>
-              <table style={{ width: "100%", fontSize: 12, borderCollapse: "collapse" }}>
+          {/* 견적서 정보 입력 (인쇄 안됨) */}
+          <div style={{ background: QC.white, borderRadius: 12, border: `1px solid ${QC.border}`, padding: 16, marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: QC.navy, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 16 }}>📝</span> 견적서 정보 입력
+              <span style={{ fontSize: 10, color: QC.gray, fontWeight: 500 }}>아래 입력 → 견적서에 자동 반영</span>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+              <div>
+                <label style={labelStyle}>현장명</label>
+                <input value={clientSite} onChange={e => setClientSite(e.target.value)} placeholder="예: OO병원, OO아파트" style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>계약형태</label>
+                <input value={contractType} onChange={e => setContractType(e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>계약기간</label>
+                <input value={contractPeriod} onChange={e => setContractPeriod(e.target.value)} style={inputStyle} />
+              </div>
+              <div>
+                <label style={labelStyle}>운영시간</label>
+                <input value={operatingHours} onChange={e => setOperatingHours(e.target.value)} style={inputStyle} />
+              </div>
+            </div>
+            <button onClick={handlePrint} style={{ marginTop: 12, width: "100%", padding: "12px 0", borderRadius: 10, border: "none", background: QC.navy, color: QC.white, fontWeight: 900, fontSize: 14, cursor: "pointer", letterSpacing: -0.3 }}>
+              🖨️ 견적서 인쇄 / PDF 저장
+            </button>
+          </div>
+
+          {/* ═══ 견적서 폼 (A4 미리보기) ═══ */}
+          <div ref={printRef}>
+            <div style={{
+              width: "100%", maxWidth: 680, margin: "0 auto",
+              background: QC.white, borderRadius: 4, padding: "40px 36px",
+              boxShadow: "0 2px 20px rgba(0,0,0,0.08)", border: `1px solid ${QC.border}`,
+              fontFamily: "'맑은 고딕','Malgun Gothic',sans-serif", color: QC.dark, lineHeight: 1.6,
+            }}>
+
+              {/* 타이틀 */}
+              <h1 style={{ fontSize: 28, fontWeight: 900, color: QC.dark, margin: "0 0 12px 0", letterSpacing: -0.5 }}>주차관리 서비스 견적서</h1>
+
+              {/* 인사말 */}
+              <div style={{ fontSize: 12, color: QC.gray, lineHeight: 1.9, marginBottom: 20 }}>
+                최고의 고객 감동으로 사업체의 발전을 최우선하는 발렛맨입니다.<br />
+                언제나 한결같은 마음가짐과 늘 발전하는 모습으로 나아갈 것을 약속드립니다.
+              </div>
+
+              {/* 정보 테이블 (좌: 고객/계약 정보, 우: 회사 정보) */}
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24, fontSize: 12, border: `1px solid ${QC.border}`, tableLayout: "fixed" }}>
+                <colgroup>
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "35%" }} />
+                  <col style={{ width: "15%" }} />
+                  <col style={{ width: "35%" }} />
+                </colgroup>
+                <tbody>
+                  {[
+                    { leftLabel: "현장명", leftVal: clientSite || "(미입력)", rightLabel: "상호명", rightVal: "㈜미스터팍" },
+                    { leftLabel: "견적일", leftVal: dateStr, rightLabel: "대표", rightVal: "이지섭" },
+                    { leftLabel: "계약형태", leftVal: contractType, rightLabel: "등록번호", rightVal: "102-88-01109" },
+                    { leftLabel: "계약기간", leftVal: contractPeriod, rightLabel: "주소", rightVal: "인천광역시 연수구 갯벌로 12, 인천테크노파크 갯벌타워 1501A,B호" },
+                    { leftLabel: "운영시간", leftVal: operatingHours, rightLabel: "전화", rightVal: "1899-1871" },
+                  ].map((row, i) => {
+                    const thStyle = { padding: "10px 14px", background: "#f4f5f8", fontWeight: 700, color: QC.dark, textAlign: "center", borderBottom: `1px solid ${QC.border}`, borderRight: `1px solid ${QC.border}`, fontSize: 12, whiteSpace: "nowrap" };
+                    const tdStyle = { padding: "10px 14px", borderBottom: `1px solid ${QC.border}`, borderRight: `1px solid ${QC.border}`, fontSize: 12, color: row.leftVal.includes("미입력") ? "#bbb" : QC.dark, textAlign: "center", wordBreak: "keep-all" };
+                    const thStyleR = { ...thStyle, background: "#eef0f6", color: QC.navy };
+                    const tdStyleR = { padding: "10px 14px", borderBottom: `1px solid ${QC.border}`, fontSize: 12, color: QC.dark, textAlign: "center", wordBreak: "keep-all" };
+                    return (
+                      <tr key={i}>
+                        <td style={thStyle}>{row.leftLabel}</td>
+                        <td style={tdStyle}>{row.leftVal}</td>
+                        <td style={thStyleR}>{row.rightLabel}</td>
+                        <td style={tdStyleR}>{row.rightVal}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+
+              {/* 견적 금액 하이라이트 */}
+              <div style={{ background: QC.navy, borderRadius: 8, padding: "14px 20px", marginBottom: 20, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div style={{ color: QC.white, fontWeight: 800, fontSize: 14 }}>견적금액 (부가세 별도)</div>
+                <div style={{ color: QC.gold, fontWeight: 900, fontSize: 24, letterSpacing: -0.5, fontFamily: numFont }}>₩ {qFmt(subtotal)}</div>
+              </div>
+
+              {/* 상세 내역 테이블 */}
+              <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 16, fontSize: 12 }}>
                 <thead>
-                  <tr style={{ background: "#f9fafb" }}>
-                    <td style={{ padding: 10, fontWeight: 700, color: "#9ca3af", borderRadius: "12px 0 0 0" }}>항목</td>
-                    <td style={{ padding: 10, fontWeight: 700, color: "#047857", textAlign: "right" }}>최저임금</td>
-                    <td style={{ padding: 10, fontWeight: 700, color: "#1d4ed8", textAlign: "right", borderRadius: "0 12px 0 0" }}>설정시급</td>
+                  <tr style={{ background: QC.navy }}>
+                    <th style={{ padding: "8px 10px", color: QC.white, fontWeight: 700, textAlign: "left", fontSize: 11, width: 36 }}>No</th>
+                    <th style={{ padding: "8px 10px", color: QC.white, fontWeight: 700, textAlign: "left", fontSize: 11 }}>항목</th>
+                    <th style={{ padding: "8px 10px", color: QC.white, fontWeight: 700, textAlign: "right", fontSize: 11 }}>금액</th>
+                    <th style={{ padding: "8px 10px", color: QC.white, fontWeight: 700, textAlign: "center", fontSize: 11, width: 50 }}>인원</th>
+                    <th style={{ padding: "8px 10px", color: QC.white, fontWeight: 700, textAlign: "right", fontSize: 11 }}>소계</th>
                   </tr>
                 </thead>
                 <tbody>
                   {[
-                    ["시급", sf(calc.minResult.hrRate) + "원", sf(calc.customResult.hrRate) + "원"],
-                    ["총 지급액", sf(calc.minResult.gross) + "원", sf(calc.customResult.gross) + "원"],
-                    ["실수령액", sf(calc.minResult.net) + "원", sf(calc.customResult.net) + "원"],
-                    ["총 공제액", sf(calc.minResult.totDed) + "원", sf(calc.customResult.totDed) + "원"],
-                    ["사업주 보험", sf(calc.minResult.insR) + "원", sf(calc.customResult.insR) + "원"],
-                    ["사업주 총비용", sf(calc.minResult.totCost) + "원", sf(calc.customResult.totCost) + "원"],
-                    ["시간당 인건비", sf(calc.minResult.hrCost) + "원", sf(calc.customResult.hrCost) + "원"],
-                  ].map(([l, a, b]) => (
-                    <tr key={l} style={{ borderTop: "1px solid #f3f4f6" }}>
-                      <td style={{ padding: 10, color: "#9ca3af" }}>{l}</td>
-                      <td style={{ padding: 10, fontWeight: 700, color: "#047857", textAlign: "right", fontFamily: "monospace" }}>{a}</td>
-                      <td style={{ padding: 10, fontWeight: 700, color: "#1d4ed8", textAlign: "right", fontFamily: "monospace" }}>{b}</td>
-                    </tr>
+                    { no: 1, name: "인건비 (평일 / 주5일)", amount: weekday.perPerson, qty: wdHead, sub: laborWeekday, detail: `월급 ${qFmt(wdSalary)}원 + 4대보험 + 퇴직충당금` },
+                    ...(weDays > 0 ? [{ no: 2, name: `인건비 (주말 / 주${weDays}일)`, amount: weekend.perPerson, qty: weHead, sub: laborWeekend, detail: `일당 ${qFmt(wePay)}원 × ${weDays}일 × 5주 + 4대보험 + 퇴직충당금` }] : []),
+                    { no: weDays > 0 ? 3 : 2, name: "운영지원금", amount: opSupport, qty: 1, sub: opSupport, detail: "운영관리 + 사고 리스크 대비" },
+                    { no: weDays > 0 ? 4 : 3, name: "발렛보험비", amount: insurance, qty: 1, sub: insurance, detail: "발렛 차량 사고 보험" },
+                  ].map((row, i) => (
+                    <>
+                      <tr key={row.no} style={{ borderBottom: `1px solid ${QC.border}`, background: i % 2 === 0 ? QC.white : "#fafbfd" }}>
+                        <td style={{ padding: "9px 10px", fontWeight: 700, color: QC.navy }}>{row.no}</td>
+                        <td style={{ padding: "9px 10px", fontWeight: 700 }}>{row.name}</td>
+                        <td style={{ padding: "9px 10px", textAlign: "right", fontFamily: numFont }}>{qFmt(row.amount)}</td>
+                        <td style={{ padding: "9px 10px", textAlign: "center" }}>{row.qty}</td>
+                        <td style={{ padding: "9px 10px", textAlign: "right", fontWeight: 700, fontFamily: numFont }}>{qFmt(row.sub)}</td>
+                      </tr>
+                      <tr key={`d-${row.no}`} style={{ borderBottom: `1px solid ${QC.border}` }}>
+                        <td />
+                        <td colSpan={4} style={{ padding: "4px 10px 8px", fontSize: 10, color: QC.gray }}>{row.detail}</td>
+                      </tr>
+                    </>
                   ))}
                 </tbody>
               </table>
-              <div style={{ marginTop: 12, background: "#fffbeb", border: "1px solid #fde68a", borderRadius: 12, padding: 12, fontSize: 12, fontWeight: 500, color: "#92400e" }}>
-                💡 월 차액 (사업주 기준):&nbsp;
-                <span style={{ fontWeight: 900, color: "#78350f" }}>
-                  {sf(Math.abs(calc.customResult.totCost - calc.minResult.totCost))}원
-                  {calc.customResult.totCost > calc.minResult.totCost ? " 추가 부담" : " 절감"}
-                </span>
+
+              {/* 합계 영역 */}
+              <div style={{ borderTop: `2px solid ${QC.navy}`, paddingTop: 12, marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: QC.gray }}>공급가액 소계</span>
+                  <span style={{ fontWeight: 700, fontFamily: numFont }}>₩ {qFmt(rawSubtotal)}</span>
+                </div>
+                {discountAmt > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "#ff9800" }}>
+                    <span style={{ fontWeight: 700 }}>에누리 {discountMode === "percent" ? `(${discountValue}%)` : ""}</span>
+                    <span style={{ fontWeight: 800, fontFamily: numFont }}>- ₩ {qFmt(discountAmt)}</span>
+                  </div>
+                )}
+                {discountAmt > 0 && (
+                  <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                    <span style={{ color: QC.gray }}>공급가액 (에누리 적용)</span>
+                    <span style={{ fontWeight: 700, fontFamily: numFont }}>₩ {qFmt(subtotal)}</span>
+                  </div>
+                )}
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
+                  <span style={{ color: QC.gray }}>부가세 (10%)</span>
+                  <span style={{ fontWeight: 700, fontFamily: numFont }}>₩ {qFmt(vat)}</span>
+                </div>
+                <div style={{ display: "flex", justifyContent: "space-between", fontSize: 16, fontWeight: 900, marginTop: 8, padding: "10px 14px", background: QC.goldLight, borderRadius: 6, border: `1.5px solid ${QC.gold}` }}>
+                  <span style={{ color: QC.navy }}>합계 (VAT 포함)</span>
+                  <span style={{ color: QC.navy, fontFamily: numFont }}>₩ {qFmt(grandTotal)}</span>
+                </div>
+              </div>
+
+              {/* 운영 중점 사항 */}
+              <div style={{ marginBottom: 24 }}>
+                <div style={{ fontSize: 13, fontWeight: 900, color: QC.dark, marginBottom: 12 }}>· 운영 중점 사항</div>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, lineHeight: 1.9 }}>
+                  <tbody>
+                    <tr style={{ verticalAlign: "top" }}>
+                      <td style={{ width: 130, padding: "8px 0", fontWeight: 400, color: QC.dark, whiteSpace: "nowrap" }}>발렛요원 서비스 차별화</td>
+                      <td style={{ padding: "8px 0 8px 16px", color: QC.dark }}>
+                        <div>-전문 서비스 강사 교육 이수자 현장 투입</div>
+                        <div>-고객 편의를 고려하는 감성 케어 서비스 제공</div>
+                        <div>-매월 고객사 의견 수렴, 서비스 태도 부족 시 <strong>경고 및 교체 처리</strong></div>
+                      </td>
+                    </tr>
+                    <tr style={{ verticalAlign: "top" }}>
+                      <td style={{ padding: "8px 0", fontWeight: 400, color: QC.dark, whiteSpace: "nowrap" }}>현장 불편 최소화</td>
+                      <td style={{ padding: "8px 0 8px 16px", color: QC.dark }}>
+                        <div>-<strong>국내 유일 발렛 전용(주차장 및 도로) 보험 소유 (DB손해보험, 현대해상)</strong></div>
+                        <div>-고객 차량 사고 시 보험 처리로 발생되는 자기 부담금 당사 전체 부담</div>
+                        <div>-발렛비(주차 요금) 징수 방법 고객사 선택 가능 (현금, 카드 등) 필요시</div>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+
+              {/* 하단 구분선 */}
+              <div style={{ height: 2, background: QC.gold, borderRadius: 2, marginBottom: 20 }} />
+
+              {/* 최하단 */}
+              <div style={{ textAlign: "center", fontSize: 9, color: "#bbb", marginTop: 16 }}>
+                본 견적서는 (주)미스터팍 견적시스템에서 자동 생성되었습니다.
               </div>
             </div>
-          )}
-
-          <div style={{ background: "#f8fafc", border: "1px solid #e2e8f0", borderRadius: 16, padding: 16, fontSize: 12, color: "#9ca3af", lineHeight: 2 }}>
-            <p style={{ fontWeight: 700, color: "#4b5563", marginBottom: 4 }}>📌 2026년 법적 기준</p>
-            <p>• 최저임금 <strong style={{ color: "#374151" }}>{sf(SC_MW)}원</strong> / 최저월급 2,156,880원 (209h)</p>
-            <p>• 국민연금 9.5% (각 4.75%) · 건강보험 7.19% · 장기요양 13.14%</p>
-            <p>• 연장(1일 8h·주 40h 초과) ×1.5 / 야간(22~06시) ×0.5 가산</p>
-            <p>• 소득세는 간이세액표 기준 추정치 · 정확한 처리는 노무사 확인 권장</p>
           </div>
         </div>
       </div>
