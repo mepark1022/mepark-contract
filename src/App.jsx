@@ -468,7 +468,7 @@ const DEFAULT_ARTICLES_PARTTIME = {
 
 // ── 10. 메인 대시보드 (통합 홈) ── Phase C 업그레이드 ──────
 function MainDashboard({ employees, onNavigate, profitState }) {
-  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [] } = profitState;
+  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [], monthlyParkingData = [] } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
   const [chartPeriod, setChartPeriod] = useState("mtd"); // ★ Phase C: 기본 이번달
@@ -1047,6 +1047,82 @@ function MainDashboard({ employees, onNavigate, profitState }) {
           </tbody>
         </table>
       </div>
+
+      {/* ── D. 월주차 만기 알림 + 업장별 매출 카드 ── */}
+      {monthlyParkingData.length > 0 && (() => {
+        const expiringSoon = monthlyParkingData.filter(p => {
+          if (!p.contract_end) return false;
+          const dd = Math.ceil((new Date(p.contract_end) - new Date()) / 86400000);
+          return dd <= 7;
+        });
+        const parkingBySite = {};
+        monthlyParkingData.forEach(p => {
+          if (!parkingBySite[p.site_code]) parkingBySite[p.site_code] = { count: 0, revenue: 0 };
+          parkingBySite[p.site_code].count++;
+          parkingBySite[p.site_code].revenue += toNum(p.monthly_fee);
+        });
+        const totalParkingRevenue = Object.values(parkingBySite).reduce((s, v) => s + v.revenue, 0);
+
+        return (
+          <div style={{ marginTop: 18 }}>
+            {/* D-7 만기 알림 */}
+            {expiringSoon.length > 0 && (
+              <div style={{ background: "#FFF3E0", border: `1.5px solid ${C.orange}`, borderRadius: 12, padding: "12px 16px", marginBottom: 14 }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.orange, marginBottom: 8 }}>⚠️ 월주차 만기 임박 ({expiringSoon.length}건)</div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  {expiringSoon.map(p => {
+                    const dd = Math.ceil((new Date(p.contract_end) - new Date()) / 86400000);
+                    return (
+                      <div key={p.id} style={{ background: "#fff", borderRadius: 8, padding: "8px 12px", border: `1px solid ${dd <= 0 ? C.error : C.orange}`, display: "flex", alignItems: "center", gap: 10 }}>
+                        <span style={{ fontSize: 12, fontWeight: 800, color: dd <= 0 ? C.error : C.orange }}>{dd <= 0 ? `D+${Math.abs(dd)}` : `D-${dd}`}</span>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: C.dark }}>{p.car_number} · {p.customer_name || "미입력"}</div>
+                          <div style={{ fontSize: 10, color: C.gray }}>{getSiteName(p.site_code)} · 만기 {p.contract_end}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* 업장별 매출 카드 (발렛비 + 월주차) */}
+            <div style={{ ...cardStyle }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>업장별 매출 현황</h3>
+                <span style={{ fontSize: 11, color: C.gray }}>월주차 {pFmt(totalParkingRevenue)} · 계약 {monthlyParkingData.length}대</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 10 }}>
+                {FIELD_SITES.filter(s => {
+                  const rev = toNum((revenueData[currentMonth] || {})[s.code]);
+                  const pk = parkingBySite[s.code];
+                  return rev > 0 || pk;
+                }).map(site => {
+                  const valetRev = toNum((revenueData[currentMonth] || {})[site.code]);
+                  const pk = parkingBySite[site.code] || { count: 0, revenue: 0 };
+                  const totalRev = valetRev + pk.revenue;
+                  return (
+                    <div key={site.code} style={{ background: "#fff", borderRadius: 10, border: `1px solid ${C.border}`, padding: "10px 12px" }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: C.navy }}>{site.code} {site.name}</span>
+                        <span style={{ fontSize: 12, fontWeight: 900, color: C.dark }}>{pFmt(totalRev)}</span>
+                      </div>
+                      <div style={{ display: "flex", gap: 6 }}>
+                        {valetRev > 0 && (
+                          <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#EFF3FF", color: C.navy, fontWeight: 700 }}>발렛 {pFmt(valetRev)}</span>
+                        )}
+                        {pk.revenue > 0 && (
+                          <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#FFF8E1", color: C.orange, fontWeight: 700 }}>월주차 {pFmt(pk.revenue)} ({pk.count}대)</span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -4778,6 +4854,235 @@ function SiteManagementPage({ employees }) {
 }
 
 
+// ── 16-2-1. 월주차 관리 시스템 ──────────────────────────
+function MonthlyParkingPage({ employees }) {
+  const [parkingList, setParkingList] = useState([]);
+  const [selectedSite, setSelectedSite] = useState("ALL");
+  const [showForm, setShowForm] = useState(false);
+  const [editItem, setEditItem] = useState(null);
+  const [form, setForm] = useState({ site_code: "", car_number: "", customer_name: "", phone: "", contract_start: "", contract_end: "", monthly_fee: 0, memo: "" });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("monthly_parking").select("*").order("contract_end", { ascending: true });
+      if (data) setParkingList(data);
+      setLoading(false);
+    })();
+  }, []);
+
+  const filtered = selectedSite === "ALL" ? parkingList : parkingList.filter(p => p.site_code === selectedSite);
+  const activeList = filtered.filter(p => p.status === "계약중");
+  const expiredList = filtered.filter(p => p.status === "만료");
+
+  const openNew = () => {
+    setEditItem(null);
+    setForm({ site_code: FIELD_SITES[0]?.code || "V001", car_number: "", customer_name: "", phone: "", contract_start: today(), contract_end: "", monthly_fee: 0, memo: "" });
+    setShowForm(true);
+  };
+  const openEdit = (item) => {
+    setEditItem(item);
+    setForm({ site_code: item.site_code, car_number: item.car_number, customer_name: item.customer_name || "", phone: item.phone || "", contract_start: item.contract_start || "", contract_end: item.contract_end || "", monthly_fee: item.monthly_fee || 0, memo: item.memo || "" });
+    setShowForm(true);
+  };
+  const handleSave = async () => {
+    if (!form.car_number.trim()) return alert("차량번호를 입력하세요");
+    if (editItem) {
+      await supabase.from("monthly_parking").update({ ...form, updated_at: new Date().toISOString() }).eq("id", editItem.id);
+      setParkingList(p => p.map(item => item.id === editItem.id ? { ...item, ...form } : item));
+    } else {
+      const { data } = await supabase.from("monthly_parking").insert({ ...form, status: "계약중" }).select().single();
+      if (data) setParkingList(p => [...p, data]);
+    }
+    setShowForm(false);
+  };
+  const handleDelete = async (id) => {
+    if (!window.confirm("삭제하시겠습니까?")) return;
+    await supabase.from("monthly_parking").delete().eq("id", id);
+    setParkingList(p => p.filter(item => item.id !== id));
+  };
+  const toggleStatus = async (item) => {
+    const newStatus = item.status === "계약중" ? "만료" : "계약중";
+    await supabase.from("monthly_parking").update({ status: newStatus }).eq("id", item.id);
+    setParkingList(p => p.map(pk => pk.id === item.id ? { ...pk, status: newStatus } : pk));
+  };
+
+  const getDday = (endDate) => {
+    if (!endDate) return null;
+    return Math.ceil((new Date(endDate) - new Date()) / 86400000);
+  };
+
+  const fieldSt = { ...inputStyle, fontSize: 12, padding: "7px 10px" };
+  const labelSt = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4, display: "block" };
+
+  // 사이트별 월주차 매출 집계
+  const siteSummary = useMemo(() => {
+    const map = {};
+    parkingList.filter(p => p.status === "계약중").forEach(p => {
+      if (!map[p.site_code]) map[p.site_code] = { count: 0, revenue: 0 };
+      map[p.site_code].count++;
+      map[p.site_code].revenue += toNum(p.monthly_fee);
+    });
+    return map;
+  }, [parkingList]);
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>🅿️ 월주차 관리</h2>
+        <button onClick={openNew} style={{ padding: "8px 16px", borderRadius: 8, border: "none", background: C.navy, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>+ 신규 등록</button>
+      </div>
+
+      {/* 사이트 필터 */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, flexWrap: "wrap" }}>
+        <button onClick={() => setSelectedSite("ALL")} style={{ padding: "5px 14px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${selectedSite === "ALL" ? C.navy : C.border}`, background: selectedSite === "ALL" ? C.navy : "#fff", color: selectedSite === "ALL" ? "#fff" : C.gray }}>전체 ({parkingList.filter(p => p.status === "계약중").length})</button>
+        {FIELD_SITES.filter(s => siteSummary[s.code]).map(site => (
+          <button key={site.code} onClick={() => setSelectedSite(site.code)} style={{ padding: "5px 14px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${selectedSite === site.code ? C.navy : C.border}`, background: selectedSite === site.code ? C.navy : "#fff", color: selectedSite === site.code ? "#fff" : C.gray }}>
+            {site.name} ({siteSummary[site.code]?.count || 0})
+          </button>
+        ))}
+      </div>
+
+      {/* 사이트별 매출 요약 카드 */}
+      {Object.keys(siteSummary).length > 0 && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 16, flexWrap: "wrap" }}>
+          {FIELD_SITES.filter(s => siteSummary[s.code]).map(site => {
+            const s = siteSummary[site.code];
+            return (
+              <div key={site.code} style={{ background: "#fff", borderRadius: 10, border: `1px solid ${C.border}`, padding: "10px 14px", minWidth: 140 }}>
+                <div style={{ fontSize: 10, color: C.navy, fontWeight: 700 }}>{site.code} {site.name}</div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: C.dark, marginTop: 4 }}>{pFmt(s.revenue)}</div>
+                <div style={{ fontSize: 10, color: C.gray }}>{s.count}대 계약중</div>
+              </div>
+            );
+          })}
+          <div style={{ background: C.navy, borderRadius: 10, padding: "10px 14px", minWidth: 140 }}>
+            <div style={{ fontSize: 10, color: C.gold, fontWeight: 700 }}>월주차 합계</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: "#fff", marginTop: 4 }}>{pFmt(Object.values(siteSummary).reduce((s, v) => s + v.revenue, 0))}</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.6)" }}>총 {Object.values(siteSummary).reduce((s, v) => s + v.count, 0)}대</div>
+          </div>
+        </div>
+      )}
+
+      {/* 등록/수정 폼 */}
+      {showForm && (
+        <div style={{ background: "#fff", borderRadius: 12, border: `2px solid ${C.navy}`, padding: 20, marginBottom: 16 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: C.navy, marginBottom: 12 }}>{editItem ? "✏️ 수정" : "➕ 신규 등록"}</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div>
+              <label style={labelSt}>사업장</label>
+              <select value={form.site_code} onChange={e => setForm(p => ({ ...p, site_code: e.target.value }))} style={fieldSt}>
+                {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelSt}>차량번호</label>
+              <input value={form.car_number} onChange={e => setForm(p => ({ ...p, car_number: e.target.value }))} style={fieldSt} placeholder="12가 3456" />
+            </div>
+            <div>
+              <label style={labelSt}>고객명</label>
+              <input value={form.customer_name} onChange={e => setForm(p => ({ ...p, customer_name: e.target.value }))} style={fieldSt} placeholder="홍길동" />
+            </div>
+            <div>
+              <label style={labelSt}>연락처</label>
+              <input value={form.phone} onChange={e => setForm(p => ({ ...p, phone: e.target.value }))} style={fieldSt} placeholder="010-0000-0000" />
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+            <div>
+              <label style={labelSt}>계약 시작일</label>
+              <input type="date" value={form.contract_start} onChange={e => setForm(p => ({ ...p, contract_start: e.target.value }))} style={fieldSt} />
+            </div>
+            <div>
+              <label style={labelSt}>계약 종료일</label>
+              <input type="date" value={form.contract_end} onChange={e => setForm(p => ({ ...p, contract_end: e.target.value }))} style={fieldSt} />
+            </div>
+            <div>
+              <label style={labelSt}>월 주차비</label>
+              <NumInput value={toNum(form.monthly_fee)} onChange={v => setForm(p => ({ ...p, monthly_fee: v }))} style={{ ...fieldSt, textAlign: "right" }} />
+            </div>
+            <div>
+              <label style={labelSt}>메모</label>
+              <input value={form.memo} onChange={e => setForm(p => ({ ...p, memo: e.target.value }))} style={fieldSt} placeholder="비고" />
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={handleSave} style={{ padding: "8px 20px", borderRadius: 8, border: "none", background: C.navy, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>저장</button>
+            <button onClick={() => setShowForm(false)} style={{ padding: "8px 20px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 600, cursor: "pointer", color: C.gray }}>취소</button>
+          </div>
+        </div>
+      )}
+
+      {/* 계약중 목록 */}
+      <div style={{ ...cardStyle, overflowX: "auto", marginBottom: 16 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 10 }}>계약중 ({activeList.length}건)</div>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+          <thead>
+            <tr style={{ background: C.navy }}>
+              {["사업장", "차량번호", "고객명", "연락처", "계약기간", "만기", "월주차비", ""].map(h => (
+                <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {activeList.length === 0 && <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: C.gray }}>등록된 월주차 계약이 없습니다</td></tr>}
+            {activeList.map((item, i) => {
+              const dd = getDday(item.contract_end);
+              return (
+                <tr key={item.id} style={{ background: i % 2 === 0 ? "#fff" : "#FAFBFC", borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "7px 6px", fontSize: 11 }}>
+                    <span style={{ fontWeight: 700, color: C.navy, marginRight: 4, fontSize: 10 }}>{item.site_code}</span>
+                    {getSiteName(item.site_code)}
+                  </td>
+                  <td style={{ padding: "7px 6px", fontWeight: 700, textAlign: "center" }}>{item.car_number}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{item.customer_name}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center", fontSize: 10 }}>{item.phone}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center", fontSize: 10 }}>{item.contract_start} ~ {item.contract_end}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, fontSize: 10, color: dd !== null && dd <= 7 ? C.error : dd !== null && dd <= 30 ? C.orange : C.success }}>
+                    {dd === null ? "—" : dd <= 0 ? `D+${Math.abs(dd)}` : `D-${dd}`}
+                  </td>
+                  <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700 }}>{fmt(item.monthly_fee)}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>
+                    <div style={{ display: "flex", gap: 4, justifyContent: "center" }}>
+                      <button onClick={() => openEdit(item)} style={{ padding: "3px 8px", borderRadius: 4, border: `1px solid ${C.navy}`, background: "#fff", fontSize: 9, fontWeight: 700, color: C.navy, cursor: "pointer" }}>수정</button>
+                      <button onClick={() => toggleStatus(item)} style={{ padding: "3px 8px", borderRadius: 4, border: `1px solid ${C.orange}`, background: "#fff", fontSize: 9, fontWeight: 700, color: C.orange, cursor: "pointer" }}>만료</button>
+                      <button onClick={() => handleDelete(item.id)} style={{ padding: "3px 8px", borderRadius: 4, border: `1px solid ${C.error}`, background: "#fff", fontSize: 9, fontWeight: 700, color: C.error, cursor: "pointer" }}>삭제</button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* 만료 목록 */}
+      {expiredList.length > 0 && (
+        <div style={{ ...cardStyle, overflowX: "auto", opacity: 0.7 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.gray, marginBottom: 10 }}>만료 ({expiredList.length}건)</div>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <tbody>
+              {expiredList.map((item, i) => (
+                <tr key={item.id} style={{ background: "#f9f9f9", borderBottom: `1px solid ${C.border}` }}>
+                  <td style={{ padding: "6px", fontSize: 10 }}>{item.site_code} {getSiteName(item.site_code)}</td>
+                  <td style={{ padding: "6px", fontWeight: 700, textAlign: "center" }}>{item.car_number}</td>
+                  <td style={{ padding: "6px", textAlign: "center" }}>{item.customer_name}</td>
+                  <td style={{ padding: "6px", textAlign: "center", fontSize: 10 }}>{item.contract_start} ~ {item.contract_end}</td>
+                  <td style={{ padding: "6px", textAlign: "right" }}>{fmt(item.monthly_fee)}</td>
+                  <td style={{ padding: "6px", textAlign: "center" }}>
+                    <button onClick={() => toggleStatus(item)} style={{ padding: "3px 8px", borderRadius: 4, border: `1px solid ${C.success}`, background: "#fff", fontSize: 9, fontWeight: 700, color: C.success, cursor: "pointer" }}>재계약</button>
+                    <button onClick={() => handleDelete(item.id)} style={{ padding: "3px 8px", borderRadius: 4, border: `1px solid ${C.error}`, background: "#fff", fontSize: 9, fontWeight: 700, color: C.error, cursor: "pointer", marginLeft: 4 }}>삭제</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 16-3. 발렛맨 서비스 견적 시스템 (원본 완전 이식) ─────
 
 /* ═══════════════════════════════════════════
@@ -5533,11 +5838,19 @@ function MainApp() {
     }
   };
 
+  // ★ 월주차 데이터 로딩 (대시보드 D-7 알림 + 매출 카드)
+  const [monthlyParkingData, setMonthlyParkingData] = useState([]);
+  const loadMonthlyParking = async () => {
+    const { data } = await supabase.from("monthly_parking").select("*").eq("status", "계약중").order("contract_end");
+    if (data) setMonthlyParkingData(data);
+  };
+
   const profitState = {
     profitMonth, setProfitMonth,
     revenueData, setRevenueData, overheadData, setOverheadData,
     monthlySummary, chartTransactions,
     saveRevenueToDB, saveOverheadToDB,
+    monthlyParkingData,
   };
 
   // Supabase에서 직원 데이터 로드
@@ -5547,7 +5860,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); }, []);
+  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
@@ -5586,6 +5899,7 @@ function MainApp() {
     { key: "profit_summary", icon: "📊", label: "전체 요약" },
     { key: "profit_site_pl", icon: "🏢", label: "사업장 PL" },
     { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
+    { key: "monthly_parking", icon: "🅿️", label: "월주차 관리" },
     { key: "profit_comparison", icon: "📈", label: "비교 분석" },
     { key: "profit_alloc", icon: "⚙️", label: "배부 설정" },
     { key: "profit_import", icon: "📥", label: "데이터 Import" },
@@ -5740,6 +6054,7 @@ function MainApp() {
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
         {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
+        {page === "monthly_parking" && <MonthlyParkingPage employees={employees} />}
         {page === "site_management" && <SiteManagementPage employees={employees} />}
         {page === "salary_calc" && <SalaryCalculatorPage />}
       </main>
