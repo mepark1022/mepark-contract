@@ -303,74 +303,26 @@ function AuthProvider({ children }) {
     setUser(null); setProfiles([]); setInvitations([]);
   };
 
-  // ── 계정 직접 생성 (슈퍼관리자 전용) ──
+  // ── 계정 직접 생성 (슈퍼관리자 전용) — DB RPC 방식 ──
   const createAccount = async (name, email, password, role) => {
     try {
       // 이미 등록된 사용자 체크 (프로필 기준)
       const existingProfile = profiles.find(p => p.email === email);
       if (existingProfile) return { error: "이미 등록된 관리자입니다." };
 
-      // 별도 Supabase 클라이언트로 signUp (현재 관리자 세션 보호)
-      const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { storageKey: "mepark-temp-signup", persistSession: false }
+      // RPC로 auth.users에 직접 생성 (signUp 우회 — 이메일 확인 불필요)
+      const { data: userId, error: rpcErr } = await supabase.rpc("admin_create_user", {
+        user_email: email,
+        user_password: password,
+        user_name: name
       });
 
-      console.log("[계정생성] signUp 시작:", email);
-      const { data: authData, error } = await tempClient.auth.signUp({
-        email, password,
-        options: { data: { name } }
-      });
-
-      let userId = authData?.user?.id;
-      console.log("[계정생성] signUp 결과:", { userId, error: error?.message, identities: authData?.user?.identities?.length });
-
-      // signUp 에러 처리
-      if (error) {
-        if (error.message.includes("confirmation")) {
-          // "confirmation email" 에러는 무시 (계정 자체는 생성됨)
-          console.log("[계정생성] confirmation 에러 무시, userId:", userId);
-        } else if (error.message.includes("already") || error.message.includes("registered") || error.message.includes("exists")) {
-          // auth에는 있지만 프로필이 없는 경우 복구 시도
-          console.log("[계정생성] 이미 존재하는 계정, RPC로 ID 조회 시도");
-          try {
-            const { data: foundUser, error: rpcErr } = await supabase.rpc("get_user_id_by_email", { user_email: email });
-            if (rpcErr) return { error: "기존 계정 조회 실패: " + rpcErr.message + "\n\n💡 Supabase SQL Editor에서 admin-rpc-functions.sql을 실행하세요." };
-            if (foundUser) { userId = foundUser; }
-            else return { error: "이미 가입된 이메일이지만 ID를 조회할 수 없습니다." };
-          } catch (rpcE) {
-            return { error: "RPC 함수 호출 실패. Supabase에 get_user_id_by_email 함수가 필요합니다." };
-          }
-        } else {
-          return { error: "Auth 오류: " + error.message };
-        }
+      if (rpcErr) {
+        return { error: "계정 생성 실패: " + rpcErr.message + "\n\n💡 Supabase SQL Editor에서 admin-rpc-functions.sql을 실행했는지 확인하세요." };
       }
+      if (!userId) return { error: "계정 생성 실패: ID를 반환받지 못했습니다." };
 
-      // identities가 빈 배열이면 이미 존재하는 유저 (Supabase가 fake 응답)
-      if (!userId && authData?.user?.identities?.length === 0) {
-        console.log("[계정생성] identities 빈 배열 → RPC 조회");
-        try {
-          const { data: foundUser, error: rpcErr } = await supabase.rpc("get_user_id_by_email", { user_email: email });
-          if (rpcErr) return { error: "계정 ID 조회 실패: " + rpcErr.message };
-          if (foundUser) { userId = foundUser; }
-          else return { error: "계정이 생성되었지만 ID를 확인할 수 없습니다." };
-        } catch (rpcE) {
-          return { error: "RPC 함수 호출 실패: " + rpcE.message };
-        }
-      }
-
-      if (!userId) return { error: "계정 생성에 실패했습니다. (userId 없음)" };
-
-      // 이메일 자동 확인 (RPC — SECURITY DEFINER로 auth.users 직접 업데이트)
-      console.log("[계정생성] 이메일 확인 처리:", email);
-      try {
-        const { error: confirmErr } = await supabase.rpc("confirm_user_by_email", { user_email: email });
-        if (confirmErr) console.warn("[계정생성] confirm_user 실패:", confirmErr.message);
-      } catch (confirmE) {
-        console.warn("[계정생성] confirm_user RPC 없음:", confirmE.message);
-      }
-
-      // 프로필 생성 (현재 관리자 세션의 supabase로)
-      console.log("[계정생성] 프로필 생성:", userId, name, role);
+      // 프로필 생성
       const { error: profErr } = await supabase.from("profiles").upsert({
         id: userId, email, name, role,
         created_at: new Date().toISOString(),
@@ -378,10 +330,8 @@ function AuthProvider({ children }) {
       if (profErr) return { error: "계정은 생성되었으나 프로필 저장 실패: " + profErr.message };
 
       await loadData();
-      console.log("[계정생성] 완료:", email);
       return { error: null };
     } catch (e) {
-      console.error("[계정생성] 예외:", e);
       return { error: e.message || "계정 생성 중 오류가 발생했습니다." };
     }
   };
