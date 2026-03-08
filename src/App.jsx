@@ -720,20 +720,14 @@ function MainDashboard({ employees, onNavigate, profitState }) {
 
   return (
     <div>
-      {/* 헤더 + 기간 선택 */}
+      {/* ── 헤더 ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 900, color: C.dark, margin: 0 }}>ME.PARK 종합 대시보드</h2>
           <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>{periodLabel}</div>
         </div>
         <div style={{ display: "flex", gap: 4, background: C.lightGray, padding: 3, borderRadius: 10 }}>
-          {[
-            ["month", "해당월"],
-            ["week", "주간"],
-            ["monthly", "월간"],
-            ["quarter", "분기"],
-            ["year", "연간"],
-          ].map(([k, v]) => (
+          {[["month", "해당월"], ["week", "주간"], ["monthly", "월간"], ["quarter", "분기"], ["year", "연간"]].map(([k, v]) => (
             <button key={k} onClick={() => setPeriod(k)} style={{
               padding: "6px 14px", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: "pointer",
               border: "none", background: period === k ? C.navy : "transparent",
@@ -743,193 +737,218 @@ function MainDashboard({ employees, onNavigate, profitState }) {
         </div>
       </div>
 
-      {/* 1열: HR KPI 카드 */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
-        {kpiCard("👥", `${active.length}명`, "총 재직 인원", `퇴직 ${employees.length - active.length}명`, C.navy, () => onNavigate("employees"))}
-        {kpiCard("💰", `${fmt(totalSalary)}원`, "월 고정급 합계", "고정급 + 주말일당 포함", C.orange)}
-        {kpiCard("🏢", `${activeSites.length}곳`, "운영 사업장", `전체 ${SITES.length - 1}개 중`, C.navy, () => onNavigate("profit_summary"))}
-        {kpiCard("📅", (() => {
-          const parts = [];
-          if (weekday.length) parts.push(`평${weekday.length}`);
-          if (weekend.length) parts.push(`주${weekend.length}`);
-          if (mixed.length) parts.push(`복${mixed.length}`);
-          if (parttime.length) parts.push(`알${parttime.length}`);
-          return parts.join(" / ") || "0명";
-        })(), "재직인원 구성", `평일 ${weekday.length} / 주말 ${weekend.length} / 복합 ${mixed.length} / 알바 ${parttime.length}`, C.navy)}
-      </div>
-
-      {/* 2열: 수익성 KPI 카드 */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
-        {kpiCard("📊", pFmt(ptotals.rev), "총 매출", null, C.navy, () => onNavigate("profit_cost_input"))}
-        {kpiCard("🔶", pFmt(ptotals.labor), "총 인건비", ptotals.rev > 0 ? `매출의 ${((ptotals.labor / ptotals.rev) * 100).toFixed(0)}%` : null, C.orange)}
-        {kpiCard("📦", pFmt(ptotals.overhead), "간접비 배부", ptotals.rev > 0 ? `매출의 ${((ptotals.overhead / ptotals.rev) * 100).toFixed(0)}%` : null, C.gray)}
-        {kpiCard("💹", pFmt(ptotals.profit), "영업이익", ptotals.rev > 0 ? `이익률 ${((ptotals.profit / ptotals.rev) * 100).toFixed(1)}%` : null, ptotals.profit >= 0 ? C.success : C.error)}
-        {kpiCard("🏁", `${ptotals.black}곳 / ${ptotals.red}곳`, "흑자 / 적자", null, ptotals.red > 0 ? C.error : C.success)}
-      </div>
-
-      {/* ★ 3열: 재무 KPI 카드 (Phase B 신규) */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
-        {kpiCard("💵", finKPI.hasData ? pFmt(finKPI.bankBalance) : "—", "가용 자금",
-          finKPI.hasData ? "최종 거래후잔액 합산" : "데이터 Import 필요",
-          C.navy)}
-        {kpiCard("📈", finKPI.hasData ? pFmt(finKPI.bankIn) : "—", "입금 총액",
-          finKPI.inChange ? `전월 대비 ${Number(finKPI.inChange) >= 0 ? "+" : ""}${finKPI.inChange}%` : null,
-          C.success, () => onNavigate("profit_import"))}
-        {kpiCard("📉", finKPI.hasData ? pFmt(finKPI.bankOut) : "—", "출금 총액",
-          finKPI.outChange ? `전월 대비 ${Number(finKPI.outChange) >= 0 ? "+" : ""}${finKPI.outChange}%` : null,
-          C.error, () => onNavigate("profit_import"))}
-        {kpiCard("💳", finKPI.hasData ? pFmt(finKPI.cardTotal) : "—", "카드 이용",
-          finKPI.cardCount > 0 ? `${finKPI.cardCount}건` : null,
-          C.blue)}
-        {kpiCard("📊", finKPI.laborRatio !== "—" ? finKPI.laborRatio + "%" : "—", "인건비율",
-          "인건비 / 매출 × 100",
-          Number(finKPI.laborRatio) > 50 ? C.error : C.orange)}
-      </div>
-
-      {/* ★ 세금계산서 / 현금영수증 요약 카드 (Phase B 신규) */}
-      {finKPI.hasData && (finKPI.taxSaleCount > 0 || finKPI.taxBuyCount > 0 || finKPI.cashSaleCount > 0 || finKPI.cashBuyCount > 0) && (
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
-          {/* 세금계산서 */}
-          <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
-            <div style={{ background: C.navy, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 800 }}>🧾 세금계산서</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
-              <div style={{ padding: 16, borderRight: `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 11, color: C.success, fontWeight: 800, marginBottom: 8 }}>매출 {finKPI.taxSaleCount}건</div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark, marginBottom: 4 }}>{pFmtFull(finKPI.taxSaleTotal)}원</div>
-                <div style={{ fontSize: 10, color: C.gray }}>공급가 {pFmtFull(finKPI.taxSaleSupply)} · 세액 {pFmtFull(finKPI.taxSaleTax)}</div>
-              </div>
-              <div style={{ padding: 16 }}>
-                <div style={{ fontSize: 11, color: C.error, fontWeight: 800, marginBottom: 8 }}>매입 {finKPI.taxBuyCount}건</div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark, marginBottom: 4 }}>{pFmtFull(finKPI.taxBuyTotal)}원</div>
-                <div style={{ fontSize: 10, color: C.gray }}>공급가 {pFmtFull(finKPI.taxBuySupply)} · 세액 {pFmtFull(finKPI.taxBuyTax)}</div>
-              </div>
-            </div>
+      {/* ── A. 핵심 지표 스트립 ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12, marginBottom: 18 }}>
+        {[
+          { label: "재직인원", value: `${active.length}명`, sub: `평${weekday.length} 주${weekend.length} 복${mixed.length} 알${parttime.length}`, color: C.navy, click: () => onNavigate("employees") },
+          { label: "총 매출", value: pFmt(ptotals.rev), sub: `${activeSites.length}개 사업장`, color: C.navy, click: () => onNavigate("profit_cost_input") },
+          { label: "영업이익", value: pFmt(ptotals.profit), sub: ptotals.rev > 0 ? `이익률 ${((ptotals.profit / ptotals.rev) * 100).toFixed(1)}%` : "—", color: ptotals.profit >= 0 ? C.success : C.error },
+          { label: "가용자금", value: finKPI.hasData ? pFmt(finKPI.bankBalance) : "—", sub: finKPI.hasData ? "은행잔액 합산" : "Import 필요", color: C.navy },
+          { label: "인건비율", value: finKPI.laborRatio !== "—" ? finKPI.laborRatio + "%" : "—", sub: `인건비 ${pFmt(ptotals.labor)}`, color: Number(finKPI.laborRatio) > 50 ? C.error : C.orange },
+        ].map((item, i) => (
+          <div key={i} onClick={item.click} style={{
+            background: "#fff", borderRadius: 12, padding: "16px 14px", border: `1px solid ${C.border}`,
+            cursor: item.click ? "pointer" : "default", transition: "all 0.15s",
+          }}
+          onMouseEnter={e => { if (item.click) e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)"; }}
+          onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; }}
+          >
+            <div style={{ fontSize: 11, color: C.gray, fontWeight: 700, marginBottom: 6 }}>{item.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: item.color, lineHeight: 1.1 }}>{item.value}</div>
+            {item.sub && <div style={{ fontSize: 10, color: C.gray, marginTop: 5 }}>{item.sub}</div>}
           </div>
-          {/* 현금영수증 */}
-          <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
-            <div style={{ background: C.navy, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 800 }}>🧾 현금영수증</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
-              <div style={{ padding: 16, borderRight: `1px solid ${C.border}` }}>
-                <div style={{ fontSize: 11, color: C.success, fontWeight: 800, marginBottom: 8 }}>매출 {finKPI.cashSaleCount}건</div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark }}>{pFmtFull(finKPI.cashSaleTotal)}원</div>
-              </div>
-              <div style={{ padding: 16 }}>
-                <div style={{ fontSize: 11, color: C.error, fontWeight: 800, marginBottom: 8 }}>매입 {finKPI.cashBuyCount}건</div>
-                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark }}>{pFmtFull(finKPI.cashBuyTotal)}원</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+        ))}
+      </div>
 
-      {/* ★ Phase C: 현금흐름 차트 (디자인 개선) */}
-      {chartData.length > 0 && (
-        <div style={{ ...cardStyle, marginBottom: 20, padding: 0, overflow: "hidden" }}>
-          {/* 차트 헤더 */}
-          <div style={{ background: "linear-gradient(135deg, #1428A0 0%, #1E3FBA 100%)", padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 800, color: "#fff", margin: 0 }}>📈 현금흐름 차트</h3>
-              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 3 }}>
-                {chartPeriod === "mtd" ? "이번 달 일별" : chartPeriod === "3m" ? "최근 3개월 주별" : chartPeriod === "6m" ? "최근 6개월 월별" : chartPeriod === "12m" ? "최근 12개월 월별" : "올해 월별"} 입출금 현황
-              </div>
+      {/* ── B. 2컬럼: 좌(수익·재무 요약) / 우(차트) ── */}
+      <div style={{ display: "grid", gridTemplateColumns: chartData.length > 0 ? "340px 1fr" : "1fr", gap: 16, marginBottom: 18 }}>
+
+        {/* 좌: 수익·재무 요약 패널 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+
+          {/* 수익 구조 */}
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+            <div style={{ background: C.navy, color: "#fff", padding: "9px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between" }}>
+              <span>수익 구조</span>
+              <span style={{ color: C.gold }}>{currentMonth}</span>
             </div>
-            <div style={{ display: "flex", gap: 3, background: "rgba(255,255,255,0.12)", padding: 3, borderRadius: 10 }}>
+            <div style={{ padding: 14 }}>
               {[
-                ["mtd", "이번달", "이번 달 1일~오늘 · 일별 집계"],
-                ["3m", "3개월", "최근 3개월 · 주별 집계 (월~일)"],
-                ["6m", "6개월", "최근 6개월 · 월별 집계"],
-                ["12m", "12개월", "최근 12개월 · 월별 집계"],
-                ["ytd", "YTD", `${new Date().getFullYear()}년 1월~현재 · 월별 집계`],
-              ].map(([k, v, tip]) => (
-                <div key={k} style={{ position: "relative" }}>
-                  <button onClick={() => setChartPeriod(k)} style={{
-                    padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                    border: "none",
-                    background: chartPeriod === k ? C.gold : "transparent",
-                    color: chartPeriod === k ? C.navy : "rgba(255,255,255,0.75)",
-                    transition: "all 0.15s", whiteSpace: "nowrap",
-                  }}
-                  title={tip}
-                  >{v}</button>
+                { label: "매출", value: pFmt(ptotals.rev), color: C.navy },
+                { label: "인건비", value: pFmt(ptotals.labor), pct: ptotals.rev > 0 ? ((ptotals.labor / ptotals.rev) * 100).toFixed(0) + "%" : "—", color: C.orange },
+                { label: "간접비", value: pFmt(ptotals.overhead), pct: ptotals.rev > 0 ? ((ptotals.overhead / ptotals.rev) * 100).toFixed(0) + "%" : "—", color: C.gray },
+                { label: "영업이익", value: pFmt(ptotals.profit), pct: ptotals.rev > 0 ? ((ptotals.profit / ptotals.rev) * 100).toFixed(1) + "%" : "—", color: ptotals.profit >= 0 ? C.success : C.error, bold: true },
+              ].map((r, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderTop: i > 0 ? `1px solid ${C.border}` : "none", borderTopWidth: r.bold ? 2 : 1, borderTopColor: r.bold ? C.navy : C.border }}>
+                  <span style={{ fontSize: 12, color: r.bold ? C.dark : C.gray, fontWeight: r.bold ? 800 : 600 }}>{r.label}</span>
+                  <div style={{ textAlign: "right" }}>
+                    <span style={{ fontSize: 14, fontWeight: 800, color: r.color }}>{r.value}</span>
+                    {r.pct && <span style={{ fontSize: 10, color: C.gray, marginLeft: 6 }}>{r.pct}</span>}
+                  </div>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "center", gap: 12, marginTop: 8 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.success }}>흑자 {ptotals.black}곳</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.error }}>적자 {ptotals.red}곳</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 재무 요약 */}
+          {finKPI.hasData && (
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+              <div style={{ background: C.navy, color: "#fff", padding: "9px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", justifyContent: "space-between" }}
+                onClick={() => onNavigate("profit_import")}>
+                <span>재무 현황</span>
+                <span style={{ color: C.gold, fontSize: 11 }}>Import →</span>
+              </div>
+              <div style={{ padding: 14 }}>
+                {[
+                  { label: "입금", value: pFmt(finKPI.bankIn), change: finKPI.inChange, color: C.navy },
+                  { label: "출금", value: pFmt(finKPI.bankOut), change: finKPI.outChange, color: C.orange },
+                  { label: "카드이용", value: pFmt(finKPI.cardTotal), sub: finKPI.cardCount > 0 ? `${finKPI.cardCount}건` : null, color: C.blue },
+                ].map((r, i) => (
+                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderTop: i > 0 ? `1px solid ${C.border}` : "none" }}>
+                    <span style={{ fontSize: 12, color: C.gray, fontWeight: 600 }}>{r.label}</span>
+                    <div style={{ textAlign: "right", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ fontSize: 14, fontWeight: 800, color: r.color }}>{r.value}</span>
+                      {r.change && (
+                        <span style={{ fontSize: 10, fontWeight: 700, color: Number(r.change) >= 0 ? C.success : C.error }}>
+                          {Number(r.change) >= 0 ? "▲" : "▼"}{Math.abs(Number(r.change))}%
+                        </span>
+                      )}
+                      {r.sub && <span style={{ fontSize: 10, color: C.gray }}>{r.sub}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 세금계산서·현금영수증 요약 */}
+          {finKPI.hasData && (finKPI.taxSaleCount > 0 || finKPI.taxBuyCount > 0) && (
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+              <div style={{ background: C.navy, color: "#fff", padding: "9px 14px", fontSize: 12, fontWeight: 800 }}>세금계산서 · 현금영수증</div>
+              <div style={{ padding: "10px 14px" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: finKPI.cashSaleCount > 0 || finKPI.cashBuyCount > 0 ? 8 : 0 }}>
+                  <div>
+                    <div style={{ fontSize: 10, color: C.success, fontWeight: 700 }}>매출 {finKPI.taxSaleCount}건</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>{pFmt(finKPI.taxSaleTotal)}</div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 10, color: C.error, fontWeight: 700 }}>매입 {finKPI.taxBuyCount}건</div>
+                    <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>{pFmt(finKPI.taxBuyTotal)}</div>
+                  </div>
+                </div>
+                {(finKPI.cashSaleCount > 0 || finKPI.cashBuyCount > 0) && (
+                  <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                    <div>
+                      <div style={{ fontSize: 10, color: C.gray, fontWeight: 600 }}>현금영수증 매출 {finKPI.cashSaleCount}건</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{pFmt(finKPI.cashSaleTotal)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 10, color: C.gray, fontWeight: 600 }}>현금영수증 매입 {finKPI.cashBuyCount}건</div>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{pFmt(finKPI.cashBuyTotal)}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+        </div>
+
+        {/* 우: 현금흐름 차트 */}
+        {chartData.length > 0 && (
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+            {/* 차트 헤더 */}
+            <div style={{ background: C.navy, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <span style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>현금흐름</span>
+                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginLeft: 8 }}>
+                  {chartPeriod === "mtd" ? "일별" : chartPeriod === "3m" ? "주별" : "월별"}
+                </span>
+              </div>
+              <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,0.12)", padding: 2, borderRadius: 8 }}>
+                {[
+                  ["mtd", "이번달", "이번 달 1일~오늘 · 일별"],
+                  ["3m", "3개월", "최근 3개월 · 주별"],
+                  ["6m", "6개월", "최근 6개월 · 월별"],
+                  ["12m", "12개월", "최근 12개월 · 월별"],
+                  ["ytd", "YTD", `${new Date().getFullYear()}년 1월~현재 · 월별`],
+                ].map(([k, v, tip]) => (
+                  <button key={k} onClick={() => setChartPeriod(k)} title={tip} style={{
+                    padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer",
+                    border: "none", background: chartPeriod === k ? C.gold : "transparent",
+                    color: chartPeriod === k ? C.navy : "rgba(255,255,255,0.65)", transition: "all 0.15s",
+                  }}>{v}</button>
+                ))}
+              </div>
+            </div>
+            {/* 범례 */}
+            <div style={{ display: "flex", gap: 16, padding: "10px 16px 0", justifyContent: "center" }}>
+              {[
+                [C.navy, "입금", chartData.reduce((s, d) => s + (d.inAmt || 0), 0)],
+                [C.orange, "출금", chartData.reduce((s, d) => s + (d.outAmt || 0), 0)],
+                [C.gold, "잔액", chartData[chartData.length - 1]?.balance || 0],
+              ].map(([color, label, val]) => (
+                <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <div style={{ width: label === "잔액" ? 16 : 8, height: label === "잔액" ? 2.5 : 8, background: color, borderRadius: 2 }} />
+                  <span style={{ fontSize: 10, color: C.gray }}>{label}</span>
+                  <span style={{ fontSize: 10, fontWeight: 800, color: C.dark }}>{pFmt(val)}</span>
                 </div>
               ))}
             </div>
+            {/* 차트 영역 */}
+            <div style={{ flex: 1, padding: "4px 8px 12px" }}>
+              <ResponsiveContainer width="100%" height={280}>
+                <ComposedChart data={chartData} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gradIn" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.navy} stopOpacity={0.85} />
+                      <stop offset="100%" stopColor={C.navy} stopOpacity={0.55} />
+                    </linearGradient>
+                    <linearGradient id="gradOut" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={C.orange} stopOpacity={0.85} />
+                      <stop offset="100%" stopColor={C.orange} stopOpacity={0.55} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: C.gray }} tickLine={false} axisLine={{ stroke: "#eee" }} />
+                  <YAxis yAxisId="amount" tick={{ fontSize: 9, fill: C.gray }} tickLine={false} axisLine={false} tickFormatter={chartFmt} width={55} />
+                  <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 9, fill: C.gold, fontWeight: 600 }} tickLine={false} axisLine={false} tickFormatter={chartFmt} width={55} />
+                  <Tooltip
+                    contentStyle={{ borderRadius: 10, border: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.12)", fontSize: 11, padding: "10px 14px" }}
+                    formatter={(v, name) => {
+                      const color = name === "입금" ? C.navy : name === "출금" ? C.orange : C.gold;
+                      return [<span style={{ fontWeight: 800, color }}>{pFmtFull(v)}원</span>, name];
+                    }}
+                    labelStyle={{ fontWeight: 800, color: C.dark, marginBottom: 4, fontSize: 11 }}
+                    cursor={{ fill: "rgba(20,40,160,0.04)" }}
+                  />
+                  <Bar yAxisId="amount" dataKey="inAmt" fill="url(#gradIn)" name="입금" radius={[3, 3, 0, 0]}
+                    barSize={chartData.length > 30 ? 5 : chartData.length > 15 ? 8 : 14} />
+                  <Bar yAxisId="amount" dataKey="outAmt" fill="url(#gradOut)" name="출금" radius={[3, 3, 0, 0]}
+                    barSize={chartData.length > 30 ? 5 : chartData.length > 15 ? 8 : 14} />
+                  <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2}
+                    dot={{ fill: C.gold, r: 2.5, strokeWidth: 0 }}
+                    activeDot={{ fill: C.gold, r: 4, strokeWidth: 2, stroke: "#fff" }}
+                    name="잔액" />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
           </div>
-          {/* 범례 */}
-          <div style={{ display: "flex", gap: 20, padding: "12px 20px 0", justifyContent: "center" }}>
-            {[
-              [C.navy, "입금", "inAmt"],
-              [C.orange, "출금", "outAmt"],
-              [C.gold, "잔액 (우축)", "balance"],
-            ].map(([color, label, key]) => {
-              const total = chartData.reduce((s, d) => s + (d[key] || 0), 0);
-              const isLine = key === "balance";
-              return (
-                <div key={key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  {isLine ? (
-                    <div style={{ width: 20, height: 3, background: color, borderRadius: 2 }} />
-                  ) : (
-                    <div style={{ width: 10, height: 10, background: color, borderRadius: 2 }} />
-                  )}
-                  <span style={{ fontSize: 11, color: C.gray, fontWeight: 600 }}>{label}</span>
-                  <span style={{ fontSize: 11, color: C.dark, fontWeight: 800 }}>
-                    {isLine ? pFmt(chartData[chartData.length - 1]?.balance || 0) : pFmt(total)}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-          {/* 차트 */}
-          <div style={{ padding: "8px 12px 16px" }}>
-            <ResponsiveContainer width="100%" height={300}>
-              <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="gradIn" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.navy} stopOpacity={0.9} />
-                    <stop offset="100%" stopColor={C.navy} stopOpacity={0.6} />
-                  </linearGradient>
-                  <linearGradient id="gradOut" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={C.orange} stopOpacity={0.9} />
-                    <stop offset="100%" stopColor={C.orange} stopOpacity={0.6} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                <XAxis dataKey="label" tick={{ fontSize: 10, fill: C.gray, fontWeight: 600 }} tickLine={false} axisLine={{ stroke: "#eee" }} />
-                <YAxis yAxisId="amount" tick={{ fontSize: 10, fill: C.gray }} tickLine={false} axisLine={false}
-                  tickFormatter={chartFmt} width={60} />
-                <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 10, fill: C.gold, fontWeight: 600 }} tickLine={false} axisLine={false}
-                  tickFormatter={chartFmt} width={60} />
-                <Tooltip
-                  contentStyle={{ borderRadius: 12, border: "none", boxShadow: "0 4px 20px rgba(0,0,0,0.15)", fontSize: 12, padding: "12px 16px" }}
-                  formatter={(v, name) => {
-                    const color = name === "입금" ? C.navy : name === "출금" ? C.orange : C.gold;
-                    return [<span style={{ fontWeight: 800, color }}>{pFmtFull(v)}원</span>, name];
-                  }}
-                  labelStyle={{ fontWeight: 800, color: C.dark, marginBottom: 6 }}
-                  cursor={{ fill: "rgba(20,40,160,0.04)" }}
-                />
-                <Bar yAxisId="amount" dataKey="inAmt" fill="url(#gradIn)" name="입금" radius={[4, 4, 0, 0]}
-                  barSize={chartData.length > 30 ? 6 : chartData.length > 15 ? 10 : 16} />
-                <Bar yAxisId="amount" dataKey="outAmt" fill="url(#gradOut)" name="출금" radius={[4, 4, 0, 0]}
-                  barSize={chartData.length > 30 ? 6 : chartData.length > 15 ? 10 : 16} />
-                <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2.5}
-                  dot={{ fill: C.gold, r: 3, strokeWidth: 0 }}
-                  activeDot={{ fill: C.gold, r: 5, strokeWidth: 2, stroke: "#fff" }}
-                  name="잔액" />
-              </ComposedChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* 사업장별 손익 PL 테이블 (★ Phase B 확장) */}
+      {/* ── C. P&L 테이블 ── */}
       <div style={{ ...cardStyle, overflowX: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <h3 style={{ fontSize: 15, fontWeight: 800, color: C.dark, margin: 0 }}>사업장별 손익 (P&L)</h3>
-          <div style={{ display: "flex", gap: 4 }}>
-            {[["profit", "이익순"], ["margin", "이익률순"], ["revenue", "매출순"], ["labor", "인건비순"]].map(([k, v]) => (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>사업장별 손익</h3>
+          <div style={{ display: "flex", gap: 3 }}>
+            {[["profit", "이익순"], ["margin", "이익률"], ["revenue", "매출순"], ["labor", "인건비"]].map(([k, v]) => (
               <button key={k} onClick={() => setPlSortBy(k)} style={{
-                padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                padding: "5px 11px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer",
                 border: `1.5px solid ${plSortBy === k ? C.navy : C.border}`,
                 background: plSortBy === k ? C.navy : "#fff",
                 color: plSortBy === k ? "#fff" : C.gray,
@@ -937,64 +956,63 @@ function MainDashboard({ employees, onNavigate, profitState }) {
             ))}
           </div>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
           <thead>
             <tr style={{ background: C.navy }}>
-              {["#", "코드", "사업장", "인원", "매출", "전월대비", "인건비", "인건비율", "간접비", "이익", "이익률"].map(h => (
-                <th key={h} style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: h === "사업장" ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
+              {["#", "사업장", "인원", "매출", "전월비", "인건비", "인건비율", "간접비", "이익", "이익률"].map(h => (
+                <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: h === "사업장" ? "left" : "center", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {sortedPLs.map((s, i) => (
-              <tr key={s.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
-                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, color: C.gray }}>{i + 1}</td>
-                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, color: C.navy }}>{s.code}</td>
-                <td style={{ padding: "8px", fontWeight: 600 }}>{s.name}</td>
-                <td style={{ padding: "8px", textAlign: "center" }}>{s.count}명</td>
-                <td style={{ padding: "8px", textAlign: "right", fontWeight: 700 }}>{pFmtFull(s.rev)}</td>
-                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, fontSize: 11,
+              <tr key={s.code} style={{ background: i % 2 === 0 ? "#fff" : "#FAFBFC", borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, color: C.gray, fontSize: 10 }}>{i + 1}</td>
+                <td style={{ padding: "7px 6px", fontWeight: 600, fontSize: 11 }}>
+                  <span style={{ color: C.navy, fontWeight: 700, marginRight: 4, fontSize: 10 }}>{s.code}</span>{s.name}
+                </td>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontSize: 10 }}>{s.count}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700 }}>{pFmtFull(s.rev)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, fontSize: 10,
                   color: s.momChange === null ? C.gray : s.momChange >= 0 ? C.success : C.error }}>
                   {s.momChange === null ? "—" : `${s.momChange >= 0 ? "▲" : "▼"}${Math.abs(s.momChange).toFixed(1)}%`}
                 </td>
-                <td style={{ padding: "8px", textAlign: "right", color: C.orange, fontWeight: 700 }}>{pFmtFull(s.labor)}</td>
-                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, fontSize: 11,
+                <td style={{ padding: "7px 6px", textAlign: "right", color: C.orange, fontWeight: 700 }}>{pFmtFull(s.labor)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, fontSize: 10,
                   color: s.laborRatio > 60 ? C.error : s.laborRatio > 45 ? C.orange : C.success }}>
                   {s.rev > 0 ? s.laborRatio.toFixed(1) + "%" : "—"}
                 </td>
-                <td style={{ padding: "8px", textAlign: "right", color: C.gray }}>{pFmtFull(s.overhead)}</td>
-                <td style={{ padding: "8px", textAlign: "right", fontWeight: 800, color: s.profit >= 0 ? C.success : C.error }}>{pFmtFull(s.profit)}</td>
-                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, color: s.margin >= 0 ? C.success : C.error }}>{s.rev > 0 ? s.margin.toFixed(1) + "%" : "0.0%"}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", color: C.gray }}>{pFmtFull(s.overhead)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 800, color: s.profit >= 0 ? C.success : C.error }}>{pFmtFull(s.profit)}</td>
+                <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, color: s.margin >= 0 ? C.success : C.error }}>{s.rev > 0 ? s.margin.toFixed(1) + "%" : "—"}</td>
               </tr>
             ))}
             {sortedPLs.length === 0 && (
-              <tr><td colSpan={11} style={{ padding: 24, textAlign: "center", color: C.gray }}>수익성 분석 → 비용입력에서 매출을 입력하세요</td></tr>
+              <tr><td colSpan={10} style={{ padding: 24, textAlign: "center", color: C.gray }}>수익성 분석 → 비용입력에서 매출을 입력하세요</td></tr>
             )}
             {sortedPLs.length > 0 && (
               <>
-                {/* 합계행 */}
                 <tr style={{ background: C.navy }}>
-                  <td colSpan={3} style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
-                  <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{ptotals.count}명</td>
-                  <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.rev)}</td>
-                  <td style={{ padding: "9px 8px", color: "#fff", textAlign: "center" }}>—</td>
-                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.labor)}</td>
-                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{ptotals.rev > 0 ? ptotals.laborRatio.toFixed(1) + "%" : "—"}</td>
-                  <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "right" }}>{pFmtFull(ptotals.overhead)}</td>
-                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{pFmtFull(ptotals.profit)}</td>
-                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{ptotals.rev > 0 ? ((ptotals.profit / ptotals.rev) * 100).toFixed(1) + "%" : "—"}</td>
+                  <td colSpan={2} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center", fontSize: 11 }}>합계</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center", fontSize: 10 }}>{ptotals.count}</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.rev)}</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", textAlign: "center" }}>—</td>
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.labor)}</td>
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "center", fontSize: 10 }}>{ptotals.rev > 0 ? ptotals.laborRatio.toFixed(1) + "%" : "—"}</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "right" }}>{pFmtFull(ptotals.overhead)}</td>
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{pFmtFull(ptotals.profit)}</td>
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "center", fontSize: 10 }}>{ptotals.rev > 0 ? ((ptotals.profit / ptotals.rev) * 100).toFixed(1) + "%" : "—"}</td>
                 </tr>
-                {/* ★ Phase B: 평균행 */}
                 <tr style={{ background: "#F0F4FF" }}>
-                  <td colSpan={3} style={{ padding: "9px 8px", color: C.navy, fontWeight: 800, textAlign: "center", fontSize: 11 }}>📊 사업장 평균</td>
-                  <td style={{ padding: "9px 8px", color: C.navy, fontWeight: 700, textAlign: "center", fontSize: 11 }}>{(ptotals.count / (sitePLs.length || 1)).toFixed(1)}명</td>
-                  <td style={{ padding: "9px 8px", color: C.navy, fontWeight: 700, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.rev / (sitePLs.length || 1))}</td>
-                  <td style={{ padding: "9px 8px", textAlign: "center" }}>—</td>
-                  <td style={{ padding: "9px 8px", color: C.orange, fontWeight: 700, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.labor / (sitePLs.length || 1))}</td>
-                  <td style={{ padding: "9px 8px", textAlign: "center" }}>—</td>
-                  <td style={{ padding: "9px 8px", color: C.gray, fontWeight: 700, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.overhead / (sitePLs.length || 1))}</td>
-                  <td style={{ padding: "9px 8px", color: ptotals.avgProfit >= 0 ? C.success : C.error, fontWeight: 800, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.avgProfit)}</td>
-                  <td style={{ padding: "9px 8px", textAlign: "center" }}>—</td>
+                  <td colSpan={2} style={{ padding: "7px 6px", color: C.navy, fontWeight: 800, textAlign: "center", fontSize: 10 }}>사업장 평균</td>
+                  <td style={{ padding: "7px 6px", color: C.navy, fontWeight: 700, textAlign: "center", fontSize: 10 }}>{(ptotals.count / (sitePLs.length || 1)).toFixed(1)}</td>
+                  <td style={{ padding: "7px 6px", color: C.navy, fontWeight: 700, textAlign: "right", fontSize: 10 }}>{pFmtFull(ptotals.rev / (sitePLs.length || 1))}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>—</td>
+                  <td style={{ padding: "7px 6px", color: C.orange, fontWeight: 700, textAlign: "right", fontSize: 10 }}>{pFmtFull(ptotals.labor / (sitePLs.length || 1))}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>—</td>
+                  <td style={{ padding: "7px 6px", color: C.gray, fontWeight: 700, textAlign: "right", fontSize: 10 }}>{pFmtFull(ptotals.overhead / (sitePLs.length || 1))}</td>
+                  <td style={{ padding: "7px 6px", color: ptotals.avgProfit >= 0 ? C.success : C.error, fontWeight: 800, textAlign: "right", fontSize: 10 }}>{pFmtFull(ptotals.avgProfit)}</td>
+                  <td style={{ padding: "7px 6px", textAlign: "center" }}>—</td>
                 </tr>
               </>
             )}
