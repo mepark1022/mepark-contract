@@ -4106,7 +4106,7 @@ const pFmtFull = (n) => (n == null || n === "" || isNaN(n)) ? "0" : Math.round(N
 const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
 function ProfitabilityPage({ employees, subPage, profitState }) {
-  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, monthlyParkingData } = profitState;
+  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
@@ -4493,6 +4493,19 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
 
   // ── 비용 입력 ──
   const CostInputView = () => {
+    // 계약현황탭 저장 헬퍼
+    const detailTimerRef = useRef(null);
+    const handleDetailChange = (code, field, value) => {
+      if (detailTimerRef.current) clearTimeout(detailTimerRef.current);
+      detailTimerRef.current = setTimeout(() => {
+        setSavingStatus("saving");
+        saveDetailToDB?.(code, field, value).then(() => {
+          setSavingStatus("saved");
+          setTimeout(() => setSavingStatus(null), 1500);
+        });
+      }, 800);
+    };
+
     // 합계 계산
     const costTotals = useMemo(() => {
       const t = { contract: 0, valet: 0, parking: 0, count: 0, lFixed: 0, lSub: 0, rev: 0, profit: 0 };
@@ -4514,13 +4527,12 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
     return (
       <div>
         {pSectionTitle("✏️ 비용 입력 — " + currentMonth)}
-        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
           <input type="month" value={currentMonth} onChange={e => setCurrentMonth(e.target.value)} style={{ ...inputStyle, width: 160 }} />
           <button onClick={copyPrevMonth} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>📋 이전달 복사</button>
-          {[["revenue", "💰 사업장 매출"], ["overhead", "🏢 간접비"]].map(([k, v]) => (
+          {[["revenue", "💰 사업장 매출"], ["contract", "📄 계약현황"], ["overhead", "🏢 간접비"]].map(([k, v]) => (
             <button key={k} onClick={() => setCostTab(k)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${costTab === k ? C.navy : C.border}`, background: costTab === k ? C.navy : "#fff", color: costTab === k ? "#fff" : C.gray }}>{v}</button>
           ))}
-          {/* ★ DB 저장 상태 표시 */}
           {savingStatus && (
             <span style={{ fontSize: 11, fontWeight: 700, color: savingStatus === "saving" ? C.orange : C.success, marginLeft: "auto" }}>
               {savingStatus === "saving" ? "💾 저장 중..." : "✅ DB 저장 완료"}
@@ -4528,19 +4540,21 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
           )}
         </div>
 
-        {costTab === "revenue" ? (
+        {/* ═══ 사업장 매출 탭 ═══ */}
+        {costTab === "revenue" && (
           <div style={{ ...pcardStyle, overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead>
                 <tr style={{ background: C.navy }}>
-                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>코드</th>
-                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "left", whiteSpace: "nowrap" }}>사업장</th>
-                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>월계약금</th>
-                  <th style={{ padding: "8px 4px", color: C.gold, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>발렛비</th>
-                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>월주차(자동)</th>
-                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>인원</th>
-                  <th colSpan={2} style={{ padding: "8px 4px", color: C.gold, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap", borderLeft: "1px solid rgba(255,255,255,0.2)" }}>인건비 (고정 / 대체)</th>
-                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>이익률</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center" }}>코드</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "left" }}>사업장</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center" }}>월계약금</th>
+                  <th style={{ padding: "8px 4px", color: C.gold, fontWeight: 700, textAlign: "center" }}>발렛비</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center" }}>월주차(자동)</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center" }}>인원</th>
+                  <th style={{ padding: "8px 4px", color: "#B3D4FC", fontWeight: 700, textAlign: "center", borderLeft: "2px solid rgba(255,255,255,0.3)" }}>인건비(고정)</th>
+                  <th style={{ padding: "8px 4px", color: C.gold, fontWeight: 700, textAlign: "center", borderLeft: "1px solid rgba(255,255,255,0.15)" }}>인건비(대체)</th>
+                  <th style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center" }}>이익률</th>
                 </tr>
               </thead>
               <tbody>
@@ -4561,7 +4575,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                       <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 600, color: C.navy, fontSize: 10 }}>{site.code}</td>
                       <td style={{ padding: "6px 4px", fontWeight: 600, fontSize: 11, whiteSpace: "nowrap" }}>{site.name}</td>
                       <td style={{ padding: "6px 4px", textAlign: "right", color: C.gray, fontSize: 10 }}>{toNum(detail.monthly_contract) > 0 ? pFmt(detail.monthly_contract) : "—"}</td>
-                      <td style={{ padding: "4px 4px", width: 120 }}>
+                      <td style={{ padding: "4px 4px", width: 115 }}>
                         <NumInput value={valetRev} onChange={v => setRev(site.code, v)}
                           style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} />
                       </td>
@@ -4569,13 +4583,13 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                         {parkRev > 0 ? pFmt(parkRev) : "—"}
                       </td>
                       <td style={{ padding: "6px 4px", textAlign: "center", color: C.gray, fontSize: 11 }}>{headcount}명</td>
-                      <td style={{ padding: "4px 2px", width: 110, borderLeft: `1px solid ${C.border}` }}>
+                      <td style={{ padding: "4px 2px", width: 110, borderLeft: `2px solid ${C.navy}`, background: i % 2 === 0 ? "#EFF6FF" : "#E8F0FE" }}>
                         <NumInput value={lFixed} onChange={v => setLabor(site.code, "fixed", v)}
-                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} placeholder="고정" />
+                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11, background: "transparent", border: "1.5px solid #B3D4FC" }} />
                       </td>
-                      <td style={{ padding: "4px 2px", width: 110 }}>
+                      <td style={{ padding: "4px 2px", width: 110, borderLeft: `1px solid ${C.border}`, background: i % 2 === 0 ? "#FFF8E1" : "#FFF3CD" }}>
                         <NumInput value={lSub} onChange={v => setLabor(site.code, "sub", v)}
-                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} placeholder="대체" />
+                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11, background: "transparent", border: `1.5px solid ${C.gold}` }} />
                       </td>
                       <td style={{ padding: "6px 4px", textAlign: "center", fontWeight: 700, fontSize: 11, color: margin === null ? C.gray : margin >= 0 ? C.success : C.error }}>
                         {margin !== null ? margin.toFixed(1) + "%" : "—"}
@@ -4583,21 +4597,75 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                     </tr>
                   );
                 })}
-                {/* 합계행 */}
                 <tr style={{ background: C.navy }}>
                   <td colSpan={2} style={{ padding: "8px 4px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
                   <td style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "right", fontSize: 10 }}>{costTotals.contract > 0 ? pFmt(costTotals.contract) : ""}</td>
                   <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "right", fontSize: 11 }}>{pFmtFull(costTotals.valet)}</td>
                   <td style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "right", fontSize: 10 }}>{costTotals.parking > 0 ? pFmt(costTotals.parking) : ""}</td>
                   <td style={{ padding: "8px 4px", color: "#fff", textAlign: "center" }}>{costTotals.count}명</td>
-                  <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "right", fontSize: 11, borderLeft: "1px solid rgba(255,255,255,0.2)" }}>{pFmtFull(costTotals.lFixed)}</td>
-                  <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "right", fontSize: 11 }}>{pFmtFull(costTotals.lSub)}</td>
+                  <td style={{ padding: "8px 4px", color: "#B3D4FC", fontWeight: 800, textAlign: "right", fontSize: 11, borderLeft: "2px solid rgba(255,255,255,0.3)" }}>{pFmtFull(costTotals.lFixed)}</td>
+                  <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "right", fontSize: 11, borderLeft: "1px solid rgba(255,255,255,0.15)" }}>{pFmtFull(costTotals.lSub)}</td>
                   <td style={{ padding: "8px 4px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{costTotals.rev > 0 ? ((costTotals.profit / costTotals.rev) * 100).toFixed(1) + "%" : "—"}</td>
                 </tr>
               </tbody>
             </table>
           </div>
-        ) : (
+        )}
+
+        {/* ═══ 계약현황 탭 ═══ */}
+        {costTab === "contract" && (
+          <div style={{ ...pcardStyle, overflowX: "auto" }}>
+            <div style={{ fontSize: 12, color: C.gray, marginBottom: 12 }}>💡 사업장별 월계약금·계약기간을 입력하면 사업장매출 탭에 자동 반영됩니다.</div>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+              <thead><tr style={{ background: C.navy }}>
+                {["코드", "사업장", "계약시작일", "계약만기일", "월계약금", "만기D-day", "메모"].map(h => (
+                  <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>
+                ))}
+              </tr></thead>
+              <tbody>
+                {FIELD_SITES.map((site, i) => {
+                  const d = siteDetailsMap[site.code] || {};
+                  const dDay = d.contract_end_date ? Math.ceil((new Date(d.contract_end_date) - new Date()) / 86400000) : null;
+                  return (
+                    <tr key={site.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                      <td style={{ padding: "6px", textAlign: "center", fontWeight: 600, color: C.navy, fontSize: 10 }}>{site.code}</td>
+                      <td style={{ padding: "6px", fontWeight: 600, fontSize: 11 }}>{site.name}</td>
+                      <td style={{ padding: "4px 6px", width: 130 }}>
+                        <input type="date" value={d.start_date || ""} onChange={e => handleDetailChange(site.code, "start_date", e.target.value)}
+                          style={{ ...inputStyle, padding: "5px 6px", fontSize: 11 }} />
+                      </td>
+                      <td style={{ padding: "4px 6px", width: 130 }}>
+                        <input type="date" value={d.contract_end_date || ""} onChange={e => handleDetailChange(site.code, "contract_end_date", e.target.value)}
+                          style={{ ...inputStyle, padding: "5px 6px", fontSize: 11 }} />
+                      </td>
+                      <td style={{ padding: "4px 6px", width: 130 }}>
+                        <NumInput value={toNum(d.monthly_contract)} onChange={v => handleDetailChange(site.code, "monthly_contract", v)}
+                          style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} />
+                      </td>
+                      <td style={{ padding: "6px", textAlign: "center", fontWeight: 700, fontSize: 11,
+                        color: dDay === null ? C.gray : dDay <= 7 ? C.error : dDay <= 30 ? C.orange : C.success }}>
+                        {dDay !== null ? (dDay >= 0 ? `D-${dDay}` : `D+${Math.abs(dDay)}`) : "—"}
+                      </td>
+                      <td style={{ padding: "4px 6px", width: 120 }}>
+                        <input value={d.memo || ""} onChange={e => handleDetailChange(site.code, "memo", e.target.value)}
+                          style={{ ...inputStyle, padding: "5px 6px", fontSize: 10 }} placeholder="비고" />
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr style={{ background: C.navy }}>
+                  <td colSpan={2} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+                  <td colSpan={2} />
+                  <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmtFull(costTotals.contract)}</td>
+                  <td colSpan={2} />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* ═══ 간접비 탭 ═══ */}
+        {costTab === "overhead" && (
           <div style={{ ...pcardStyle, overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead><tr style={{ background: C.navy }}>
@@ -6086,6 +6154,15 @@ function MainApp() {
     }
   };
 
+  // ★ 사업장 상세정보 저장 (비용입력 계약현황탭용)
+  const saveDetailToDB = useCallback(async (code, field, value) => {
+    const site = SITES.find(s => s.code === code);
+    const { error } = await supabase.from("site_details")
+      .upsert({ site_code: code, site_name: site?.name || "", [field]: value, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
+    if (error) console.error("site_details save error:", error);
+    setSiteDetailsMap(prev => ({ ...prev, [code]: { ...(prev[code] || {}), site_code: code, [field]: value } }));
+  }, []);
+
   // ★ 월주차 데이터 로딩 (대시보드 D-7 알림 + 매출 카드)
   const [monthlyParkingData, setMonthlyParkingData] = useState([]);
   const loadMonthlyParking = async () => {
@@ -6099,7 +6176,7 @@ function MainApp() {
     laborData, setLaborData,
     siteDetailsMap,
     monthlySummary, chartTransactions,
-    saveRevenueToDB, saveOverheadToDB, saveLaborToDB,
+    saveRevenueToDB, saveOverheadToDB, saveLaborToDB, saveDetailToDB,
     monthlyParkingData,
   };
 
