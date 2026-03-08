@@ -6,6 +6,7 @@ import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, Headi
 /* ═══════════════════════════════════════════════════════
    (주)미스터팍 근로계약서 관리 시스템 v8.0
    Phase A: clobe.ai 재무 데이터 Import + 기존 HR/수익분석 통합
+   Phase B: 재무KPI 5개 + 기간선택 실연산 + P&L확장 + 세금계산서카드
    ═══════════════════════════════════════════════════════ */
 
 // ── 1. 상수 ──────────────────────────────────────────
@@ -463,11 +464,41 @@ const DEFAULT_ARTICLES_PARTTIME = {
   8: { title: "계약서 교부", text: "본 계약서는 2부를 작성하여 당사자 각각 1부씩 보관한다." },
 };
 
-// ── 10. 메인 대시보드 (통합 홈) ──────────────────────────
+// ── 10. 메인 대시보드 (통합 홈) ── Phase B 업그레이드 ──────
 function MainDashboard({ employees, onNavigate, profitState }) {
-  const { profitMonth: currentMonth, revenueData, overheadData } = profitState;
+  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [] } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
+
+  // ★ Phase B: 기간선택 → 대상 월 목록 계산
+  const periodMonths = useMemo(() => {
+    const [y, m] = currentMonth.split("-").map(Number);
+    if (period === "month" || period === "week" || period === "monthly") return [currentMonth];
+    if (period === "quarter") {
+      const months = [];
+      for (let i = 2; i >= 0; i--) {
+        const nm = m - i;
+        const ny = nm <= 0 ? y - 1 : y;
+        const fm = nm <= 0 ? nm + 12 : nm;
+        months.push(`${ny}-${String(fm).padStart(2, "0")}`);
+      }
+      return months;
+    }
+    if (period === "year") {
+      const months = [];
+      for (let i = 1; i <= m; i++) months.push(`${y}-${String(i).padStart(2, "0")}`);
+      return months;
+    }
+    return [currentMonth];
+  }, [currentMonth, period]);
+
+  // ★ Phase B: 전월 계산 (전월대비용)
+  const prevMonth = useMemo(() => {
+    const [y, m] = currentMonth.split("-").map(Number);
+    const pm = m === 1 ? 12 : m - 1;
+    const py = m === 1 ? y - 1 : y;
+    return `${py}-${String(pm).padStart(2, "0")}`;
+  }, [currentMonth]);
 
   const active = employees.filter(e => e.status === "재직");
   const weekday = active.filter(e => getWorkCat(e.work_code) === "weekday");
@@ -480,6 +511,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
   // 수익성 계산 (ProfitabilityPage와 동일 로직)
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
+  const prevRevenue = revenueData[prevMonth] || {};
 
   const laborBySite = useMemo(() => {
     const map = {};
@@ -523,9 +555,13 @@ function MainDashboard({ employees, onNavigate, profitState }) {
       const profit = rev - labor - overhead;
       const margin = rev > 0 ? (profit / rev) * 100 : 0;
       const count = laborBySite[site.code]?.count || 0;
-      return { ...site, rev, labor, overhead, profit, margin, count };
+      const laborRatio = rev > 0 ? (labor / rev) * 100 : 0;
+      // ★ Phase B: 전월대비
+      const prevRev = toNum(prevRevenue[site.code]);
+      const momChange = prevRev > 0 ? ((rev - prevRev) / prevRev) * 100 : null;
+      return { ...site, rev, labor, overhead, profit, margin, count, laborRatio, momChange };
     }).filter(s => s.rev > 0 || s.count > 0);
-  }, [monthRevenue, laborBySite, allocated]);
+  }, [monthRevenue, prevRevenue, laborBySite, allocated]);
 
   const sortedPLs = useMemo(() => {
     const arr = [...sitePLs];
@@ -542,8 +578,54 @@ function MainDashboard({ employees, onNavigate, profitState }) {
       t.rev += s.rev; t.labor += s.labor; t.overhead += s.overhead; t.profit += s.profit; t.count += s.count;
       if (s.profit >= 0) t.black++; else t.red++;
     });
+    t.laborRatio = t.rev > 0 ? (t.labor / t.rev) * 100 : 0;
+    t.avgProfit = sitePLs.length > 0 ? t.profit / sitePLs.length : 0;
     return t;
   }, [sitePLs]);
+
+  // ★ Phase B: 재무 KPI — monthly_summary에서 기간별 집계
+  const finKPI = useMemo(() => {
+    const targetSummaries = monthlySummary.filter(s => periodMonths.includes(s.month));
+    const bankIn = targetSummaries.reduce((s, d) => s + toNum(d.bank_in), 0);
+    const bankOut = targetSummaries.reduce((s, d) => s + toNum(d.bank_out), 0);
+    // 가용자금: 가장 최근 월의 bank_balance
+    const latestSummary = targetSummaries.sort((a, b) => b.month.localeCompare(a.month))[0];
+    const bankBalance = toNum(latestSummary?.bank_balance);
+    const cardTotal = targetSummaries.reduce((s, d) => s + toNum(d.card_total), 0);
+    const cardCount = targetSummaries.reduce((s, d) => s + toNum(d.card_count), 0);
+    // 인건비율
+    const laborRatio = ptotals.rev > 0 ? ((ptotals.labor / ptotals.rev) * 100).toFixed(1) : "—";
+
+    // 전월대비 (입금/출금)
+    const prevSummaries = monthlySummary.filter(s => s.month === prevMonth);
+    const prevBankIn = prevSummaries.reduce((s, d) => s + toNum(d.bank_in), 0);
+    const prevBankOut = prevSummaries.reduce((s, d) => s + toNum(d.bank_out), 0);
+    const inChange = prevBankIn > 0 ? ((bankIn - prevBankIn) / prevBankIn * 100).toFixed(1) : null;
+    const outChange = prevBankOut > 0 ? ((bankOut - prevBankOut) / prevBankOut * 100).toFixed(1) : null;
+
+    // 세금계산서 / 현금영수증 요약
+    const taxSaleTotal = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_total), 0);
+    const taxSaleSupply = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_supply), 0);
+    const taxSaleTax = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_tax), 0);
+    const taxSaleCount = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_count), 0);
+    const taxBuyTotal = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_total), 0);
+    const taxBuySupply = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_supply), 0);
+    const taxBuyTax = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_tax), 0);
+    const taxBuyCount = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_count), 0);
+    const cashSaleTotal = targetSummaries.reduce((s, d) => s + toNum(d.cash_sale_total), 0);
+    const cashSaleCount = targetSummaries.reduce((s, d) => s + toNum(d.cash_sale_count), 0);
+    const cashBuyTotal = targetSummaries.reduce((s, d) => s + toNum(d.cash_buy_total), 0);
+    const cashBuyCount = targetSummaries.reduce((s, d) => s + toNum(d.cash_buy_count), 0);
+
+    return {
+      bankBalance, bankIn, bankOut, cardTotal, cardCount, laborRatio,
+      inChange, outChange,
+      taxSaleTotal, taxSaleSupply, taxSaleTax, taxSaleCount,
+      taxBuyTotal, taxBuySupply, taxBuyTax, taxBuyCount,
+      cashSaleTotal, cashSaleCount, cashBuyTotal, cashBuyCount,
+      hasData: targetSummaries.length > 0,
+    };
+  }, [monthlySummary, periodMonths, prevMonth, ptotals]);
 
   const kpiCard = (icon, value, label, sub, color, onClick) => (
     <div onClick={onClick} style={{
@@ -561,13 +643,23 @@ function MainDashboard({ employees, onNavigate, profitState }) {
     </div>
   );
 
+  // ★ Phase B: 기간 표시 텍스트
+  const periodLabel = useMemo(() => {
+    if (period === "month") return `${currentMonth} 기준`;
+    if (period === "week") return `최근 7일 (${currentMonth} 기준)`;
+    if (period === "monthly") return `최근 30일 (${currentMonth} 기준)`;
+    if (period === "quarter") return `${periodMonths[0]} ~ ${periodMonths[periodMonths.length - 1]}`;
+    if (period === "year") return `${currentMonth.slice(0, 4)}년 연간`;
+    return currentMonth;
+  }, [period, currentMonth, periodMonths]);
+
   return (
     <div>
       {/* 헤더 + 기간 선택 */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <div>
           <h2 style={{ fontSize: 20, fontWeight: 900, color: C.dark, margin: 0 }}>ME.PARK 종합 대시보드</h2>
-          <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>{currentMonth} 기준</div>
+          <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>{periodLabel}</div>
         </div>
         <div style={{ display: "flex", gap: 4, background: C.lightGray, padding: 3, borderRadius: 10 }}>
           {[
@@ -610,7 +702,62 @@ function MainDashboard({ employees, onNavigate, profitState }) {
         {kpiCard("🏁", `${ptotals.black}곳 / ${ptotals.red}곳`, "흑자 / 적자", null, ptotals.red > 0 ? C.error : C.success)}
       </div>
 
-      {/* 사업장별 손익 PL 테이블 */}
+      {/* ★ 3열: 재무 KPI 카드 (Phase B 신규) */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
+        {kpiCard("💵", finKPI.hasData ? pFmt(finKPI.bankBalance) : "—", "가용 자금",
+          finKPI.hasData ? "최종 거래후잔액 합산" : "데이터 Import 필요",
+          C.navy)}
+        {kpiCard("📈", finKPI.hasData ? pFmt(finKPI.bankIn) : "—", "입금 총액",
+          finKPI.inChange ? `전월 대비 ${Number(finKPI.inChange) >= 0 ? "+" : ""}${finKPI.inChange}%` : null,
+          C.success, () => onNavigate("profit_import"))}
+        {kpiCard("📉", finKPI.hasData ? pFmt(finKPI.bankOut) : "—", "출금 총액",
+          finKPI.outChange ? `전월 대비 ${Number(finKPI.outChange) >= 0 ? "+" : ""}${finKPI.outChange}%` : null,
+          C.error, () => onNavigate("profit_import"))}
+        {kpiCard("💳", finKPI.hasData ? pFmt(finKPI.cardTotal) : "—", "카드 이용",
+          finKPI.cardCount > 0 ? `${finKPI.cardCount}건` : null,
+          C.blue)}
+        {kpiCard("📊", finKPI.laborRatio !== "—" ? finKPI.laborRatio + "%" : "—", "인건비율",
+          "인건비 / 매출 × 100",
+          Number(finKPI.laborRatio) > 50 ? C.error : C.orange)}
+      </div>
+
+      {/* ★ 세금계산서 / 현금영수증 요약 카드 (Phase B 신규) */}
+      {finKPI.hasData && (finKPI.taxSaleCount > 0 || finKPI.taxBuyCount > 0 || finKPI.cashSaleCount > 0 || finKPI.cashBuyCount > 0) && (
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 20 }}>
+          {/* 세금계산서 */}
+          <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+            <div style={{ background: C.navy, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 800 }}>🧾 세금계산서</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+              <div style={{ padding: 16, borderRight: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 11, color: C.success, fontWeight: 800, marginBottom: 8 }}>매출 {finKPI.taxSaleCount}건</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark, marginBottom: 4 }}>{pFmtFull(finKPI.taxSaleTotal)}원</div>
+                <div style={{ fontSize: 10, color: C.gray }}>공급가 {pFmtFull(finKPI.taxSaleSupply)} · 세액 {pFmtFull(finKPI.taxSaleTax)}</div>
+              </div>
+              <div style={{ padding: 16 }}>
+                <div style={{ fontSize: 11, color: C.error, fontWeight: 800, marginBottom: 8 }}>매입 {finKPI.taxBuyCount}건</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark, marginBottom: 4 }}>{pFmtFull(finKPI.taxBuyTotal)}원</div>
+                <div style={{ fontSize: 10, color: C.gray }}>공급가 {pFmtFull(finKPI.taxBuySupply)} · 세액 {pFmtFull(finKPI.taxBuyTax)}</div>
+              </div>
+            </div>
+          </div>
+          {/* 현금영수증 */}
+          <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+            <div style={{ background: C.navy, color: "#fff", padding: "10px 18px", fontSize: 13, fontWeight: 800 }}>🧾 현금영수증</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 0 }}>
+              <div style={{ padding: 16, borderRight: `1px solid ${C.border}` }}>
+                <div style={{ fontSize: 11, color: C.success, fontWeight: 800, marginBottom: 8 }}>매출 {finKPI.cashSaleCount}건</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark }}>{pFmtFull(finKPI.cashSaleTotal)}원</div>
+              </div>
+              <div style={{ padding: 16 }}>
+                <div style={{ fontSize: 11, color: C.error, fontWeight: 800, marginBottom: 8 }}>매입 {finKPI.cashBuyCount}건</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.dark }}>{pFmtFull(finKPI.cashBuyTotal)}원</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 사업장별 손익 PL 테이블 (★ Phase B 확장) */}
       <div style={{ ...cardStyle, overflowX: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
           <h3 style={{ fontSize: 15, fontWeight: 800, color: C.dark, margin: 0 }}>사업장별 손익 (P&L)</h3>
@@ -628,7 +775,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: C.navy }}>
-              {["#", "코드", "사업장", "인원", "매출", "인건비", "간접비", "이익", "이익률"].map(h => (
+              {["#", "코드", "사업장", "인원", "매출", "전월대비", "인건비", "인건비율", "간접비", "이익", "이익률"].map(h => (
                 <th key={h} style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: h === "사업장" ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -641,25 +788,50 @@ function MainDashboard({ employees, onNavigate, profitState }) {
                 <td style={{ padding: "8px", fontWeight: 600 }}>{s.name}</td>
                 <td style={{ padding: "8px", textAlign: "center" }}>{s.count}명</td>
                 <td style={{ padding: "8px", textAlign: "right", fontWeight: 700 }}>{pFmtFull(s.rev)}</td>
+                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, fontSize: 11,
+                  color: s.momChange === null ? C.gray : s.momChange >= 0 ? C.success : C.error }}>
+                  {s.momChange === null ? "—" : `${s.momChange >= 0 ? "▲" : "▼"}${Math.abs(s.momChange).toFixed(1)}%`}
+                </td>
                 <td style={{ padding: "8px", textAlign: "right", color: C.orange, fontWeight: 700 }}>{pFmtFull(s.labor)}</td>
+                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, fontSize: 11,
+                  color: s.laborRatio > 60 ? C.error : s.laborRatio > 45 ? C.orange : C.success }}>
+                  {s.rev > 0 ? s.laborRatio.toFixed(1) + "%" : "—"}
+                </td>
                 <td style={{ padding: "8px", textAlign: "right", color: C.gray }}>{pFmtFull(s.overhead)}</td>
                 <td style={{ padding: "8px", textAlign: "right", fontWeight: 800, color: s.profit >= 0 ? C.success : C.error }}>{pFmtFull(s.profit)}</td>
                 <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, color: s.margin >= 0 ? C.success : C.error }}>{s.rev > 0 ? s.margin.toFixed(1) + "%" : "0.0%"}</td>
               </tr>
             ))}
             {sortedPLs.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.gray }}>수익성 분석 → 비용입력에서 매출을 입력하세요</td></tr>
+              <tr><td colSpan={11} style={{ padding: 24, textAlign: "center", color: C.gray }}>수익성 분석 → 비용입력에서 매출을 입력하세요</td></tr>
             )}
             {sortedPLs.length > 0 && (
-              <tr style={{ background: C.navy }}>
-                <td colSpan={3} style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
-                <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{ptotals.count}명</td>
-                <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.rev)}</td>
-                <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.labor)}</td>
-                <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "right" }}>{pFmtFull(ptotals.overhead)}</td>
-                <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{pFmtFull(ptotals.profit)}</td>
-                <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{ptotals.rev > 0 ? ((ptotals.profit / ptotals.rev) * 100).toFixed(1) + "%" : "—"}</td>
-              </tr>
+              <>
+                {/* 합계행 */}
+                <tr style={{ background: C.navy }}>
+                  <td colSpan={3} style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+                  <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{ptotals.count}명</td>
+                  <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.rev)}</td>
+                  <td style={{ padding: "9px 8px", color: "#fff", textAlign: "center" }}>—</td>
+                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.labor)}</td>
+                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{ptotals.rev > 0 ? ptotals.laborRatio.toFixed(1) + "%" : "—"}</td>
+                  <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "right" }}>{pFmtFull(ptotals.overhead)}</td>
+                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{pFmtFull(ptotals.profit)}</td>
+                  <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{ptotals.rev > 0 ? ((ptotals.profit / ptotals.rev) * 100).toFixed(1) + "%" : "—"}</td>
+                </tr>
+                {/* ★ Phase B: 평균행 */}
+                <tr style={{ background: "#F0F4FF" }}>
+                  <td colSpan={3} style={{ padding: "9px 8px", color: C.navy, fontWeight: 800, textAlign: "center", fontSize: 11 }}>📊 사업장 평균</td>
+                  <td style={{ padding: "9px 8px", color: C.navy, fontWeight: 700, textAlign: "center", fontSize: 11 }}>{(ptotals.count / (sitePLs.length || 1)).toFixed(1)}명</td>
+                  <td style={{ padding: "9px 8px", color: C.navy, fontWeight: 700, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.rev / (sitePLs.length || 1))}</td>
+                  <td style={{ padding: "9px 8px", textAlign: "center" }}>—</td>
+                  <td style={{ padding: "9px 8px", color: C.orange, fontWeight: 700, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.labor / (sitePLs.length || 1))}</td>
+                  <td style={{ padding: "9px 8px", textAlign: "center" }}>—</td>
+                  <td style={{ padding: "9px 8px", color: C.gray, fontWeight: 700, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.overhead / (sitePLs.length || 1))}</td>
+                  <td style={{ padding: "9px 8px", color: ptotals.avgProfit >= 0 ? C.success : C.error, fontWeight: 800, textAlign: "right", fontSize: 11 }}>{pFmtFull(ptotals.avgProfit)}</td>
+                  <td style={{ padding: "9px 8px", textAlign: "center" }}>—</td>
+                </tr>
+              </>
             )}
           </tbody>
         </table>
@@ -3158,7 +3330,7 @@ function parseCashReceipt(wb) {
   });
 }
 
-function FinancialImportPage() {
+function FinancialImportPage({ onImportComplete }) {
   const [files, setFiles] = useState([]);
   const [parsedFiles, setParsedFiles] = useState([]);
   const [importing, setImporting] = useState(false);
@@ -3328,6 +3500,7 @@ function FinancialImportPage() {
         batchId,
         months,
       });
+      onImportComplete?.(); // ★ Phase B: 대시보드 재무 KPI 갱신
     } catch (err) {
       setImportResult({ success: false, error: err.message || "Import 실패" });
     } finally {
@@ -4059,7 +4232,15 @@ function MainApp() {
   const [profitMonth, setProfitMonth] = useState("2026-02");
   const [revenueData, setRevenueData] = useState({ "2026-02": {} });
   const [overheadData, setOverheadData] = useState({ "2026-02": DEFAULT_OVERHEAD.map(o => ({ ...o })) });
-  const profitState = { profitMonth, setProfitMonth, revenueData, setRevenueData, overheadData, setOverheadData };
+
+  // ★ Phase B: monthly_summary 로딩 (재무 KPI + 기간연산)
+  const [monthlySummary, setMonthlySummary] = useState([]);
+  const loadMonthlySummary = async () => {
+    const { data } = await supabase.from("monthly_summary").select("*").order("month", { ascending: false });
+    if (data) setMonthlySummary(data);
+  };
+
+  const profitState = { profitMonth, setProfitMonth, revenueData, setRevenueData, overheadData, setOverheadData, monthlySummary };
 
   // Supabase에서 직원 데이터 로드
   const loadEmployees = async () => {
@@ -4068,7 +4249,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { loadEmployees(); }, []);
+  useEffect(() => { loadEmployees(); loadMonthlySummary(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
@@ -4210,7 +4391,7 @@ function MainApp() {
         {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" profitState={profitState} />}
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
-        {page === "profit_import" && <FinancialImportPage />}
+        {page === "profit_import" && <FinancialImportPage onImportComplete={loadMonthlySummary} />}
       </main>
     </div>
   );
