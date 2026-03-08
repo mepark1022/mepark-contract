@@ -4484,6 +4484,473 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   return <SummaryView />;
 }
 
+// ── 16-2. 사업장 현황 관리 ─────────────────────────────
+function SiteManagementPage({ employees }) {
+  const [selectedSite, setSelectedSite] = useState(null);
+  const [siteDetails, setSiteDetails] = useState({});
+  const [siteParking, setSiteParking] = useState({});
+  const [saving, setSaving] = useState(false);
+
+  // DB 로드
+  useEffect(() => {
+    (async () => {
+      const { data: details } = await supabase.from("site_details").select("*");
+      if (details) {
+        const map = {};
+        details.forEach(d => { map[d.site_code] = d; });
+        setSiteDetails(map);
+      }
+      const { data: parking } = await supabase.from("site_parking").select("*").order("created_at");
+      if (parking) {
+        const map = {};
+        parking.forEach(p => {
+          if (!map[p.site_code]) map[p.site_code] = [];
+          map[p.site_code].push(p);
+        });
+        setSiteParking(map);
+      }
+    })();
+  }, []);
+
+  const activeSiteEmps = useMemo(() => {
+    const map = {};
+    SITES.forEach(s => { map[s.code] = 0; });
+    employees.filter(e => e.status === "재직" && e.site_code_1).forEach(e => { map[e.site_code_1] = (map[e.site_code_1] || 0) + 1; });
+    return map;
+  }, [employees]);
+
+  const updateDetail = async (code, field, value) => {
+    setSiteDetails(p => ({ ...p, [code]: { ...p[code], site_code: code, [field]: value } }));
+    setSaving(true);
+    await supabase.from("site_details").upsert({ site_code: code, [field]: value, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
+    setSaving(false);
+  };
+
+  const addParking = async (code) => {
+    const newP = { site_code: code, parking_name: "", address: "", amount: 0, manager_name: "", phone: "" };
+    const { data } = await supabase.from("site_parking").insert(newP).select().single();
+    if (data) setSiteParking(p => ({ ...p, [code]: [...(p[code] || []), data] }));
+  };
+
+  const updateParking = async (id, field, value) => {
+    setSiteParking(p => {
+      const updated = {};
+      Object.entries(p).forEach(([code, list]) => {
+        updated[code] = list.map(pk => pk.id === id ? { ...pk, [field]: value } : pk);
+      });
+      return updated;
+    });
+    await supabase.from("site_parking").update({ [field]: value }).eq("id", id);
+  };
+
+  const deleteParking = async (id, code) => {
+    await supabase.from("site_parking").delete().eq("id", id);
+    setSiteParking(p => ({ ...p, [code]: (p[code] || []).filter(pk => pk.id !== id) }));
+  };
+
+  const sel = selectedSite;
+  const detail = sel ? (siteDetails[sel.code] || {}) : {};
+  const parkings = sel ? (siteParking[sel.code] || []) : [];
+  const fieldSites = SITES.filter(s => s.code !== "V000");
+
+  const fieldStyle = { ...inputStyle, fontSize: 12, padding: "7px 10px" };
+  const labelStyle = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4, display: "block" };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 16px" }}>🏢 사업장 현황 관리</h2>
+      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "start" }}>
+
+        {/* 좌: 사업장 목록 */}
+        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+          <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800 }}>사업장 목록 ({fieldSites.length}개)</div>
+          <div style={{ maxHeight: 600, overflowY: "auto" }}>
+            {fieldSites.map(site => {
+              const d = siteDetails[site.code] || {};
+              const isSel = sel?.code === site.code;
+              const dDay = d.contract_end_date ? Math.ceil((new Date(d.contract_end_date) - new Date()) / 86400000) : null;
+              return (
+                <div key={site.code} onClick={() => setSelectedSite(site)}
+                  style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid #f0f0f0`, background: isSel ? "#EFF3FF" : "#fff", transition: "all 0.1s" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <div>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: C.navy }}>{site.code}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.dark, marginLeft: 6 }}>{site.name}</span>
+                    </div>
+                    <span style={{ fontSize: 10, color: C.gray }}>{activeSiteEmps[site.code] || 0}명</span>
+                  </div>
+                  {d.monthly_contract > 0 && (
+                    <div style={{ fontSize: 10, color: C.gray, marginTop: 3 }}>
+                      월 {pFmt(d.monthly_contract)} {dDay !== null && <span style={{ color: dDay <= 30 ? C.error : C.success, fontWeight: 700, marginLeft: 6 }}>만기 D{dDay > 0 ? "-" + dDay : "+" + Math.abs(dDay)}</span>}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 우: 사업장 상세 */}
+        {sel ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* 기본정보 */}
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between" }}>
+                <span>{sel.code} {sel.name}</span>
+                {saving && <span style={{ fontSize: 10, color: C.gold }}>저장 중...</span>}
+              </div>
+              <div style={{ padding: 16 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
+                  <div>
+                    <label style={labelStyle}>서비스 시작일</label>
+                    <input type="date" value={detail.start_date || ""} onChange={e => updateDetail(sel.code, "start_date", e.target.value)} style={fieldStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>계약 만기일</label>
+                    <input type="date" value={detail.contract_end_date || ""} onChange={e => updateDetail(sel.code, "contract_end_date", e.target.value)} style={fieldStyle} />
+                  </div>
+                  <div>
+                    <label style={labelStyle}>월 계약금액</label>
+                    <NumInput value={toNum(detail.monthly_contract)} onChange={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fieldStyle, textAlign: "right" }} />
+                  </div>
+                </div>
+                <div>
+                  <label style={labelStyle}>메모</label>
+                  <textarea value={detail.memo || ""} onChange={e => updateDetail(sel.code, "memo", e.target.value)}
+                    style={{ ...fieldStyle, height: 60, resize: "vertical" }} />
+                </div>
+              </div>
+            </div>
+
+            {/* 계약서 파일 */}
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800 }}>📎 계약서 관리</div>
+              <div style={{ padding: 16 }}>
+                {detail.contract_file_name ? (
+                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>📄 {detail.contract_file_name}</span>
+                    <button onClick={() => { if (detail.contract_file_url) window.open(detail.contract_file_url, "_blank"); }}
+                      style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.navy}`, background: "#fff", fontSize: 10, fontWeight: 700, color: C.navy, cursor: "pointer" }}>보기</button>
+                    <button onClick={() => { updateDetail(sel.code, "contract_file_name", null); updateDetail(sel.code, "contract_file_url", null); }}
+                      style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.error}`, background: "#fff", fontSize: 10, fontWeight: 700, color: C.error, cursor: "pointer" }}>삭제</button>
+                  </div>
+                ) : (
+                  <div>
+                    <input type="file" accept=".pdf,.doc,.docx,.hwp" onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setSaving(true);
+                      const path = `contracts/${sel.code}_${Date.now()}_${file.name}`;
+                      const { error } = await supabase.storage.from("site-contracts").upload(path, file);
+                      if (!error) {
+                        const { data: urlData } = supabase.storage.from("site-contracts").getPublicUrl(path);
+                        await updateDetail(sel.code, "contract_file_name", file.name);
+                        await updateDetail(sel.code, "contract_file_url", urlData.publicUrl);
+                      }
+                      setSaving(false);
+                    }} style={{ fontSize: 12 }} />
+                    <div style={{ fontSize: 10, color: C.gray, marginTop: 4 }}>PDF, DOC, HWP 파일 업로드</div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* 외부주차장 현황 */}
+            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between" }}>
+                <span>🅿️ 외부주차장 사용 현황</span>
+                <button onClick={() => addParking(sel.code)} style={{ background: C.gold, border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 800, color: C.navy, cursor: "pointer" }}>+ 추가</button>
+              </div>
+              <div style={{ padding: parkings.length > 0 ? 12 : 16 }}>
+                {parkings.length === 0 ? (
+                  <div style={{ fontSize: 12, color: C.gray, textAlign: "center" }}>등록된 외부주차장이 없습니다</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    {parkings.map((pk) => (
+                      <div key={pk.id} style={{ background: C.bg, borderRadius: 10, padding: 12, border: `1px solid ${C.border}` }}>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                          <div>
+                            <label style={labelStyle}>주차장명</label>
+                            <input value={pk.parking_name || ""} onChange={e => updateParking(pk.id, "parking_name", e.target.value)} style={fieldStyle} placeholder="명칭" />
+                          </div>
+                          <div>
+                            <label style={labelStyle}>월 금액</label>
+                            <NumInput value={toNum(pk.amount)} onChange={v => updateParking(pk.id, "amount", v)} style={{ ...fieldStyle, textAlign: "right" }} />
+                          </div>
+                        </div>
+                        <div style={{ marginBottom: 8 }}>
+                          <label style={labelStyle}>주소</label>
+                          <input value={pk.address || ""} onChange={e => updateParking(pk.id, "address", e.target.value)} style={fieldStyle} placeholder="주소" />
+                        </div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "end" }}>
+                          <div>
+                            <label style={labelStyle}>관리자</label>
+                            <input value={pk.manager_name || ""} onChange={e => updateParking(pk.id, "manager_name", e.target.value)} style={fieldStyle} placeholder="이름" />
+                          </div>
+                          <div>
+                            <label style={labelStyle}>연락처</label>
+                            <input value={pk.phone || ""} onChange={e => updateParking(pk.id, "phone", e.target.value)} style={fieldStyle} placeholder="010-0000-0000" />
+                          </div>
+                          <button onClick={() => deleteParking(pk.id, sel.code)}
+                            style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${C.error}`, background: "#fff", fontSize: 10, fontWeight: 700, color: C.error, cursor: "pointer" }}>삭제</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 40, textAlign: "center" }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>🏢</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.gray }}>좌측에서 사업장을 선택하세요</div>
+            <div style={{ fontSize: 12, color: C.gray, marginTop: 6 }}>계약정보, 외부주차장 등 상세 관리</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── 16-3. 견적 계산기 (2026 인건비) ──────────────────────
+function SalaryCalculatorPage() {
+  const SC_DAYS = ["월", "화", "수", "목", "금", "토", "일"];
+  const SC_MW = 10320;
+  const SC_WEEKS = 4.345;
+  const tt = (t) => { const [h, m] = t.split(":").map(Number); return h * 60 + m; };
+  const sf = (n) => Math.round(n).toLocaleString("ko-KR");
+
+  function getIT(taxable, dep) {
+    let tax = 0;
+    if (taxable <= 1060000) tax = 0;
+    else if (taxable <= 1500000) tax = (taxable - 1060000) * 0.06;
+    else if (taxable <= 3000000) tax = 26400 + (taxable - 1500000) * 0.15;
+    else if (taxable <= 4500000) tax = 251400 + (taxable - 3000000) * 0.24;
+    else if (taxable <= 8000000) tax = 611400 + (taxable - 4500000) * 0.35;
+    else tax = 1836400 + (taxable - 8000000) * 0.38;
+    const dd = [0, 0, 14000, 21000, 28000, 35000, 42000, 49000];
+    return Math.max(0, Math.round(tax - dd[Math.min(dep, 7)]));
+  }
+
+  function cRate(hrRate, mbH, mwH, moH, mnH, meal, dep) {
+    const bp = hrRate * mbH, wp = hrRate * mwH, op = hrRate * 0.5 * moH, np = hrRate * 0.5 * mnH;
+    const mNT = Math.min(meal, 200000), gross = bp + wp + op + np + mNT, tb = bp + wp + op + np;
+    const npB = Math.min(tb, 6370000), npE = Math.round(npB * 0.0475);
+    const hiE = Math.round(tb * 0.03595), ltE = Math.round(hiE * 0.1314), eiE = Math.round(tb * 0.009);
+    const insE = npE + hiE + ltE + eiE, itax = getIT(tb - insE, dep), ltax = Math.round(itax * 0.1);
+    const totDed = insE + itax + ltax, net = gross - totDed;
+    const npR = Math.round(npB * 0.0475), hiR = Math.round(tb * 0.03595), ltR = Math.round(hiR * 0.1314);
+    const eiR = Math.round(tb * 0.0105), wiR = Math.round(tb * 0.0147);
+    const insR = npR + hiR + ltR + eiR + wiR, totCost = gross + insR;
+    const thH = mbH + mwH, hrCost = thH > 0 ? totCost / thH : 0;
+    return { hrRate, bp, wp, op, np, mNT, gross, npE, hiE, ltE, eiE, insE, itax, ltax, totDed, net, npR, hiR, ltR, eiR, wiR, insR, totCost, hrCost };
+  }
+
+  const [sm, setSm] = useState("simple");
+  const [simple, setSimple] = useState({ start: "09:00", end: "18:00", breakMin: 60, daysPerWeek: 5 });
+  const [weekly, setWeekly] = useState(SC_DAYS.map((_, i) => ({ work: i < 5, start: "09:00", end: "18:00", breakMin: 60 })));
+  const [hrMode, setHrMode] = useState("both");
+  const [customHr, setCustomHr] = useState(13000);
+  const [dep, setDep] = useState(1);
+  const [meal, setMeal] = useState(200000);
+
+  const calc = useMemo(() => {
+    let dWH = 0, wWH = 0, nHW = 0, wDays = 0;
+    if (sm === "simple") {
+      const s = tt(simple.start), e = tt(simple.end);
+      const aM = Math.max(0, e - s - simple.breakMin); dWH = aM / 60; wDays = simple.daysPerWeek; wWH = dWH * wDays;
+      const e2 = e < s ? e + 1440 : e, ns = Math.max(s, 1320), ne = Math.min(e2, 1800);
+      nHW = (ns < ne ? (ne - ns) / 60 : 0) * wDays;
+    } else {
+      weekly.forEach(d => {
+        if (!d.work) return;
+        const s = tt(d.start), e = tt(d.end);
+        wWH += Math.max(0, e - s - d.breakMin) / 60; wDays++;
+        const e2 = e < s ? e + 1440 : e, ns = Math.max(s, 1320), ne = Math.min(e2, 1800);
+        nHW += ns < ne ? (ne - ns) / 60 : 0;
+      });
+      dWH = wDays > 0 ? wWH / wDays : 0;
+    }
+    const hasWL = wWH >= 15, wlH = hasWL ? (wDays > 0 ? wWH / wDays : 0) : 0;
+    const mbH = wWH * SC_WEEKS, mwH = wlH * SC_WEEKS, mnH = nHW * SC_WEEKS;
+    const dOT = Math.max(0, dWH - 8), wOT = Math.max(0, wWH - 40);
+    const moH = Math.max(dOT * wDays, wOT) * SC_WEEKS;
+    const minR = cRate(SC_MW, mbH, mwH, moH, mnH, meal, dep);
+    const cusR = cRate(customHr, mbH, mwH, moH, mnH, meal, dep);
+    return { dWH, wWH, mbH, mwH, moH, mnH, hasWL, wDays, minR, cusR };
+  }, [sm, simple, weekly, customHr, dep, meal]);
+
+  const TI = ({ label, value, onChange }) => (
+    <div>
+      <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.gray, marginBottom: 3 }}>{label}</label>
+      <input type="time" value={value} onChange={e => onChange(e.target.value)} style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} />
+    </div>
+  );
+
+  const RB = ({ r, label, accent }) => {
+    const isM = accent === "green";
+    return (
+      <div style={{ borderRadius: 12, border: `2px solid ${isM ? C.success : C.navy}`, background: isM ? "#F0FFF4" : "#F0F4FF", padding: 14, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: isM ? C.success : C.navy }}>{label}</span>
+          <div style={{ textAlign: "right" }}>
+            <span style={{ fontSize: 20, fontWeight: 900, color: isM ? C.success : C.navy }}>{sf(r.hrRate)}</span>
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>원/h</span>
+          </div>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 10 }}>
+          {[
+            ["총 지급액", r.gross, isM ? C.success : C.navy],
+            ["실수령액", r.net, "#16A34A"],
+            ["공제액", r.totDed, C.error],
+            ["사업주 총비용", r.totCost, C.orange],
+          ].map(([l, v, c]) => (
+            <div key={l} style={{ background: "#fff", borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: c }}>{sf(v)}<span style={{ fontSize: 10, color: C.gray }}>원</span></div>
+              <div style={{ fontSize: 9, color: C.gray, marginTop: 2 }}>{l}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ background: "#fff", borderRadius: 8, padding: 10, fontSize: 11 }}>
+          {[["국민연금(4.75%)", r.npE], ["건강보험(3.595%)", r.hiE], ["장기요양(×13.14%)", r.ltE], ["고용보험(0.9%)", r.eiE], ["소득세+지방세", r.itax + r.ltax]].map(([l, v]) => (
+            <div key={l} style={{ display: "flex", justifyContent: "space-between", padding: "2px 0" }}>
+              <span style={{ color: C.gray }}>{l}</span>
+              <span style={{ fontWeight: 700, color: C.error }}>-{sf(v)}</span>
+            </div>
+          ))}
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 4, marginTop: 4, display: "flex", justifyContent: "space-between", fontWeight: 700 }}>
+            <span style={{ color: C.gray }}>사업주 보험</span>
+            <span style={{ color: C.orange }}>+{sf(r.insR)}</span>
+          </div>
+        </div>
+        <div style={{ textAlign: "center", padding: "8px 0", marginTop: 8, borderRadius: 8, fontSize: 12, fontWeight: 800, background: isM ? "#D1FAE5" : "#DBEAFE", color: isM ? C.success : C.navy }}>
+          시간당 인건비 {sf(r.hrCost)}원/h
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 16px" }}>💼 2026 인건비 견적 계산기</h2>
+      <p style={{ fontSize: 11, color: C.gray, marginTop: -12, marginBottom: 16 }}>근무시간 입력 → 시급·월급 자동 계산 · 최저임금 {sf(SC_MW)}원 기준</p>
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, alignItems: "start" }}>
+        {/* 좌: 입력 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* 근무시간 */}
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>⏰ 근무시간</div>
+            <div style={{ display: "flex", gap: 4, background: C.lightGray, padding: 2, borderRadius: 8, marginBottom: 10 }}>
+              {[["simple", "일괄"], ["weekly", "요일별"]].map(([k, v]) => (
+                <button key={k} onClick={() => setSm(k)} style={{ flex: 1, padding: "5px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", background: sm === k ? "#fff" : "transparent", color: sm === k ? C.navy : C.gray }}>{v}</button>
+              ))}
+            </div>
+            {sm === "simple" ? (
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 8 }}>
+                  <TI label="출근" value={simple.start} onChange={v => setSimple(p => ({ ...p, start: v }))} />
+                  <TI label="퇴근" value={simple.end} onChange={v => setSimple(p => ({ ...p, end: v }))} />
+                  <div>
+                    <label style={{ display: "block", fontSize: 10, fontWeight: 700, color: C.gray, marginBottom: 3 }}>휴게(분)</label>
+                    <input type="number" value={simple.breakMin} min={0} step={30} onChange={e => setSimple(p => ({ ...p, breakMin: parseInt(e.target.value) || 0 }))}
+                      style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} />
+                  </div>
+                </div>
+                <div style={{ display: "flex", gap: 4 }}>
+                  {[5, 6, 7].map(n => (
+                    <button key={n} onClick={() => setSimple(p => ({ ...p, daysPerWeek: n }))}
+                      style={{ flex: 1, padding: "6px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${simple.daysPerWeek === n ? C.navy : C.border}`, background: simple.daysPerWeek === n ? C.navy : "#fff", color: simple.daysPerWeek === n ? "#fff" : C.gray }}>주 {n}일</button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {SC_DAYS.map((day, i) => (
+                  <div key={day} style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 0" }}>
+                    <button onClick={() => setWeekly(w => w.map((d, j) => j === i ? { ...d, work: !d.work } : d))}
+                      style={{ width: 36, height: 20, borderRadius: 10, border: "none", cursor: "pointer", background: weekly[i].work ? C.navy : "#ddd", position: "relative" }}>
+                      <div style={{ width: 14, height: 14, background: "#fff", borderRadius: "50%", position: "absolute", top: 3, left: weekly[i].work ? 19 : 3, transition: "all 0.15s" }} />
+                    </button>
+                    <span style={{ width: 14, fontSize: 11, fontWeight: 800, color: i >= 5 ? C.error : C.dark }}>{day}</span>
+                    {weekly[i].work ? (
+                      <div style={{ display: "flex", gap: 4, flex: 1, alignItems: "center" }}>
+                        <input type="time" value={weekly[i].start} onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, start: e.target.value } : d))} style={{ ...inputStyle, flex: 1, fontSize: 10, padding: "3px 4px" }} />
+                        <span style={{ fontSize: 10, color: C.gray }}>~</span>
+                        <input type="time" value={weekly[i].end} onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, end: e.target.value } : d))} style={{ ...inputStyle, flex: 1, fontSize: 10, padding: "3px 4px" }} />
+                        <input type="number" value={weekly[i].breakMin} min={0} step={30} onChange={e => setWeekly(w => w.map((d, j) => j === i ? { ...d, breakMin: parseInt(e.target.value) || 0 } : d))} style={{ ...inputStyle, width: 40, fontSize: 10, padding: "3px 4px", textAlign: "center" }} />
+                      </div>
+                    ) : <span style={{ fontSize: 10, color: C.gray }}>휴무</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {/* 시급 + 기타 */}
+          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>💰 시급 · 기타</div>
+            <div style={{ display: "flex", gap: 4, background: C.lightGray, padding: 2, borderRadius: 8, marginBottom: 10 }}>
+              {[["min", "최저임금"], ["custom", "직접입력"], ["both", "비교"]].map(([k, v]) => (
+                <button key={k} onClick={() => setHrMode(k)} style={{ flex: 1, padding: "5px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", border: "none", background: hrMode === k ? "#fff" : "transparent", color: hrMode === k ? C.navy : C.gray }}>{v}</button>
+              ))}
+            </div>
+            {(hrMode === "custom" || hrMode === "both") && (
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>시급 (원)</label>
+                <input type="number" value={customHr} min={SC_MW} step={100} onChange={e => setCustomHr(parseInt(e.target.value) || SC_MW)}
+                  style={{ ...inputStyle, fontSize: 14, fontWeight: 800, textAlign: "right", marginTop: 3 }} />
+                {customHr < SC_MW && <p style={{ fontSize: 10, color: C.error, fontWeight: 700, margin: "4px 0 0" }}>❌ 최저임금 위반</p>}
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>식대 비과세</label>
+                <input type="number" value={meal} step={10000} max={200000} onChange={e => setMeal(parseInt(e.target.value) || 0)} style={{ ...inputStyle, fontSize: 12, marginTop: 3 }} />
+              </div>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>부양가족</label>
+                <select value={dep} onChange={e => setDep(parseInt(e.target.value))} style={{ ...inputStyle, fontSize: 12, marginTop: 3 }}>
+                  {[1, 2, 3, 4, 5, 6, 7].map(n => <option key={n} value={n}>{n}명{n === 1 ? " (본인)" : ""}</option>)}
+                </select>
+              </div>
+            </div>
+          </div>
+          {/* 근무시간 분석 */}
+          <div style={{ background: C.navy, borderRadius: 12, padding: 14, color: "#fff" }}>
+            <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 8 }}>📊 근무시간 분석</div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+              {[["일 실근무", calc.dWH.toFixed(1) + "h"], ["주 실근무", calc.wWH.toFixed(1) + "h"], ["월 기본", calc.mbH.toFixed(1) + "h"],
+                ["월 주휴", calc.hasWL ? calc.mwH.toFixed(1) + "h" : "미해당"], ["월 연장", calc.moH.toFixed(1) + "h"], ["월 야간", calc.mnH.toFixed(1) + "h"]
+              ].map(([l, v]) => (
+                <div key={l} style={{ background: "rgba(255,255,255,0.1)", borderRadius: 8, padding: "6px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 13, fontWeight: 800 }}>{v}</div>
+                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.6)" }}>{l}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* 우: 결과 */}
+        <div>
+          {(hrMode === "min" || hrMode === "both") && <RB r={calc.minR} label="✅ 최저임금 기준" accent="green" />}
+          {(hrMode === "custom" || hrMode === "both") && <RB r={calc.cusR} label="⭐ 설정 시급 기준" accent="blue" />}
+          {hrMode === "both" && (
+            <div style={{ background: "#FFF8E1", border: `1px solid ${C.gold}`, borderRadius: 10, padding: 12, fontSize: 12, fontWeight: 700, textAlign: "center", color: C.dark }}>
+              월 차액 (사업주): <span style={{ fontWeight: 900, color: C.navy }}>{sf(Math.abs(calc.cusR.totCost - calc.minR.totCost))}원</span>
+              {calc.cusR.totCost > calc.minR.totCost ? " 추가 부담" : " 절감"}
+            </div>
+          )}
+          <div style={{ marginTop: 12, fontSize: 10, color: C.gray, lineHeight: 1.8 }}>
+            <strong>2026년 기준</strong> · 최저임금 {sf(SC_MW)}원 · 국민연금 9.5% · 건강보험 7.19% · 연장 ×1.5 · 야간 ×0.5
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
   const { profile, signOut, can } = useAuth();
@@ -4611,6 +5078,14 @@ function MainApp() {
     { key: "profit_import", icon: "📥", label: "데이터 Import" },
   ];
 
+  const siteNavItems = [
+    { key: "site_management", icon: "🏢", label: "사업장 관리" },
+  ];
+
+  const calcNavItems = [
+    { key: "salary_calc", icon: "💼", label: "인건비 견적" },
+  ];
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: FONT, background: C.bg }}>
       {/* 사이드바 */}
@@ -4678,6 +5153,48 @@ function MainApp() {
               <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
             </button>
           ))}
+
+          {/* 구분선 */}
+          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
+
+          {/* 사업장 현황 영역 */}
+          <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>사업장 현황</span>
+          </div>
+          {siteNavItems.map(item => (
+            <button key={item.key} onClick={() => setPage(item.key)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
+                borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 4, fontSize: 13, fontWeight: 700,
+                background: page === item.key ? "rgba(255,255,255,0.15)" : "transparent",
+                color: page === item.key ? C.white : "rgba(255,255,255,0.75)",
+                fontFamily: FONT,
+              }}>
+              <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
+            </button>
+          ))}
+
+          {/* 구분선 */}
+          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
+
+          {/* 견적 계산기 영역 */}
+          <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>견적 계산기</span>
+          </div>
+          {calcNavItems.map(item => (
+            <button key={item.key} onClick={() => setPage(item.key)}
+              style={{
+                display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
+                borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 4, fontSize: 13, fontWeight: 700,
+                background: page === item.key ? "rgba(255,255,255,0.15)" : "transparent",
+                color: page === item.key ? C.white : "rgba(255,255,255,0.75)",
+                fontFamily: FONT,
+              }}>
+              <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
+            </button>
+          ))}
         </nav>
 
         {/* 유저 정보 */}
@@ -4710,6 +5227,8 @@ function MainApp() {
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
         {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
+        {page === "site_management" && <SiteManagementPage employees={employees} />}
+        {page === "salary_calc" && <SalaryCalculatorPage />}
       </main>
     </div>
   );
