@@ -1,12 +1,14 @@
 import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment } from "react";
 import { supabase } from "./supabaseClient";
 import * as XLSX from "xlsx";
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
    (주)미스터팍 근로계약서 관리 시스템 v8.0
    Phase A: clobe.ai 재무 데이터 Import + 기존 HR/수익분석 통합
    Phase B: 재무KPI 5개 + 기간선택 실연산 + P&L확장 + 세금계산서카드
+   Phase C: Recharts 현금흐름 차트 + 비용입력 DB저장 + 대시보드 연동
    ═══════════════════════════════════════════════════════ */
 
 // ── 1. 상수 ──────────────────────────────────────────
@@ -464,11 +466,12 @@ const DEFAULT_ARTICLES_PARTTIME = {
   8: { title: "계약서 교부", text: "본 계약서는 2부를 작성하여 당사자 각각 1부씩 보관한다." },
 };
 
-// ── 10. 메인 대시보드 (통합 홈) ── Phase B 업그레이드 ──────
+// ── 10. 메인 대시보드 (통합 홈) ── Phase C 업그레이드 ──────
 function MainDashboard({ employees, onNavigate, profitState }) {
-  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [] } = profitState;
+  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [] } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
+  const [chartPeriod, setChartPeriod] = useState("3m"); // ★ Phase C
 
   // ★ Phase B: 기간선택 → 대상 월 목록 계산
   const periodMonths = useMemo(() => {
@@ -653,6 +656,52 @@ function MainDashboard({ employees, onNavigate, profitState }) {
     return currentMonth;
   }, [period, currentMonth, periodMonths]);
 
+  // ★ Phase C: 현금흐름 차트 데이터 가공
+  const chartData = useMemo(() => {
+    if (!chartTransactions.length) return [];
+    const now = new Date();
+    let startDate;
+    if (chartPeriod === "3m") startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+    else if (chartPeriod === "6m") startDate = new Date(now.getFullYear(), now.getMonth() - 6, 1);
+    else if (chartPeriod === "12m") startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+    else if (chartPeriod === "mtd") startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    else if (chartPeriod === "ytd") startDate = new Date(now.getFullYear(), 0, 1);
+    else startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
+
+    const filtered = chartTransactions.filter(tx => new Date(tx.tx_date) >= startDate);
+
+    const isDaily = chartPeriod === "mtd";
+    const isMonthly = ["6m", "12m", "ytd"].includes(chartPeriod);
+    const grouped = {};
+
+    filtered.forEach(tx => {
+      const d = new Date(tx.tx_date);
+      let key;
+      if (isDaily) key = tx.tx_date?.slice(0, 10);
+      else if (isMonthly) key = tx.tx_date?.slice(0, 7);
+      else {
+        const onejan = new Date(d.getFullYear(), 0, 1);
+        const weekNum = Math.ceil(((d - onejan) / 86400000 + onejan.getDay() + 1) / 7);
+        key = `${d.getFullYear()}-W${String(weekNum).padStart(2, "0")}`;
+      }
+      if (!grouped[key]) grouped[key] = { key, inAmt: 0, outAmt: 0, balance: 0 };
+      grouped[key].inAmt += toNum(tx.amount_in);
+      grouped[key].outAmt += toNum(tx.amount_out);
+      if (toNum(tx.balance_after) > 0) grouped[key].balance = toNum(tx.balance_after);
+    });
+
+    const arr = Object.values(grouped).sort((a, b) => a.key.localeCompare(b.key));
+    let lastBal = 0;
+    arr.forEach(d => { if (d.balance > 0) lastBal = d.balance; else d.balance = lastBal; });
+    return arr;
+  }, [chartTransactions, chartPeriod]);
+
+  const chartFmt = (v) => {
+    if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(1) + "억";
+    if (Math.abs(v) >= 1e4) return Math.round(v / 1e4).toLocaleString() + "만";
+    return v.toLocaleString();
+  };
+
   return (
     <div>
       {/* 헤더 + 기간 선택 */}
@@ -754,6 +803,54 @@ function MainDashboard({ employees, onNavigate, profitState }) {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ★ Phase C: 현금흐름 차트 */}
+      {chartData.length > 0 && (
+        <div style={{ ...cardStyle, marginBottom: 20 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 800, color: C.dark, margin: 0 }}>📈 현금흐름 차트</h3>
+            <div style={{ display: "flex", gap: 4 }}>
+              {[["3m", "3개월"], ["6m", "6개월"], ["12m", "12개월"], ["mtd", "MTD"], ["ytd", "YTD"]].map(([k, v]) => (
+                <button key={k} onClick={() => setChartPeriod(k)} style={{
+                  padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                  border: `1.5px solid ${chartPeriod === k ? C.navy : C.border}`,
+                  background: chartPeriod === k ? C.navy : "#fff",
+                  color: chartPeriod === k ? "#fff" : C.gray,
+                }}>{v}</button>
+              ))}
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={300}>
+            <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+              <XAxis dataKey="key" tick={{ fontSize: 10, fill: C.gray }} tickLine={false}
+                tickFormatter={v => {
+                  if (v.includes("W")) return v.slice(5);
+                  if (v.length === 7) return v.slice(5) + "월";
+                  if (v.length === 10) return v.slice(8) + "일";
+                  return v;
+                }} />
+              <YAxis yAxisId="amount" tick={{ fontSize: 10, fill: C.gray }} tickLine={false} axisLine={false}
+                tickFormatter={chartFmt} />
+              <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 10, fill: C.gold }} tickLine={false} axisLine={false}
+                tickFormatter={chartFmt} />
+              <Tooltip
+                contentStyle={{ borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }}
+                formatter={(v, name) => [pFmtFull(v) + "원", name]}
+                labelFormatter={v => {
+                  if (v.includes("W")) return v;
+                  if (v.length === 7) return v + "월";
+                  return v;
+                }}
+              />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+              <Bar yAxisId="amount" dataKey="inAmt" fill={C.navy} name="입금" radius={[3, 3, 0, 0]} barSize={chartData.length > 30 ? 6 : 14} />
+              <Bar yAxisId="amount" dataKey="outAmt" fill={C.orange} name="출금" radius={[3, 3, 0, 0]} barSize={chartData.length > 30 ? 6 : 14} />
+              <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2.5} dot={false} name="잔액" />
+            </ComposedChart>
+          </ResponsiveContainer>
         </div>
       )}
 
@@ -3714,21 +3811,48 @@ const pFmtFull = (n) => (n == null || n === "" || isNaN(n)) ? "0" : Math.round(N
 const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
 function ProfitabilityPage({ employees, subPage, profitState }) {
-  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData } = profitState;
+  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
   const [costTab, setCostTab] = useState("revenue");
+  const [savingStatus, setSavingStatus] = useState(null); // ★ Phase C: 저장 상태 표시
+  const saveTimerRef = useRef(null);
 
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
 
-  const setRev = (code, val) => setRevenueData(p => ({ ...p, [currentMonth]: { ...p[currentMonth], [code]: val } }));
-  const setOH = (idx, field, val) => setOverheadData(p => {
-    const arr = [...(p[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o })))];
-    arr[idx] = { ...arr[idx], [field]: val };
-    return { ...p, [currentMonth]: arr };
-  });
+  // ★ Phase C: 매출 변경 → state + DB 저장
+  const setRev = (code, val) => {
+    setRevenueData(p => ({ ...p, [currentMonth]: { ...p[currentMonth], [code]: val } }));
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      setSavingStatus("saving");
+      saveRevenueToDB?.(currentMonth, code, val).then(() => {
+        setSavingStatus("saved");
+        setTimeout(() => setSavingStatus(null), 1500);
+      });
+    }, 800);
+  };
+
+  // ★ Phase C: 간접비 변경 → state + DB 저장
+  const setOH = (idx, field, val) => {
+    setOverheadData(p => {
+      const arr = [...(p[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o })))];
+      arr[idx] = { ...arr[idx], [field]: val };
+      // DB 저장 (debounced)
+      const item = arr[idx];
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = setTimeout(() => {
+        setSavingStatus("saving");
+        saveOverheadToDB?.(currentMonth, item.key, item.label, item.amount, item.method).then(() => {
+          setSavingStatus("saved");
+          setTimeout(() => setSavingStatus(null), 1500);
+        });
+      }, 800);
+      return { ...p, [currentMonth]: arr };
+    });
+  };
 
   // 인건비 자동 집계 (employees 기반)
   const laborBySite = useMemo(() => {
@@ -3807,25 +3931,46 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const pcardStyle = { background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 20, boxShadow: "0 1px 3px rgba(0,0,0,0.04)" };
   const pSectionTitle = (text) => <div style={{ fontSize: 15, fontWeight: 800, color: C.navy, marginBottom: 16, paddingBottom: 8, borderBottom: `2px solid ${C.gold}` }}>{text}</div>;
 
-  const copyPrevMonth = () => {
+  const copyPrevMonth = async () => {
     const [y, m] = currentMonth.split("-").map(Number);
     const pm = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
-    if (revenueData[pm]) setRevenueData(p => ({ ...p, [currentMonth]: { ...p[pm] } }));
-    if (overheadData[pm]) setOverheadData(p => ({ ...p, [currentMonth]: overheadData[pm].map(o => ({ ...o })) }));
+    if (revenueData[pm]) {
+      setRevenueData(p => ({ ...p, [currentMonth]: { ...p[pm] } }));
+      // ★ Phase C: DB 배치 저장
+      setSavingStatus("saving");
+      const revEntries = Object.entries(revenueData[pm]);
+      for (const [code, val] of revEntries) {
+        await saveRevenueToDB?.(currentMonth, code, val);
+      }
+    }
+    if (overheadData[pm]) {
+      const copiedOH = overheadData[pm].map(o => ({ ...o }));
+      setOverheadData(p => ({ ...p, [currentMonth]: copiedOH }));
+      for (const oh of copiedOH) {
+        await saveOverheadToDB?.(currentMonth, oh.key, oh.label, oh.amount, oh.method);
+      }
+    }
+    setSavingStatus("saved");
+    setTimeout(() => setSavingStatus(null), 1500);
   };
 
   const addOverheadItem = () => {
+    const newItem = { key: `custom_${Date.now()}`, label: "새 항목", method: "revenue", amount: 0 };
     setOverheadData(p => {
-      const arr = [...(p[currentMonth] || []), { key: `custom_${Date.now()}`, label: "새 항목", method: "revenue", amount: 0 }];
+      const arr = [...(p[currentMonth] || []), newItem];
       return { ...p, [currentMonth]: arr };
     });
+    saveOverheadToDB?.(currentMonth, newItem.key, newItem.label, newItem.amount, newItem.method);
   };
   const removeOverheadItem = (idx) => {
-    setOverheadData(p => {
-      const arr = [...(p[currentMonth] || [])];
-      arr.splice(idx, 1);
-      return { ...p, [currentMonth]: arr };
-    });
+    const arr = [...(overheadData[currentMonth] || [])];
+    const removed = arr[idx];
+    arr.splice(idx, 1);
+    setOverheadData(p => ({ ...p, [currentMonth]: arr }));
+    // ★ Phase C: DB에서도 삭제
+    if (removed?.key) {
+      supabase.from("site_overhead").delete().eq("month", currentMonth).eq("item_key", removed.key);
+    }
   };
 
   // ── 전체 요약 ──
@@ -4019,6 +4164,12 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
           {[["revenue", "💰 사업장 매출"], ["overhead", "🏢 간접비"]].map(([k, v]) => (
             <button key={k} onClick={() => setCostTab(k)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${costTab === k ? C.navy : C.border}`, background: costTab === k ? C.navy : "#fff", color: costTab === k ? "#fff" : C.gray }}>{v}</button>
           ))}
+          {/* ★ Phase C: DB 저장 상태 표시 */}
+          {savingStatus && (
+            <span style={{ fontSize: 11, fontWeight: 700, color: savingStatus === "saving" ? C.orange : C.success, marginLeft: "auto" }}>
+              {savingStatus === "saving" ? "💾 저장 중..." : "✅ DB 저장 완료"}
+            </span>
+          )}
         </div>
 
         {costTab === "revenue" ? (
@@ -4230,8 +4381,8 @@ function MainApp() {
 
   // 수익성 분석 공유 state (MainDashboard + ProfitabilityPage)
   const [profitMonth, setProfitMonth] = useState("2026-02");
-  const [revenueData, setRevenueData] = useState({ "2026-02": {} });
-  const [overheadData, setOverheadData] = useState({ "2026-02": DEFAULT_OVERHEAD.map(o => ({ ...o })) });
+  const [revenueData, setRevenueData] = useState({});
+  const [overheadData, setOverheadData] = useState({});
 
   // ★ Phase B: monthly_summary 로딩 (재무 KPI + 기간연산)
   const [monthlySummary, setMonthlySummary] = useState([]);
@@ -4240,7 +4391,60 @@ function MainApp() {
     if (data) setMonthlySummary(data);
   };
 
-  const profitState = { profitMonth, setProfitMonth, revenueData, setRevenueData, overheadData, setOverheadData, monthlySummary };
+  // ★ Phase C: 차트용 은행거래 데이터
+  const [chartTransactions, setChartTransactions] = useState([]);
+  const loadChartTransactions = async () => {
+    const { data } = await supabase
+      .from("financial_transactions")
+      .select("tx_date, amount_in, amount_out, balance_after, tx_type")
+      .eq("tx_type", "bank")
+      .order("tx_date", { ascending: true })
+      .limit(3000);
+    if (data) setChartTransactions(data);
+  };
+
+  // ★ Phase C: 비용입력 DB 저장 (site_revenue)
+  const saveRevenueToDB = useCallback(async (month, siteCode, amount) => {
+    const { error } = await supabase.from("site_revenue")
+      .upsert({ site_code: siteCode, month, revenue: Math.round(amount) }, { onConflict: "site_code,month" });
+    if (error) console.error("site_revenue save error:", error);
+  }, []);
+
+  // ★ Phase C: 비용입력 DB 저장 (site_overhead)
+  const saveOverheadToDB = useCallback(async (month, itemKey, label, amount, method) => {
+    const { error } = await supabase.from("site_overhead")
+      .upsert({ month, item_key: itemKey, item_label: label, amount: Math.round(amount), alloc_method: method }, { onConflict: "month,item_key" });
+    if (error) console.error("site_overhead save error:", error);
+  }, []);
+
+  // ★ Phase C: DB에서 비용 데이터 초기 로딩
+  const loadCostData = async () => {
+    const { data: revRows } = await supabase.from("site_revenue").select("*");
+    if (revRows && revRows.length > 0) {
+      const revMap = {};
+      revRows.forEach(r => {
+        if (!revMap[r.month]) revMap[r.month] = {};
+        revMap[r.month][r.site_code] = r.revenue;
+      });
+      setRevenueData(revMap);
+    }
+    const { data: ohRows } = await supabase.from("site_overhead").select("*");
+    if (ohRows && ohRows.length > 0) {
+      const ohMap = {};
+      ohRows.forEach(r => {
+        if (!ohMap[r.month]) ohMap[r.month] = [];
+        ohMap[r.month].push({ key: r.item_key, label: r.item_label, method: r.alloc_method, amount: r.amount });
+      });
+      setOverheadData(ohMap);
+    }
+  };
+
+  const profitState = {
+    profitMonth, setProfitMonth,
+    revenueData, setRevenueData, overheadData, setOverheadData,
+    monthlySummary, chartTransactions,
+    saveRevenueToDB, saveOverheadToDB,
+  };
 
   // Supabase에서 직원 데이터 로드
   const loadEmployees = async () => {
@@ -4249,7 +4453,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { loadEmployees(); loadMonthlySummary(); }, []);
+  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
@@ -4391,7 +4595,7 @@ function MainApp() {
         {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" profitState={profitState} />}
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
-        {page === "profit_import" && <FinancialImportPage onImportComplete={loadMonthlySummary} />}
+        {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
       </main>
     </div>
   );
