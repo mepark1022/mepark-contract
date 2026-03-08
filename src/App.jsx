@@ -316,8 +316,12 @@ function AuthProvider({ children }) {
         email, password,
         options: { data: { name } }
       });
-      if (error) return { error: error.message };
-      if (!authData?.user) return { error: "계정 생성에 실패했습니다. Supabase 이메일 설정을 확인하세요." };
+      // "confirmation email" 에러는 무시 (계정은 생성됨, 이메일 확인만 실패)
+      if (error && !error.message.includes("confirmation")) return { error: error.message };
+      if (!authData?.user) return { error: "계정 생성에 실패했습니다." };
+
+      // 이메일 자동 확인 (RPC — SECURITY DEFINER로 auth.users 직접 업데이트)
+      await supabase.rpc("confirm_user_by_email", { user_email: email });
 
       // 프로필 생성 (현재 관리자 세션의 supabase로)
       const { error: profErr } = await supabase.from("profiles").upsert({
