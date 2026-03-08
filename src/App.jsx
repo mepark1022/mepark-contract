@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment } from "react";
 import { supabase } from "./supabaseClient";
 import * as XLSX from "xlsx";
-import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Legend } from "recharts";
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
@@ -822,47 +822,103 @@ function MainDashboard({ employees, onNavigate, profitState }) {
         </div>
       )}
 
-      {/* ★ Phase C: 현금흐름 차트 */}
+      {/* ★ Phase C: 현금흐름 차트 (디자인 개선) */}
       {chartData.length > 0 && (
-        <div style={{ ...cardStyle, marginBottom: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <h3 style={{ fontSize: 15, fontWeight: 800, color: C.dark, margin: 0 }}>📈 현금흐름 차트</h3>
-            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+        <div style={{ ...cardStyle, marginBottom: 20, padding: 0, overflow: "hidden" }}>
+          {/* 차트 헤더 */}
+          <div style={{ background: "linear-gradient(135deg, #1428A0 0%, #1E3FBA 100%)", padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <div>
+              <h3 style={{ fontSize: 15, fontWeight: 800, color: "#fff", margin: 0 }}>📈 현금흐름 차트</h3>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 3 }}>
+                {chartPeriod === "mtd" ? "이번 달 일별" : chartPeriod === "3m" ? "최근 3개월 주별" : chartPeriod === "6m" ? "최근 6개월 월별" : chartPeriod === "12m" ? "최근 12개월 월별" : "올해 월별"} 입출금 현황
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 3, background: "rgba(255,255,255,0.12)", padding: 3, borderRadius: 10 }}>
               {[
-                ["mtd", "이번달", "이번 달 1일부터 오늘까지 (일별 집계)"],
-                ["3m", "3개월", "최근 3개월 주별 집계 (월~일 단위)"],
-                ["6m", "6개월", "최근 6개월 월별 집계"],
-                ["12m", "12개월", null],
-                ["ytd", "YTD", null],
+                ["mtd", "이번달", "이번 달 1일~오늘 · 일별 집계"],
+                ["3m", "3개월", "최근 3개월 · 주별 집계 (월~일)"],
+                ["6m", "6개월", "최근 6개월 · 월별 집계"],
+                ["12m", "12개월", "최근 12개월 · 월별 집계"],
+                ["ytd", "YTD", `${new Date().getFullYear()}년 1월~현재 · 월별 집계`],
               ].map(([k, v, tip]) => (
-                <button key={k} onClick={() => setChartPeriod(k)} title={tip || undefined} style={{
-                  padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer",
-                  border: `1.5px solid ${chartPeriod === k ? C.navy : C.border}`,
-                  background: chartPeriod === k ? C.navy : "#fff",
-                  color: chartPeriod === k ? "#fff" : C.gray,
-                  position: "relative",
-                }}>{v}</button>
+                <div key={k} style={{ position: "relative" }}>
+                  <button onClick={() => setChartPeriod(k)} style={{
+                    padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                    border: "none",
+                    background: chartPeriod === k ? C.gold : "transparent",
+                    color: chartPeriod === k ? C.navy : "rgba(255,255,255,0.75)",
+                    transition: "all 0.15s", whiteSpace: "nowrap",
+                  }}
+                  title={tip}
+                  >{v}</button>
+                </div>
               ))}
             </div>
           </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-              <XAxis dataKey="label" tick={{ fontSize: 10, fill: C.gray }} tickLine={false} />
-              <YAxis yAxisId="amount" tick={{ fontSize: 10, fill: C.gray }} tickLine={false} axisLine={false}
-                tickFormatter={chartFmt} />
-              <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 10, fill: C.gold }} tickLine={false} axisLine={false}
-                tickFormatter={chartFmt} />
-              <Tooltip
-                contentStyle={{ borderRadius: 10, border: `1px solid ${C.border}`, fontSize: 12 }}
-                formatter={(v, name) => [pFmtFull(v) + "원", name]}
-              />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="amount" dataKey="inAmt" fill={C.navy} name="입금" radius={[3, 3, 0, 0]} barSize={chartData.length > 30 ? 6 : 14} />
-              <Bar yAxisId="amount" dataKey="outAmt" fill={C.orange} name="출금" radius={[3, 3, 0, 0]} barSize={chartData.length > 30 ? 6 : 14} />
-              <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2.5} dot={false} name="잔액" />
-            </ComposedChart>
-          </ResponsiveContainer>
+          {/* 범례 */}
+          <div style={{ display: "flex", gap: 20, padding: "12px 20px 0", justifyContent: "center" }}>
+            {[
+              [C.navy, "입금", "inAmt"],
+              [C.orange, "출금", "outAmt"],
+              [C.gold, "잔액 (우축)", "balance"],
+            ].map(([color, label, key]) => {
+              const total = chartData.reduce((s, d) => s + (d[key] || 0), 0);
+              const isLine = key === "balance";
+              return (
+                <div key={key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  {isLine ? (
+                    <div style={{ width: 20, height: 3, background: color, borderRadius: 2 }} />
+                  ) : (
+                    <div style={{ width: 10, height: 10, background: color, borderRadius: 2 }} />
+                  )}
+                  <span style={{ fontSize: 11, color: C.gray, fontWeight: 600 }}>{label}</span>
+                  <span style={{ fontSize: 11, color: C.dark, fontWeight: 800 }}>
+                    {isLine ? pFmt(chartData[chartData.length - 1]?.balance || 0) : pFmt(total)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          {/* 차트 */}
+          <div style={{ padding: "8px 12px 16px" }}>
+            <ResponsiveContainer width="100%" height={300}>
+              <ComposedChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradIn" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.navy} stopOpacity={0.9} />
+                    <stop offset="100%" stopColor={C.navy} stopOpacity={0.6} />
+                  </linearGradient>
+                  <linearGradient id="gradOut" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor={C.orange} stopOpacity={0.9} />
+                    <stop offset="100%" stopColor={C.orange} stopOpacity={0.6} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: C.gray, fontWeight: 600 }} tickLine={false} axisLine={{ stroke: "#eee" }} />
+                <YAxis yAxisId="amount" tick={{ fontSize: 10, fill: C.gray }} tickLine={false} axisLine={false}
+                  tickFormatter={chartFmt} width={60} />
+                <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 10, fill: C.gold, fontWeight: 600 }} tickLine={false} axisLine={false}
+                  tickFormatter={chartFmt} width={60} />
+                <Tooltip
+                  contentStyle={{ borderRadius: 12, border: "none", boxShadow: "0 4px 20px rgba(0,0,0,0.15)", fontSize: 12, padding: "12px 16px" }}
+                  formatter={(v, name) => {
+                    const color = name === "입금" ? C.navy : name === "출금" ? C.orange : C.gold;
+                    return [<span style={{ fontWeight: 800, color }}>{pFmtFull(v)}원</span>, name];
+                  }}
+                  labelStyle={{ fontWeight: 800, color: C.dark, marginBottom: 6 }}
+                  cursor={{ fill: "rgba(20,40,160,0.04)" }}
+                />
+                <Bar yAxisId="amount" dataKey="inAmt" fill="url(#gradIn)" name="입금" radius={[4, 4, 0, 0]}
+                  barSize={chartData.length > 30 ? 6 : chartData.length > 15 ? 10 : 16} />
+                <Bar yAxisId="amount" dataKey="outAmt" fill="url(#gradOut)" name="출금" radius={[4, 4, 0, 0]}
+                  barSize={chartData.length > 30 ? 6 : chartData.length > 15 ? 10 : 16} />
+                <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2.5}
+                  dot={{ fill: C.gold, r: 3, strokeWidth: 0 }}
+                  activeDot={{ fill: C.gold, r: 5, strokeWidth: 2, stroke: "#fff" }}
+                  name="잔액" />
+              </ComposedChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       )}
 
