@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment } from "react";
-import { supabase } from "./supabaseClient";
+import { supabase, supabaseUrl, supabaseAnonKey } from "./supabaseClient";
+import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
@@ -306,31 +307,24 @@ function AuthProvider({ children }) {
       const existingProfile = profiles.find(p => p.email === email);
       if (existingProfile) return { error: "이미 등록된 관리자입니다." };
 
-      // 현재 관리자 세션 백업
-      const { data: { session: adminSession } } = await supabase.auth.getSession();
+      // 별도 Supabase 클라이언트로 signUp (현재 관리자 세션 보호)
+      const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { storageKey: "mepark-temp-signup", persistSession: false }
+      });
 
-      // 새 계정 생성
-      const { data: authData, error } = await supabase.auth.signUp({
+      const { data: authData, error } = await tempClient.auth.signUp({
         email, password,
         options: { data: { name } }
       });
       if (error) return { error: error.message };
+      if (!authData?.user) return { error: "계정 생성에 실패했습니다. Supabase 이메일 설정을 확인하세요." };
 
-      // 프로필 생성
-      if (authData?.user) {
-        await supabase.from("profiles").upsert({
-          id: authData.user.id, email, name, role,
-          created_at: new Date().toISOString(),
-        }, { onConflict: "id" });
-      }
-
-      // 관리자 세션 복원 (signUp이 자동 로그인하므로)
-      if (adminSession) {
-        await supabase.auth.setSession({
-          access_token: adminSession.access_token,
-          refresh_token: adminSession.refresh_token,
-        });
-      }
+      // 프로필 생성 (현재 관리자 세션의 supabase로)
+      const { error: profErr } = await supabase.from("profiles").upsert({
+        id: authData.user.id, email, name, role,
+        created_at: new Date().toISOString(),
+      }, { onConflict: "id" });
+      if (profErr) return { error: "계정은 생성되었으나 프로필 저장 실패: " + profErr.message };
 
       await loadData();
       return { error: null };
