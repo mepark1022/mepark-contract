@@ -5119,25 +5119,38 @@ function SiteManagementPage({ employees }) {
   const handleAddSite = async () => {
     const code = newSiteCode.trim().toUpperCase();
     const name = newSiteName.trim();
-    if (!code || !name) return alert("코드와 이름을 입력하세요");
-    if (allSites.find(s => s.code === code)) return alert("이미 존재하는 코드입니다");
+    if (!code || !name) { alert("코드와 이름을 모두 입력하세요"); return; }
+    if (allSites.find(s => s.code === code)) { alert("이미 존재하는 코드입니다"); return; }
     setSaving(true);
-    await supabase.from("site_details").upsert({ site_code: code, site_name: name, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
-    setCustomSites(p => [...p, { code, name }]);
-    setSiteDetails(p => ({ ...p, [code]: { site_code: code, site_name: name } }));
-    setNewSiteCode(""); setNewSiteName(""); setShowAddForm(false); setSaving(false);
-    setSelectedSite({ code, name });
+    try {
+      const { data, error } = await supabase.from("site_details").upsert(
+        { site_code: code, site_name: name, updated_at: new Date().toISOString() },
+        { onConflict: "site_code" }
+      ).select();
+      if (error) { alert("사업장 등록 실패: " + error.message); setSaving(false); return; }
+      setCustomSites(p => [...p, { code, name }]);
+      setSiteDetails(p => ({ ...p, [code]: data?.[0] || { site_code: code, site_name: name } }));
+      setNewSiteCode(""); setNewSiteName(""); setShowAddForm(false);
+      setSelectedSite({ code, name });
+    } catch (e) { alert("사업장 등록 중 오류: " + e.message); }
+    setSaving(false);
   };
 
   // 사업장 삭제 (커스텀만)
   const handleDeleteSite = async (code) => {
-    if (!(await confirm(`"${code}" 사업장을 삭제하시겠습니까?`, "관련 외부주차장 데이터도 함께 삭제됩니다."))) return;
-    await supabase.from("site_details").delete().eq("site_code", code);
-    await supabase.from("site_parking").delete().eq("site_code", code);
-    setCustomSites(p => p.filter(s => s.code !== code));
-    setSiteDetails(p => { const n = { ...p }; delete n[code]; return n; });
-    setSiteParking(p => { const n = { ...p }; delete n[code]; return n; });
-    if (selectedSite?.code === code) setSelectedSite(null);
+    const siteName = allSites.find(s => s.code === code)?.name || code;
+    if (!(await confirm(`"${code} ${siteName}" 사업장을 삭제하시겠습니까?`, "⚠️ 해당 사업장의 계약정보, 외부주차장 데이터가 모두 삭제됩니다.\n이 작업은 되돌릴 수 없습니다."))) return;
+    setSaving(true);
+    try {
+      const { error: e1 } = await supabase.from("site_parking").delete().eq("site_code", code);
+      const { error: e2 } = await supabase.from("site_details").delete().eq("site_code", code);
+      if (e1 || e2) { alert("삭제 중 오류: " + (e1?.message || e2?.message)); setSaving(false); return; }
+      setCustomSites(p => p.filter(s => s.code !== code));
+      setSiteDetails(p => { const n = { ...p }; delete n[code]; return n; });
+      setSiteParking(p => { const n = { ...p }; delete n[code]; return n; });
+      if (selectedSite?.code === code) setSelectedSite(null);
+    } catch (e) { alert("삭제 중 오류: " + e.message); }
+    setSaving(false);
   };
 
   // ★ 디바운스 타이머 ref (키스트로크마다 DB 호출 방지)
@@ -5221,11 +5234,21 @@ function SiteManagementPage({ employees }) {
                 <div key={site.code} onClick={() => setSelectedSite(site)}
                   style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid #f0f0f0`, background: isSel ? "#EFF3FF" : "#fff", transition: "all 0.1s" }}>
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
                       <span style={{ fontSize: 10, fontWeight: 700, color: C.navy }}>{site.code}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.dark, marginLeft: 6 }}>{site.name}</span>
+                      <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{site.name}</span>
+                      {isCustomSite(site.code) && <span style={{ fontSize: 8, background: C.gold, color: C.navy, padding: "1px 5px", borderRadius: 4, fontWeight: 800, flexShrink: 0 }}>추가</span>}
                     </div>
-                    <span style={{ fontSize: 10, color: C.gray }}>{activeSiteEmps[site.code] || 0}명</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
+                      <span style={{ fontSize: 10, color: C.gray }}>{activeSiteEmps[site.code] || 0}명</span>
+                      {isCustomSite(site.code) && (
+                        <button onClick={e => { e.stopPropagation(); handleDeleteSite(site.code); }}
+                          style={{ background: "none", border: "none", padding: "2px 4px", cursor: "pointer", fontSize: 12, color: "#ccc", lineHeight: 1 }}
+                          title="사업장 삭제"
+                          onMouseEnter={e => e.currentTarget.style.color = C.error}
+                          onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
+                      )}
+                    </div>
                   </div>
                   {d.monthly_contract > 0 && (
                     <div style={{ fontSize: 10, color: C.gray, marginTop: 3 }}>

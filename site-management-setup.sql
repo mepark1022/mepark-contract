@@ -7,6 +7,7 @@
 CREATE TABLE IF NOT EXISTS site_details (
   id                  UUID DEFAULT gen_random_uuid() PRIMARY KEY,
   site_code           TEXT NOT NULL UNIQUE,         -- V001~V016
+  site_name           TEXT,                         -- 사업장명 (커스텀 추가 시)
   start_date          DATE,                         -- 서비스 시작일
   contract_end_date   DATE,                         -- 계약 만기일
   monthly_contract    NUMERIC DEFAULT 0,            -- 월 계약금액
