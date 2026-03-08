@@ -303,7 +303,7 @@ function AuthProvider({ children }) {
   // ── 계정 직접 생성 (슈퍼관리자 전용) ──
   const createAccount = async (name, email, password, role) => {
     try {
-      // 이미 등록된 사용자 체크
+      // 이미 등록된 사용자 체크 (프로필 기준)
       const existingProfile = profiles.find(p => p.email === email);
       if (existingProfile) return { error: "이미 등록된 관리자입니다." };
 
@@ -316,16 +316,45 @@ function AuthProvider({ children }) {
         email, password,
         options: { data: { name } }
       });
-      // "confirmation email" 에러는 무시 (계정은 생성됨, 이메일 확인만 실패)
-      if (error && !error.message.includes("confirmation")) return { error: error.message };
-      if (!authData?.user) return { error: "계정 생성에 실패했습니다." };
+
+      let userId = authData?.user?.id;
+
+      // signUp 에러 처리
+      if (error) {
+        // "confirmation email" 에러는 무시 (계정 자체는 생성됨)
+        if (!error.message.includes("confirmation")) {
+          // "already registered" — auth에는 있지만 프로필이 없는 경우 복구
+          if (error.message.includes("already") || error.message.includes("registered")) {
+            const { data: foundUser } = await supabase.rpc("get_user_id_by_email", { user_email: email });
+            if (foundUser) {
+              userId = foundUser;
+            } else {
+              return { error: "이미 가입된 이메일입니다. Supabase에서 확인해주세요." };
+            }
+          } else {
+            return { error: error.message };
+          }
+        }
+      }
+
+      // identities가 빈 배열이면 이미 존재하는 유저 (Supabase가 fake 응답)
+      if (!userId && authData?.user?.identities?.length === 0) {
+        const { data: foundUser } = await supabase.rpc("get_user_id_by_email", { user_email: email });
+        if (foundUser) {
+          userId = foundUser;
+        } else {
+          return { error: "계정 생성에 실패했습니다." };
+        }
+      }
+
+      if (!userId) return { error: "계정 생성에 실패했습니다." };
 
       // 이메일 자동 확인 (RPC — SECURITY DEFINER로 auth.users 직접 업데이트)
       await supabase.rpc("confirm_user_by_email", { user_email: email });
 
       // 프로필 생성 (현재 관리자 세션의 supabase로)
       const { error: profErr } = await supabase.from("profiles").upsert({
-        id: authData.user.id, email, name, role,
+        id: userId, email, name, role,
         created_at: new Date().toISOString(),
       }, { onConflict: "id" });
       if (profErr) return { error: "계정은 생성되었으나 프로필 저장 실패: " + profErr.message };
