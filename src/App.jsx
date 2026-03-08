@@ -4911,15 +4911,42 @@ function SalaryCalculatorPage() {
   const handlePrint = () => {
     const el = printRef.current;
     if (!el) return;
+    // 클론 후 인라인 스타일 직접 수정
+    const clone = el.cloneNode(true);
+    // 메인 컨테이너 패딩 축소
+    const main = clone.querySelector("div");
+    if (main) { main.style.padding = "16px 24px"; main.style.maxWidth = "100%"; main.style.boxShadow = "none"; main.style.border = "none"; main.style.borderRadius = "0"; }
+    // h1 축소
+    const h1 = clone.querySelector("h1");
+    if (h1) { h1.style.fontSize = "22px"; h1.style.marginBottom = "6px"; }
+    // 모든 테이블 셀 패딩 축소
+    clone.querySelectorAll("td, th").forEach(td => {
+      td.style.padding = td.style.padding ? td.style.padding.replace(/\d+px/g, m => Math.round(parseInt(m) * 0.6) + "px") : "5px 8px";
+    });
+    // marginBottom 큰 것들 축소
+    clone.querySelectorAll("div, table, p").forEach(d => {
+      const mb = parseInt(d.style.marginBottom);
+      if (mb > 10) d.style.marginBottom = Math.round(mb * 0.5) + "px";
+      const mt = parseInt(d.style.marginTop);
+      if (mt > 10) d.style.marginTop = Math.round(mt * 0.5) + "px";
+      const pb = parseInt(d.style.paddingBottom);
+      if (pb > 12) d.style.paddingBottom = Math.round(pb * 0.6) + "px";
+      const pt = parseInt(d.style.paddingTop);
+      if (pt > 12) d.style.paddingTop = Math.round(pt * 0.6) + "px";
+    });
+    // lineHeight 축소
+    clone.querySelectorAll("div").forEach(d => {
+      if (parseFloat(d.style.lineHeight) > 1.6) d.style.lineHeight = "1.4";
+    });
+
     const w = window.open("", "_blank");
     w.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>견적서</title>
       <link rel="stylesheet" href="${FONT_LINK}">
       <style>
-        @page{size:A4;margin:6mm 8mm}
+        @page{size:A4;margin:8mm 12mm}
         *{margin:0;padding:0;box-sizing:border-box}
         body{font-family:'Noto Sans KR','맑은 고딕','Malgun Gothic',sans-serif;color:#222;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-        .print-wrap{transform:scale(0.76);transform-origin:top center;width:132%}
-      </style></head><body><div class="print-wrap">${el.innerHTML}</div></body></html>`);
+      </style></head><body>${clone.innerHTML}</body></html>`);
     w.document.close();
     setTimeout(() => { w.print(); w.close(); }, 400);
   };
