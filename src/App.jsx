@@ -4121,7 +4121,7 @@ function MainApp() {
             <div style={{ width: 36, height: 36, borderRadius: 10, background: C.gold, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: C.navy }}>MP</div>
             <div>
               <div style={{ color: C.white, fontSize: 14, fontWeight: 900 }}>ME.PARK</div>
-              <div style={{ color: "rgba(255,255,255,0.4)", fontSize: 10 }}>ERP시스템</div>
+              <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11 }}>ERP시스템</div>
             </div>
           </div>
         </div>
@@ -4133,7 +4133,7 @@ function MainApp() {
               display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 12px",
               borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 6, fontSize: 13, fontWeight: 800,
               background: page === "main_dashboard" ? C.gold : "transparent",
-              color: page === "main_dashboard" ? C.navy : "rgba(255,255,255,0.7)",
+              color: page === "main_dashboard" ? C.navy : "rgba(255,255,255,0.85)",
               fontFamily: FONT,
             }}>
             <span style={{ fontSize: 16 }}>🏠</span> 메인 대시보드
@@ -4142,14 +4142,14 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "6px 8px 10px" }} />
 
           {/* HR & 계약관리 영역 */}
-          <div style={{ padding: "6px 12px 4px", fontSize: 10, fontWeight: 800, color: C.gold, letterSpacing: 1, marginBottom: 4 }}>HR & 계약관리</div>
+          <div style={{ padding: "8px 12px 6px", fontSize: 11, fontWeight: 900, color: C.gold, letterSpacing: 1.5, marginBottom: 6, textTransform: "uppercase" }}>HR & 계약관리</div>
           {hrNavItems.map(item => (
             <button key={item.key} onClick={() => { setPage(item.key); if (item.key !== "contract") { setContractEmp(null); setContractEdit(null); } }}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
                 borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 4, fontSize: 13, fontWeight: 700,
                 background: page === item.key ? "rgba(255,255,255,0.15)" : "transparent",
-                color: page === item.key ? C.white : "rgba(255,255,255,0.55)",
+                color: page === item.key ? C.white : "rgba(255,255,255,0.75)",
                 fontFamily: FONT,
               }}>
               <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
@@ -4160,14 +4160,14 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
 
           {/* 수익성 분석 영역 */}
-          <div style={{ padding: "6px 12px 4px", fontSize: 10, fontWeight: 800, color: C.gold, letterSpacing: 1, marginBottom: 4 }}>수익성 분석</div>
+          <div style={{ padding: "8px 12px 6px", fontSize: 11, fontWeight: 900, color: C.gold, letterSpacing: 1.5, marginBottom: 6, textTransform: "uppercase" }}>수익성 분석</div>
           {profitNavItems.map(item => (
             <button key={item.key} onClick={() => setPage(item.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
                 borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 4, fontSize: 13, fontWeight: 700,
                 background: page === item.key ? "rgba(255,255,255,0.15)" : "transparent",
-                color: page === item.key ? C.white : "rgba(255,255,255,0.55)",
+                color: page === item.key ? C.white : "rgba(255,255,255,0.75)",
                 fontFamily: FONT,
               }}>
               <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
@@ -4178,7 +4178,7 @@ function MainApp() {
         {/* 유저 정보 */}
         <div style={{ padding: "12px 14px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.white, marginBottom: 2 }}>{profile?.name}</div>
-          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", marginBottom: 8 }}>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", marginBottom: 8 }}>
             {ROLES[profile?.role]} · {profile?.email}
           </div>
           <button onClick={signOut}
