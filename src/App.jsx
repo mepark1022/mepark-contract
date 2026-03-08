@@ -761,10 +761,10 @@ function MainDashboard({ employees, onNavigate, profitState }) {
       </div>
 
       {/* ── B. 2컬럼: 좌(수익·재무 요약) / 우(차트) ── */}
-      <div style={{ display: "grid", gridTemplateColumns: chartData.length > 0 ? "340px 1fr" : "1fr", gap: 16, marginBottom: 18, alignItems: "stretch" }}>
+      <div style={{ display: "grid", gridTemplateColumns: chartData.length > 0 ? "340px 1fr" : "1fr", gap: 16, marginBottom: 18, minHeight: chartData.length > 0 ? 480 : "auto" }}>
 
         {/* 좌: 수익·재무 요약 패널 */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, justifyContent: "space-between" }}>
 
           {/* 수익 구조 */}
           <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
@@ -900,7 +900,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
               ))}
             </div>
             {/* 차트 영역 */}
-            <div style={{ flex: 1, padding: "4px 8px 12px", minHeight: 180 }}>
+            <div style={{ flex: 1, padding: "4px 8px 12px", minHeight: 320 }}>
               <ResponsiveContainer width="100%" height="100%">
                 <ComposedChart data={chartData} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
                   <defs>
