@@ -4490,6 +4490,10 @@ function SiteManagementPage({ employees }) {
   const [siteDetails, setSiteDetails] = useState({});
   const [siteParking, setSiteParking] = useState({});
   const [saving, setSaving] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newSiteCode, setNewSiteCode] = useState("");
+  const [newSiteName, setNewSiteName] = useState("");
+  const [customSites, setCustomSites] = useState([]); // DB에서 추가된 사업장
 
   // DB 로드
   useEffect(() => {
@@ -4497,8 +4501,16 @@ function SiteManagementPage({ employees }) {
       const { data: details } = await supabase.from("site_details").select("*");
       if (details) {
         const map = {};
-        details.forEach(d => { map[d.site_code] = d; });
+        const extras = [];
+        details.forEach(d => {
+          map[d.site_code] = d;
+          // SITES 상수에 없는 사업장 = 추가된 사업장
+          if (!SITES.find(s => s.code === d.site_code) && d.site_name) {
+            extras.push({ code: d.site_code, name: d.site_name });
+          }
+        });
         setSiteDetails(map);
+        setCustomSites(extras);
       }
       const { data: parking } = await supabase.from("site_parking").select("*").order("created_at");
       if (parking) {
@@ -4512,12 +4524,43 @@ function SiteManagementPage({ employees }) {
     })();
   }, []);
 
+  // 기존 SITES(V000 제외) + DB 추가 사업장 병합
+  const allSites = useMemo(() => {
+    const base = SITES.filter(s => s.code !== "V000");
+    return [...base, ...customSites.filter(cs => !base.find(b => b.code === cs.code))];
+  }, [customSites]);
+
   const activeSiteEmps = useMemo(() => {
     const map = {};
-    SITES.forEach(s => { map[s.code] = 0; });
+    allSites.forEach(s => { map[s.code] = 0; });
     employees.filter(e => e.status === "재직" && e.site_code_1).forEach(e => { map[e.site_code_1] = (map[e.site_code_1] || 0) + 1; });
     return map;
-  }, [employees]);
+  }, [employees, allSites]);
+
+  // 사업장 추가
+  const handleAddSite = async () => {
+    const code = newSiteCode.trim().toUpperCase();
+    const name = newSiteName.trim();
+    if (!code || !name) return alert("코드와 이름을 입력하세요");
+    if (allSites.find(s => s.code === code)) return alert("이미 존재하는 코드입니다");
+    setSaving(true);
+    await supabase.from("site_details").upsert({ site_code: code, site_name: name, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
+    setCustomSites(p => [...p, { code, name }]);
+    setSiteDetails(p => ({ ...p, [code]: { site_code: code, site_name: name } }));
+    setNewSiteCode(""); setNewSiteName(""); setShowAddForm(false); setSaving(false);
+    setSelectedSite({ code, name });
+  };
+
+  // 사업장 삭제 (커스텀만)
+  const handleDeleteSite = async (code) => {
+    if (!window.confirm(`"${code}" 사업장을 삭제하시겠습니까?\n관련 외부주차장 데이터도 함께 삭제됩니다.`)) return;
+    await supabase.from("site_details").delete().eq("site_code", code);
+    await supabase.from("site_parking").delete().eq("site_code", code);
+    setCustomSites(p => p.filter(s => s.code !== code));
+    setSiteDetails(p => { const n = { ...p }; delete n[code]; return n; });
+    setSiteParking(p => { const n = { ...p }; delete n[code]; return n; });
+    if (selectedSite?.code === code) setSelectedSite(null);
+  };
 
   const updateDetail = async (code, field, value) => {
     setSiteDetails(p => ({ ...p, [code]: { ...p[code], site_code: code, [field]: value } }));
@@ -4551,7 +4594,7 @@ function SiteManagementPage({ employees }) {
   const sel = selectedSite;
   const detail = sel ? (siteDetails[sel.code] || {}) : {};
   const parkings = sel ? (siteParking[sel.code] || []) : [];
-  const fieldSites = SITES.filter(s => s.code !== "V000");
+  const isCustomSite = (code) => customSites.some(s => s.code === code);
 
   const fieldStyle = { ...inputStyle, fontSize: 12, padding: "7px 10px" };
   const labelStyle = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4, display: "block" };
@@ -4563,9 +4606,25 @@ function SiteManagementPage({ employees }) {
 
         {/* 좌: 사업장 목록 */}
         <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-          <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800 }}>사업장 목록 ({fieldSites.length}개)</div>
+          <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span>사업장 목록 ({allSites.length}개)</span>
+            <button onClick={() => setShowAddForm(!showAddForm)} style={{ background: C.gold, border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 800, color: C.navy, cursor: "pointer" }}>+ 추가</button>
+          </div>
+          {/* 사업장 추가 폼 */}
+          {showAddForm && (
+            <div style={{ padding: 12, background: "#FFFDE7", borderBottom: `1px solid ${C.border}` }}>
+              <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
+                <input value={newSiteCode} onChange={e => setNewSiteCode(e.target.value)} placeholder="코드 (V017)" style={{ ...inputStyle, flex: "0 0 70px", fontSize: 11, padding: "5px 8px" }} />
+                <input value={newSiteName} onChange={e => setNewSiteName(e.target.value)} placeholder="사업장명" style={{ ...inputStyle, flex: 1, fontSize: 11, padding: "5px 8px" }} />
+              </div>
+              <div style={{ display: "flex", gap: 4 }}>
+                <button onClick={handleAddSite} style={{ flex: 1, padding: "5px 0", borderRadius: 6, border: "none", background: C.navy, color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>등록</button>
+                <button onClick={() => { setShowAddForm(false); setNewSiteCode(""); setNewSiteName(""); }} style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.gray }}>취소</button>
+              </div>
+            </div>
+          )}
           <div style={{ maxHeight: 600, overflowY: "auto" }}>
-            {fieldSites.map(site => {
+            {allSites.map(site => {
               const d = siteDetails[site.code] || {};
               const isSel = sel?.code === site.code;
               const dDay = d.contract_end_date ? Math.ceil((new Date(d.contract_end_date) - new Date()) / 86400000) : null;
@@ -4595,9 +4654,14 @@ function SiteManagementPage({ employees }) {
           <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
             {/* 기본정보 */}
             <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between" }}>
-                <span>{sel.code} {sel.name}</span>
-                {saving && <span style={{ fontSize: 10, color: C.gold }}>저장 중...</span>}
+              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>{sel.code} {sel.name} {isCustomSite(sel.code) && <span style={{ fontSize: 9, background: C.gold, color: C.navy, padding: "1px 6px", borderRadius: 4, marginLeft: 6 }}>추가</span>}</span>
+                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                  {saving && <span style={{ fontSize: 10, color: C.gold }}>저장 중...</span>}
+                  {isCustomSite(sel.code) && (
+                    <button onClick={() => handleDeleteSite(sel.code)} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#ff9999", cursor: "pointer" }}>삭제</button>
+                  )}
+                </div>
               </div>
               <div style={{ padding: 16 }}>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
