@@ -491,6 +491,7 @@ function BlurSaveNum({ value, onSave, style: st, placeholder, ...rest }) {
 function MeParkDatePicker({ value, onChange, style: st, label }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
   const today = new Date();
   const parsed = value ? new Date(value + "T00:00:00") : null;
   const [viewYear, setViewYear] = useState(parsed?.getFullYear() || today.getFullYear());
@@ -526,9 +527,22 @@ function MeParkDatePicker({ value, onChange, style: st, label }) {
 
   const displayVal = value ? value.replace(/-/g, ".") : "";
 
+  const handleOpen = () => {
+    if (!open && ref.current) {
+      const rect = ref.current.getBoundingClientRect();
+      const calH = 340;
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      setPos({
+        top: spaceBelow >= calH ? rect.bottom + 4 : rect.top - calH - 4,
+        left: Math.min(rect.left, window.innerWidth - 288),
+      });
+    }
+    setOpen(!open);
+  };
+
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <div onClick={() => setOpen(!open)} style={{
+      <div onClick={handleOpen} style={{
         ...inputStyle, ...st, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "space-between",
         background: open ? "#f8f9ff" : "#fff", borderColor: open ? C.navy : "#D8DCE3"
       }}>
@@ -537,7 +551,7 @@ function MeParkDatePicker({ value, onChange, style: st, label }) {
       </div>
       {open && (
         <div style={{
-          position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 999,
+          position: "fixed", top: pos.top, left: pos.left, zIndex: 9990,
           background: "#fff", borderRadius: 12, boxShadow: "0 8px 32px rgba(20,40,160,0.18)", border: `1.5px solid ${C.navy}`,
           width: 280, overflow: "hidden", fontFamily: FONT
         }}>
