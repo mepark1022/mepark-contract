@@ -22,6 +22,9 @@ const C = {
 
 const FONT = "'Noto Sans KR', sans-serif";
 
+// 카카오 지도 API (JavaScript 앱키)
+const KAKAO_MAP_KEY = "YOUR_KAKAO_JAVASCRIPT_KEY"; // ← 카카오 개발자센터에서 발급
+
 const SITES = [
   { code: "V000", name: "기획운영팀(본사)" }, { code: "V001", name: "강원빌딩" },
   { code: "V002", name: "사계절한정식" }, { code: "V003", name: "신한은행(서초)" },
@@ -484,6 +487,111 @@ function BlurSaveNum({ value, onSave, style: st, placeholder, ...rest }) {
       onBlur={() => { setFocused(false); const n = Number(localVal.replace(/,/g, "")); onSave(isNaN(n) ? 0 : n); }}
       {...rest}
     />
+  );
+}
+
+// ── 5-1b. 카카오 주소검색 + 지도 컴포넌트 ─────────────────
+const loadScript = (src, id) => {
+  return new Promise((resolve) => {
+    if (document.getElementById(id)) { resolve(); return; }
+    const s = document.createElement("script");
+    s.id = id; s.src = src; s.async = true;
+    s.onload = () => resolve();
+    s.onerror = () => resolve(); // 실패해도 앱은 계속
+    document.head.appendChild(s);
+  });
+};
+
+function KakaoAddressMap({ address, latitude, longitude, onAddressChange }) {
+  const mapRef = useRef(null);
+  const mapInstanceRef = useRef(null);
+  const markerRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [scriptsLoaded, setScriptsLoaded] = useState(false);
+
+  // 스크립트 로드
+  useEffect(() => {
+    (async () => {
+      await loadScript("//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js", "daum-postcode");
+      if (KAKAO_MAP_KEY && KAKAO_MAP_KEY !== "YOUR_KAKAO_JAVASCRIPT_KEY") {
+        await loadScript(`//dapi.kakao.com/v2/maps/sdk.js?appkey=${KAKAO_MAP_KEY}&libraries=services&autoload=false`, "kakao-maps");
+        if (window.kakao && window.kakao.maps) {
+          window.kakao.maps.load(() => setScriptsLoaded(true));
+        }
+      }
+    })();
+  }, []);
+
+  // 지도 초기화 + 업데이트
+  useEffect(() => {
+    if (!scriptsLoaded || !mapRef.current || !window.kakao?.maps) return;
+    const lat = latitude || 37.5665;
+    const lng = longitude || 126.978;
+    const pos = new window.kakao.maps.LatLng(lat, lng);
+
+    if (!mapInstanceRef.current) {
+      const map = new window.kakao.maps.Map(mapRef.current, { center: pos, level: 3 });
+      mapInstanceRef.current = map;
+      const marker = new window.kakao.maps.Marker({ position: pos, map });
+      markerRef.current = marker;
+      setMapReady(true);
+    } else {
+      mapInstanceRef.current.setCenter(pos);
+      markerRef.current.setPosition(pos);
+    }
+  }, [scriptsLoaded, latitude, longitude]);
+
+  // 주소 검색
+  const handleSearch = () => {
+    if (!window.daum?.Postcode) { alert("주소검색 스크립트를 로드할 수 없습니다."); return; }
+    new window.daum.Postcode({
+      oncomplete: (data) => {
+        const addr = data.roadAddress || data.jibunAddress;
+        // 좌표 변환
+        if (window.kakao?.maps?.services) {
+          const geocoder = new window.kakao.maps.services.Geocoder();
+          geocoder.addressSearch(addr, (result, status) => {
+            if (status === window.kakao.maps.services.Status.OK) {
+              onAddressChange(addr, parseFloat(result[0].y), parseFloat(result[0].x));
+            } else {
+              onAddressChange(addr, null, null);
+            }
+          });
+        } else {
+          onAddressChange(addr, null, null);
+        }
+      }
+    }).open();
+  };
+
+  const hasKey = KAKAO_MAP_KEY && KAKAO_MAP_KEY !== "YOUR_KAKAO_JAVASCRIPT_KEY";
+
+  return (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4, display: "block" }}>사업장 주소</label>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+        <input value={address || ""} readOnly placeholder="주소 검색 버튼을 클릭하세요"
+          style={{ ...inputStyle, fontSize: 12, padding: "7px 10px", flex: 1, background: "#f9f9f9", cursor: "default" }} />
+        <button onClick={handleSearch} style={{
+          background: C.navy, border: "none", borderRadius: 8, padding: "7px 14px",
+          fontSize: 11, fontWeight: 800, color: "#fff", cursor: "pointer", whiteSpace: "nowrap",
+          display: "flex", alignItems: "center", gap: 4
+        }}>📍 주소 검색</button>
+      </div>
+      {hasKey && (
+        <div ref={mapRef} style={{
+          width: "100%", height: latitude ? 200 : 0, borderRadius: 10,
+          border: latitude ? `1.5px solid ${C.border}` : "none",
+          overflow: "hidden", transition: "height 0.3s ease"
+        }} />
+      )}
+      {!hasKey && address && (
+        <a href={`https://map.kakao.com/link/search/${encodeURIComponent(address)}`} target="_blank" rel="noopener noreferrer"
+          style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: C.navy, fontWeight: 700, textDecoration: "none", padding: "6px 12px", background: "#EFF3FF", borderRadius: 6, marginTop: 2 }}>
+          🗺️ 카카오맵에서 보기 ↗
+        </a>
+      )}
+    </div>
   );
 }
 
@@ -5315,6 +5423,16 @@ function SiteManagementPage({ employees }) {
                     <BlurSaveNum value={toNum(detail.monthly_contract)} onSave={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fieldStyle, textAlign: "right" }} />
                   </div>
                 </div>
+                <KakaoAddressMap
+                  address={detail.address || ""}
+                  latitude={detail.latitude ? Number(detail.latitude) : null}
+                  longitude={detail.longitude ? Number(detail.longitude) : null}
+                  onAddressChange={(addr, lat, lng) => {
+                    updateDetail(sel.code, "address", addr);
+                    if (lat) updateDetail(sel.code, "latitude", lat);
+                    if (lng) updateDetail(sel.code, "longitude", lng);
+                  }}
+                />
                 <div>
                   <label style={labelStyle}>메모</label>
                   <textarea value={detail.memo || ""} onChange={e => updateDetail(sel.code, "memo", e.target.value)}
