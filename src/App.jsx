@@ -153,6 +153,46 @@ const sectionHeader = (title) => ({
   fontWeight: 800, borderRadius: "10px 10px 0 0", fontFamily: FONT,
 });
 
+// ── 3.5 커스텀 확인 모달 (ME.PARK 디자인) ─────────────
+const ConfirmCtx = createContext(null);
+function ConfirmProvider({ children }) {
+  const [state, setState] = useState(null); // { msg, sub, resolve }
+  const showConfirm = useCallback((msg, sub) => {
+    return new Promise(resolve => { setState({ msg, sub, resolve }); });
+  }, []);
+  const handleOk = () => { state?.resolve(true); setState(null); };
+  const handleCancel = () => { state?.resolve(false); setState(null); };
+  return (
+    <ConfirmCtx.Provider value={showConfirm}>
+      {children}
+      {state && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, fontFamily: FONT }}
+          onClick={handleCancel}>
+          <div style={{ background: "#fff", borderRadius: 16, width: 380, maxWidth: "90vw", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}
+            onClick={e => e.stopPropagation()}>
+            {/* 헤더 */}
+            <div style={{ background: C.navy, padding: "16px 24px", display: "flex", alignItems: "center", gap: 10 }}>
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: C.gold, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: C.navy }}>!</div>
+              <span style={{ color: "#fff", fontSize: 15, fontWeight: 800 }}>확인</span>
+            </div>
+            {/* 본문 */}
+            <div style={{ padding: "24px 24px 16px" }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: C.dark, lineHeight: 1.6 }}>{state.msg}</div>
+              {state.sub && <div style={{ fontSize: 12, color: C.gray, marginTop: 8 }}>{state.sub}</div>}
+            </div>
+            {/* 버튼 */}
+            <div style={{ display: "flex", gap: 10, padding: "8px 24px 20px", justifyContent: "flex-end" }}>
+              <button onClick={handleCancel} style={{ padding: "10px 24px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", color: C.gray }}>취소</button>
+              <button onClick={handleOk} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.error, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </ConfirmCtx.Provider>
+  );
+}
+const useConfirm = () => useContext(ConfirmCtx);
+
 // ── 4. 인증 컨텍스트 (Supabase Auth Mock) ─────────────
 const AuthCtx = createContext(null);
 
@@ -1297,6 +1337,7 @@ function Dashboard({ employees }) {
 // ── 11. 직원대장 ──────────────────────────────────────
 function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign, onReload }) {
   const { can } = useAuth();
+  const confirm = useConfirm();
   const [filter, setFilter] = useState({ site: "", cat: "", status: "재직", tax: "", search: "" });
   const [editEmp, setEditEmp] = useState(null);
   const [showForm, setShowForm] = useState(false);
@@ -1346,7 +1387,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   };
 
   const deleteEmp = async (id) => {
-    if (confirm("정말 삭제하시겠습니까?")) await deleteEmployee(id);
+    if (await confirm("정말 삭제하시겠습니까?", "직원 데이터가 삭제됩니다.")) await deleteEmployee(id);
   };
 
   return (
@@ -2726,6 +2767,7 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
 
 // ── 12-1. 계약서 이력 관리 ────────────────────────────
 function ContractHistory({ employees, onEditContract, onNewContract }) {
+  const confirm = useConfirm();
   const { can } = useAuth();
   const [contracts, setContracts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -2751,7 +2793,7 @@ function ContractHistory({ employees, onEditContract, onNewContract }) {
 
   const deleteContract = async (id) => {
     if (!can("edit")) return;
-    if (!confirm("이 계약서 이력을 삭제하시겠습니까?")) return;
+    if (!(await confirm("이 계약서 이력을 삭제하시겠습니까?", "삭제 후 복구할 수 없습니다."))) return;
     const { error } = await supabase.from("contracts").delete().eq("id", id);
     if (!error) loadContracts();
   };
@@ -2999,6 +3041,7 @@ const detailRow = { fontSize: 12, marginBottom: 4, color: C.dark };
 // ── 13. 관리자 초대 관리 ──────────────────────────────
 function AdminInvitePanel() {
   const { profiles, invitations, sendInvite, cancelInvite, resendInvite, removeAdmin, updateRole, user } = useAuth();
+  const confirm = useConfirm();
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [newEmail, setNewEmail] = useState("");
   const [newRole, setNewRole] = useState("admin");
@@ -3144,7 +3187,7 @@ function AdminInvitePanel() {
                         style={{ fontSize: 11, padding: "2px 4px", border: `1px solid ${C.border}`, borderRadius: 4, marginRight: 6 }}>
                         {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
-                      <button onClick={() => { if (confirm(`${p.name}님을 제거하시겠습니까?`)) removeAdmin(p.id); }}
+                      <button onClick={async () => { if (await confirm(`${p.name}님을 제거하시겠습니까?`, "관리자 목록에서 제거됩니다.")) removeAdmin(p.id); }}
                         style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>🗑</button>
                     </>
                   )}
@@ -3723,6 +3766,7 @@ function parseCashReceipt(wb) {
 }
 
 function FinancialImportPage({ onImportComplete }) {
+  const confirm = useConfirm();
   const [files, setFiles] = useState([]);
   const [parsedFiles, setParsedFiles] = useState([]);
   const [importing, setImporting] = useState(false);
@@ -3901,7 +3945,7 @@ function FinancialImportPage({ onImportComplete }) {
   };
 
   const handleDeleteBatch = async (batchId) => {
-    if (!window.confirm("이 Import 배치의 모든 데이터를 삭제하시겠습니까?")) return;
+    if (!(await confirm("이 Import 배치의 모든 데이터를 삭제하시겠습니까?", "삭제 후 복구할 수 없습니다."))) return;
     await supabase.from("financial_transactions").delete().eq("import_batch", batchId);
     setImportHistory(h => h.filter(x => x.batch !== batchId));
   };
@@ -4106,6 +4150,7 @@ const pFmtFull = (n) => (n == null || n === "" || isNaN(n)) ? "0" : Math.round(N
 const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
 function ProfitabilityPage({ employees, subPage, profitState }) {
+  const confirm = useConfirm();
   const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
@@ -4300,10 +4345,10 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
     });
     saveOverheadToDB?.(currentMonth, newItem.key, newItem.label, newItem.amount, newItem.method);
   };
-  const removeOverheadItem = (idx) => {
+  const removeOverheadItem = async (idx) => {
     const arr = [...(overheadData[currentMonth] || [])];
     const removed = arr[idx];
-    if (!window.confirm(`"${removed?.label || "항목"}" 간접비를 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.`)) return;
+    if (!(await confirm(`"${removed?.label || "항목"}" 간접비를 삭제하시겠습니까?`, "삭제 후 복구할 수 없습니다."))) return;
     arr.splice(idx, 1);
     setOverheadData(p => ({ ...p, [currentMonth]: arr }));
     // ★ Phase C: DB에서도 삭제
@@ -4833,6 +4878,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
 
 // ── 16-2. 사업장 현황 관리 ─────────────────────────────
 function SiteManagementPage({ employees }) {
+  const confirm = useConfirm();
   const [selectedSite, setSelectedSite] = useState(null);
   const [siteDetails, setSiteDetails] = useState({});
   const [siteParking, setSiteParking] = useState({});
@@ -4900,7 +4946,7 @@ function SiteManagementPage({ employees }) {
 
   // 사업장 삭제 (커스텀만)
   const handleDeleteSite = async (code) => {
-    if (!window.confirm(`"${code}" 사업장을 삭제하시겠습니까?\n관련 외부주차장 데이터도 함께 삭제됩니다.`)) return;
+    if (!(await confirm(`"${code}" 사업장을 삭제하시겠습니까?`, "관련 외부주차장 데이터도 함께 삭제됩니다."))) return;
     await supabase.from("site_details").delete().eq("site_code", code);
     await supabase.from("site_parking").delete().eq("site_code", code);
     setCustomSites(p => p.filter(s => s.code !== code));
@@ -5127,6 +5173,7 @@ function SiteManagementPage({ employees }) {
 
 // ── 16-2-1. 월주차 관리 시스템 ──────────────────────────
 function MonthlyParkingPage({ employees }) {
+  const confirm = useConfirm();
   const [parkingList, setParkingList] = useState([]);
   const [selectedSite, setSelectedSite] = useState("ALL");
   const [showForm, setShowForm] = useState(false);
@@ -5189,7 +5236,7 @@ function MonthlyParkingPage({ employees }) {
     }
   };
   const handleDelete = async (id) => {
-    if (!window.confirm("삭제하시겠습니까?")) return;
+    if (!(await confirm("삭제하시겠습니까?", "월주차 계약 정보가 삭제됩니다."))) return;
     const { error } = await supabase.from("monthly_parking").delete().eq("id", id);
     if (error) { alert("삭제 실패: " + error.message); return; }
     setParkingList(p => p.filter(item => item.id !== id));
@@ -6403,9 +6450,11 @@ export default function App() {
   }, []);
 
   return (
-    <AuthProvider>
-      <AppRouter />
-    </AuthProvider>
+    <ConfirmProvider>
+      <AuthProvider>
+        <AppRouter />
+      </AuthProvider>
+    </ConfirmProvider>
   );
 }
 
