@@ -4142,7 +4142,10 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "6px 8px 10px" }} />
 
           {/* HR & 계약관리 영역 */}
-          <div style={{ padding: "8px 12px", fontSize: 11, fontWeight: 900, color: C.gold, letterSpacing: 1.5, marginBottom: 6, background: "rgba(255,255,255,0.08)", borderRadius: 6, borderLeft: `3px solid ${C.gold}` }}>HR & 계약관리</div>
+          <div style={{ margin: "4px 4px 8px", padding: "7px 12px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>HR & 계약관리</span>
+          </div>
           {hrNavItems.map(item => (
             <button key={item.key} onClick={() => { setPage(item.key); if (item.key !== "contract") { setContractEmp(null); setContractEdit(null); } }}
               style={{
@@ -4160,7 +4163,10 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
 
           {/* 수익성 분석 영역 */}
-          <div style={{ padding: "8px 12px", fontSize: 11, fontWeight: 900, color: C.gold, letterSpacing: 1.5, marginBottom: 6, background: "rgba(255,255,255,0.08)", borderRadius: 6, borderLeft: `3px solid ${C.gold}` }}>수익성 분석</div>
+          <div style={{ margin: "4px 4px 8px", padding: "7px 12px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
+            <span style={{ fontSize: 11, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>수익성 분석</span>
+          </div>
           {profitNavItems.map(item => (
             <button key={item.key} onClick={() => setPage(item.key)}
               style={{
