@@ -299,6 +299,57 @@ function AuthProvider({ children }) {
     setUser(null); setProfiles([]); setInvitations([]);
   };
 
+  // ── 계정 직접 생성 (슈퍼관리자 전용) ──
+  const createAccount = async (name, email, password, role) => {
+    try {
+      // 이미 등록된 사용자 체크
+      const existingProfile = profiles.find(p => p.email === email);
+      if (existingProfile) return { error: "이미 등록된 관리자입니다." };
+
+      // 현재 관리자 세션 백업
+      const { data: { session: adminSession } } = await supabase.auth.getSession();
+
+      // 새 계정 생성
+      const { data: authData, error } = await supabase.auth.signUp({
+        email, password,
+        options: { data: { name } }
+      });
+      if (error) return { error: error.message };
+
+      // 프로필 생성
+      if (authData?.user) {
+        await supabase.from("profiles").upsert({
+          id: authData.user.id, email, name, role,
+          created_at: new Date().toISOString(),
+        }, { onConflict: "id" });
+      }
+
+      // 관리자 세션 복원 (signUp이 자동 로그인하므로)
+      if (adminSession) {
+        await supabase.auth.setSession({
+          access_token: adminSession.access_token,
+          refresh_token: adminSession.refresh_token,
+        });
+      }
+
+      await loadData();
+      return { error: null };
+    } catch (e) {
+      return { error: e.message || "계정 생성 중 오류가 발생했습니다." };
+    }
+  };
+
+  // ── 비밀번호 변경 ──
+  const changePassword = async (newPassword) => {
+    try {
+      const { error } = await supabase.auth.updateUser({ password: newPassword });
+      if (error) return { error: error.message };
+      return { error: null };
+    } catch (e) {
+      return { error: e.message || "비밀번호 변경 중 오류가 발생했습니다." };
+    }
+  };
+
   const sendInvite = async (email, role) => {
     try {
       // 중복 초대 체크 (동일 이메일 pending 상태)
@@ -366,7 +417,7 @@ function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider value={{
-      user, profile, loading, signIn, signUp, signOut, sendInvite,
+      user, profile, loading, signIn, signUp, signOut, createAccount, changePassword, sendInvite,
       cancelInvite, resendInvite, removeAdmin, updateRole,
       profiles, invitations, can, loadData,
     }}>
@@ -528,7 +579,6 @@ function LoginPage() {
   const [pw, setPw] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [showInvite, setShowInvite] = useState(false);
 
   const handleLogin = async () => {
     setLoading(true); setError("");
@@ -537,15 +587,13 @@ function LoginPage() {
     setLoading(false);
   };
 
-  if (showInvite) return <InviteAcceptPage onBack={() => setShowInvite(false)} />;
-
   return (
     <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${C.navy} 0%, #0a1a5c 100%)`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
       <div style={{ width: 400, maxWidth: "90vw" }}>
         <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div style={{ width: 64, height: 64, borderRadius: 16, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 900, color: C.navy, marginBottom: 12 }}>MP</div>
           <h1 style={{ color: C.white, fontSize: 22, fontWeight: 900, margin: 0 }}>ME.PARK</h1>
-          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, margin: "4px 0 0" }}>근로계약서 관리 시스템</p>
+          <p style={{ color: "rgba(255,255,255,0.5)", fontSize: 13, margin: "4px 0 0" }}>ERP 시스템</p>
         </div>
 
         <div style={{ background: C.white, borderRadius: 16, padding: 32, boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
@@ -571,11 +619,9 @@ function LoginPage() {
             {loading ? "로그인 중..." : "로그인"}
           </button>
 
-          <div style={{ textAlign: "center", marginTop: 20 }}>
-            <button onClick={() => setShowInvite(true)} style={{ background: "none", border: "none", color: C.navy, fontSize: 13, fontWeight: 600, cursor: "pointer", textDecoration: "underline" }}>
-              초대 코드로 가입하기
-            </button>
-          </div>
+          <p style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.gray }}>
+            계정이 없으시면 슈퍼관리자에게 문의하세요.
+          </p>
         </div>
       </div>
     </div>
@@ -583,88 +629,6 @@ function LoginPage() {
 }
 
 // ── 7. 초대 수락 / 회원가입 페이지 ────────────────────
-function InviteAcceptPage({ onBack }) {
-  const { signUp } = useAuth();
-  const [invCode, setInvCode] = useState("");
-  const [step, setStep] = useState("code");
-  const [inv, setInv] = useState(null);
-  const [email, setEmail] = useState("");
-  const [name, setName] = useState("");
-  const [pw, setPw] = useState("");
-  const [pw2, setPw2] = useState("");
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-
-  const verifyCode = async () => {
-    setError("");
-    const { data, error: e } = await supabase.from("invitations")
-      .select("*").eq("token", invCode).eq("status", "pending").single();
-    if (e || !data) { setError("유효하지 않은 초대 코드입니다."); return; }
-    if (new Date(data.expires_at) < new Date()) { setError("만료된 초대입니다."); return; }
-    setInv(data); setEmail(data.email); setStep("signup");
-  };
-
-  const handleSignup = async () => {
-    if (!name.trim()) { setError("이름을 입력하세요."); return; }
-    if (pw.length < 6) { setError("비밀번호 6자 이상 입력하세요."); return; }
-    if (pw !== pw2) { setError("비밀번호가 일치하지 않습니다."); return; }
-    setLoading(true); setError("");
-    const { error: e } = await signUp(inv.email, pw, name, inv.token);
-    if (e) setError(e);
-    setLoading(false);
-  };
-
-  return (
-    <div style={{ minHeight: "100vh", background: `linear-gradient(135deg, ${C.navy} 0%, #0a1a5c 100%)`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>
-      <div style={{ width: 420, maxWidth: "90vw" }}>
-        <div style={{ textAlign: "center", marginBottom: 24 }}>
-          <div style={{ width: 56, height: 56, borderRadius: 14, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 900, color: C.navy, marginBottom: 8 }}>MP</div>
-          <h1 style={{ color: C.white, fontSize: 20, fontWeight: 900, margin: 0 }}>초대 수락 & 가입</h1>
-        </div>
-
-        <div style={{ background: C.white, borderRadius: 16, padding: 32 }}>
-          {error && <div style={{ background: "#FEE2E2", color: C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{error}</div>}
-
-          {step === "code" ? (
-            <>
-              <p style={{ fontSize: 13, color: C.gray, marginBottom: 20 }}>관리자로부터 받은 초대 코드를 입력하세요.</p>
-              <input value={invCode} onChange={e => setInvCode(e.target.value)} placeholder="초대 코드 입력" style={{ ...inputStyle, padding: "12px 14px", marginBottom: 16 }} />
-              <button onClick={verifyCode} style={{ ...btnPrimary, width: "100%", padding: 14 }}>초대 확인</button>
-            </>
-          ) : (
-            <>
-              <div style={{ background: "#EFF6FF", padding: 14, borderRadius: 10, marginBottom: 20 }}>
-                <div style={{ fontSize: 12, color: C.navy, fontWeight: 700 }}>✅ 초대 확인 완료</div>
-                <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>이메일: {inv.email} · 역할: {ROLES[inv.role]}</div>
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>이름</label>
-                <input value={name} onChange={e => setName(e.target.value)} placeholder="홍길동" style={{ ...inputStyle, padding: "12px 14px" }} />
-              </div>
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호</label>
-                <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="6자 이상" style={{ ...inputStyle, padding: "12px 14px" }} />
-              </div>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호 확인</label>
-                <input type="password" value={pw2} onChange={e => setPw2(e.target.value)} placeholder="비밀번호 재입력" style={{ ...inputStyle, padding: "12px 14px" }} />
-              </div>
-              <button onClick={handleSignup} disabled={loading}
-                style={{ ...btnPrimary, width: "100%", padding: 14, opacity: loading ? 0.6 : 1 }}>
-                {loading ? "가입 중..." : "가입 완료"}
-              </button>
-            </>
-          )}
-
-          <div style={{ textAlign: "center", marginTop: 16 }}>
-            <button onClick={onBack} style={{ background: "none", border: "none", color: C.gray, fontSize: 12, cursor: "pointer" }}>← 로그인으로 돌아가기</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 // ── 8. 직원 데이터는 Supabase DB에서 로드 ──────────────
 
 // ── 9. 기본 조항 텍스트 ───────────────────────────────
@@ -3167,117 +3131,199 @@ function ContractHistory({ employees, onEditContract, onNewContract }) {
 
 const detailRow = { fontSize: 12, marginBottom: 4, color: C.dark };
 
-// ── 13. 관리자 초대 관리 ──────────────────────────────
+// ── 13. 관리자 계정 관리 ──────────────────────────────
 function AdminInvitePanel() {
-  const { profiles, invitations, sendInvite, cancelInvite, resendInvite, removeAdmin, updateRole, user } = useAuth();
+  const { profiles, createAccount, removeAdmin, updateRole, user, changePassword } = useAuth();
   const confirm = useConfirm();
-  const [showInviteForm, setShowInviteForm] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showPwChange, setShowPwChange] = useState(false);
+  const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
+  const [newPw, setNewPw] = useState("");
   const [newRole, setNewRole] = useState("admin");
   const [msg, setMsg] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createdInfo, setCreatedInfo] = useState(null); // 생성 완료 후 정보 표시
 
-  const APP_URL = window.location.origin;
+  // 비밀번호 변경 state
+  const [changePw, setChangePw] = useState("");
+  const [changePw2, setChangePw2] = useState("");
+  const [pwMsg, setPwMsg] = useState("");
 
-  const handleSend = async () => {
+  const handleCreate = async () => {
+    if (!newName.trim()) { setMsg("이름을 입력하세요."); return; }
     if (!newEmail.includes("@")) { setMsg("유효한 이메일을 입력하세요."); return; }
-    const { error, invitation } = await sendInvite(newEmail, newRole);
+    if (newPw.length < 6) { setMsg("비밀번호는 6자 이상이어야 합니다."); return; }
+    setCreating(true); setMsg("");
+    const { error } = await createAccount(newName, newEmail, newPw, newRole);
+    setCreating(false);
     if (error) { setMsg(error); return; }
-
-    const token = invitation?.token || "";
-    const roleName = ROLES[newRole] || newRole;
-
-    // 이메일 자동 작성 (Gmail 새 창)
-    const subject = encodeURIComponent(`[ME.PARK] 근로계약서 관리 시스템 관리자 초대`);
-    const body = encodeURIComponent(
-`안녕하세요,
-
-(주)미스터팍 ME.PARK 근로계약서 관리 시스템에 ${roleName}(으)로 초대합니다.
-
-━━━━━━━━━━━━━━━━━━━━━━
-📌 초대 코드: ${token}
-🔗 가입 링크: ${APP_URL}
-━━━━━━━━━━━━━━━━━━━━━━
-
-[가입 방법]
-1. 위 가입 링크 접속
-2. "초대 코드로 가입하기" 클릭
-3. 초대 코드 입력 → 이름/비밀번호 설정 → 완료
-
-※ 초대 유효기간: 7일
-※ 문의: 1899-1871
-
-주식회사 미스터팍`
-    );
-
-    window.open(`https://mail.google.com/mail/?view=cm&to=${newEmail}&su=${subject}&body=${body}`, "_blank");
-
-    setMsg(`✅ 초대 생성 완료! 이메일 작성 창이 열렸습니다. (초대코드: ${token})`);
-    setNewEmail(""); setShowInviteForm(false);
+    setCreatedInfo({ name: newName, email: newEmail, password: newPw, role: newRole });
+    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole("admin");
   };
 
-  const copyToken = (token) => {
-    navigator.clipboard.writeText(token).then(() => {
-      setMsg("✅ 초대 코드가 클립보드에 복사되었습니다.");
+  const handlePwChange = async () => {
+    if (changePw.length < 6) { setPwMsg("비밀번호는 6자 이상이어야 합니다."); return; }
+    if (changePw !== changePw2) { setPwMsg("비밀번호가 일치하지 않습니다."); return; }
+    const { error } = await changePassword(changePw);
+    if (error) { setPwMsg(error); return; }
+    setPwMsg("✅ 비밀번호가 변경되었습니다.");
+    setChangePw(""); setChangePw2("");
+    setTimeout(() => { setPwMsg(""); setShowPwChange(false); }, 1500);
+  };
+
+  const copyText = (text, label) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setMsg(`✅ ${label} 복사 완료`);
       setTimeout(() => setMsg(""), 2000);
     });
   };
 
-  const getInvStatus = (inv) => {
-    if (inv.status === "pending" && new Date(inv.expires_at) < new Date()) return "expired";
-    return inv.status;
+  const closeCreateForm = () => {
+    setShowCreateForm(false); setCreatedInfo(null); setMsg("");
+    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole("admin");
   };
-
-  const statusStyle = (status) => ({
-    padding: "3px 10px", borderRadius: 10, fontSize: 11, fontWeight: 700,
-    background: status === "pending" ? "#FFF3E0" : status === "accepted" ? "#E8F5E9" : status === "cancelled" ? "#FFEBEE" : status === "expired" ? "#F3E5F5" : "#F5F5F5",
-    color: status === "pending" ? C.orange : status === "accepted" ? C.success : status === "cancelled" ? C.error : status === "expired" ? "#7B1FA2" : C.gray,
-  });
-
-  const statusLabel = { pending: "대기", accepted: "수락", cancelled: "취소", expired: "만료" };
 
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>🔐 관리자 초대 관리</h2>
-        <button onClick={() => setShowInviteForm(true)} style={btnPrimary}>+ 새 초대 보내기</button>
+        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>🔐 관리자 계정 관리</h2>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={() => setShowPwChange(true)} style={btnOutline}>🔑 비밀번호 변경</button>
+          <button onClick={() => setShowCreateForm(true)} style={btnPrimary}>+ 계정 생성</button>
+        </div>
       </div>
 
-      {msg && <div style={{ background: msg.startsWith("✅") ? "#E8F5E9" : "#FEE2E2", color: msg.startsWith("✅") ? C.success : C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{msg}</div>}
+      {msg && !showCreateForm && <div style={{ background: msg.startsWith("✅") ? "#E8F5E9" : "#FEE2E2", color: msg.startsWith("✅") ? C.success : C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{msg}</div>}
 
-      {/* 초대 폼 모달 */}
-      {showInviteForm && (
+      {/* 계정 생성 모달 */}
+      {showCreateForm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
-          onClick={() => setShowInviteForm(false)}>
-          <div style={{ background: C.white, borderRadius: 16, padding: 28, width: 440 }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontSize: 16, fontWeight: 900, color: C.navy, margin: "0 0 20px" }}>✉️ 관리자 초대</h3>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>이메일 주소</label>
-              <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="name@example.com" style={{ ...inputStyle, padding: "12px 14px" }} />
-            </div>
-            <div style={{ marginBottom: 20 }}>
-              <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>역할 지정</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                {Object.entries(ROLES).map(([key, label]) => (
-                  <button key={key} onClick={() => setNewRole(key)}
-                    style={{
-                      flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 700, border: `2px solid ${newRole === key ? C.navy : C.border}`,
-                      background: newRole === key ? C.navy : C.white, color: newRole === key ? C.white : C.gray,
-                    }}>
-                    {label}
-                    <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>
-                      {key === "super_admin" ? "전체 권한" : key === "admin" ? "편집 권한" : "읽기 전용"}
-                    </div>
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-              <button onClick={() => setShowInviteForm(false)} style={btnOutline}>취소</button>
-              <button onClick={handleSend} style={btnPrimary}>초대 발송</button>
+          onClick={closeCreateForm}>
+          <div style={{ background: C.white, borderRadius: 16, padding: 0, width: 460, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            {/* 모달 헤더 */}
+            <div style={{ background: C.navy, padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 20 }}>🔑</span>
+              <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>관리자 계정 생성</h3>
             </div>
 
-            <div style={{ marginTop: 16, padding: 12, background: C.bg, borderRadius: 8, fontSize: 11, color: C.gray }}>
-              💡 초대 메일에 가입 링크가 포함됩니다. 유효기간: 7일
+            <div style={{ padding: 24 }}>
+              {!createdInfo ? (
+                <>
+                  {msg && <div style={{ background: "#FEE2E2", color: C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{msg}</div>}
+
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>이름 *</label>
+                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="홍길동" style={{ ...inputStyle, padding: "12px 14px" }} />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>이메일 주소 *</label>
+                    <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="example@email.com" style={{ ...inputStyle, padding: "12px 14px" }} />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>비밀번호 * <span style={{ fontWeight: 400, color: C.gray }}>(6자 이상)</span></label>
+                    <input type="text" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="초기 비밀번호 입력" style={{ ...inputStyle, padding: "12px 14px", fontFamily: "monospace" }} />
+                    <p style={{ fontSize: 11, color: C.orange, marginTop: 4, fontWeight: 600 }}>⚠️ 생성 후 본인에게 비밀번호를 전달해주세요</p>
+                  </div>
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 8, display: "block" }}>역할 *</label>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      {Object.entries(ROLES).map(([key, label]) => (
+                        <button key={key} onClick={() => setNewRole(key)}
+                          style={{
+                            flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 700,
+                            border: `2px solid ${newRole === key ? C.navy : C.border}`,
+                            background: newRole === key ? C.navy : C.white, color: newRole === key ? C.white : C.gray,
+                            transition: "all 0.15s",
+                          }}>
+                          {label}
+                          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>
+                            {key === "super_admin" ? "전체 권한" : key === "admin" ? "편집 권한" : "읽기 전용"}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                    <button onClick={closeCreateForm} style={btnOutline}>취소</button>
+                    <button onClick={handleCreate} disabled={creating} style={{ ...btnPrimary, opacity: creating ? 0.6 : 1 }}>
+                      {creating ? "생성 중..." : "계정 생성"}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* 생성 완료 */}
+                  <div style={{ textAlign: "center", marginBottom: 20 }}>
+                    <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#E8F5E9", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 10 }}>✅</div>
+                    <h4 style={{ fontSize: 16, fontWeight: 800, color: C.dark, margin: 0 }}>계정 생성 완료!</h4>
+                    <p style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>아래 정보를 본인에게 전달해주세요.</p>
+                  </div>
+
+                  <div style={{ background: "#F8FAFC", border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                    {[
+                      ["이름", createdInfo.name],
+                      ["이메일", createdInfo.email],
+                      ["비밀번호", createdInfo.password],
+                      ["역할", ROLES[createdInfo.role]],
+                    ].map(([label, value]) => (
+                      <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}` }}>
+                        <div>
+                          <span style={{ fontSize: 11, color: C.gray }}>{label}</span>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, fontFamily: label === "비밀번호" ? "monospace" : "inherit" }}>{value}</div>
+                        </div>
+                        <button onClick={() => copyText(value, label)} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 11, color: C.gray }}>
+                          📋 복사
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button onClick={() => {
+                    const text = `[ME.PARK ERP 계정 정보]\n이름: ${createdInfo.name}\n이메일: ${createdInfo.email}\n비밀번호: ${createdInfo.password}\n로그인: ${window.location.origin}\n\n※ 로그인 후 비밀번호를 변경해주세요.`;
+                    navigator.clipboard.writeText(text);
+                    setMsg("✅ 전체 계정 정보가 복사되었습니다.");
+                  }} style={{ ...btnOutline, width: "100%", marginBottom: 10, padding: 12 }}>
+                    📋 전체 정보 복사 (전달용)
+                  </button>
+
+                  {msg && <div style={{ background: "#E8F5E9", color: C.success, padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 10, textAlign: "center" }}>{msg}</div>}
+
+                  <button onClick={closeCreateForm} style={{ ...btnPrimary, width: "100%", padding: 12 }}>
+                    닫기
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 비밀번호 변경 모달 */}
+      {showPwChange && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
+          onClick={() => { setShowPwChange(false); setPwMsg(""); setChangePw(""); setChangePw2(""); }}>
+          <div style={{ background: C.white, borderRadius: 16, padding: 0, width: 400 }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: C.navy, padding: "16px 24px", borderRadius: "16px 16px 0 0" }}>
+              <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>🔑 비밀번호 변경</h3>
+            </div>
+            <div style={{ padding: 24 }}>
+              {pwMsg && <div style={{ background: pwMsg.startsWith("✅") ? "#E8F5E9" : "#FEE2E2", color: pwMsg.startsWith("✅") ? C.success : C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{pwMsg}</div>}
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>새 비밀번호</label>
+                <input type="password" value={changePw} onChange={e => setChangePw(e.target.value)} placeholder="6자 이상" style={{ ...inputStyle, padding: "12px 14px" }} />
+              </div>
+              <div style={{ marginBottom: 20 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>비밀번호 확인</label>
+                <input type="password" value={changePw2} onChange={e => setChangePw2(e.target.value)} placeholder="비밀번호 재입력"
+                  style={{ ...inputStyle, padding: "12px 14px" }}
+                  onKeyDown={e => e.key === "Enter" && handlePwChange()} />
+              </div>
+              <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                <button onClick={() => { setShowPwChange(false); setPwMsg(""); setChangePw(""); setChangePw2(""); }} style={btnOutline}>취소</button>
+                <button onClick={handlePwChange} style={btnPrimary}>변경</button>
+              </div>
             </div>
           </div>
         </div>
@@ -3285,11 +3331,13 @@ function AdminInvitePanel() {
 
       {/* 현재 관리자 목록 */}
       <div style={cardStyle}>
-        <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: "0 0 14px" }}>👤 현재 관리자</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>👤 등록된 관리자 ({profiles.length}명)</h3>
+        </div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: C.navy }}>
-              {["이름", "이메일", "역할", "가입일", "액션"].map(h => (
+              {["이름", "이메일", "역할", "가입일", "관리"].map(h => (
                 <th key={h} style={{ padding: "8px 10px", color: C.white, fontWeight: 700, textAlign: "center" }}>{h}</th>
               ))}
             </tr>
@@ -3310,17 +3358,18 @@ function AdminInvitePanel() {
                 </td>
                 <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{fmtDate(p.created_at)}</td>
                 <td style={{ padding: "8px 10px", textAlign: "center" }}>
-                  {p.id !== user?.id && (
-                    <>
+                  {p.id !== user?.id ? (
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
-                        style={{ fontSize: 11, padding: "2px 4px", border: `1px solid ${C.border}`, borderRadius: 4, marginRight: 6 }}>
+                        style={{ fontSize: 11, padding: "2px 4px", border: `1px solid ${C.border}`, borderRadius: 4 }}>
                         {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                       </select>
                       <button onClick={async () => { if (await confirm(`${p.name}님을 제거하시겠습니까?`, "관리자 목록에서 제거됩니다.")) removeAdmin(p.id); }}
                         style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>🗑</button>
-                    </>
+                    </div>
+                  ) : (
+                    <span style={{ fontSize: 11, color: C.gray }}>나</span>
                   )}
-                  {p.id === user?.id && <span style={{ fontSize: 11, color: C.gray }}>나</span>}
                 </td>
               </tr>
             ))}
@@ -3328,56 +3377,13 @@ function AdminInvitePanel() {
         </table>
       </div>
 
-      {/* 초대 현황 */}
-      <div style={cardStyle}>
-        <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: "0 0 14px" }}>✉️ 초대 현황</h3>
-        {invitations.length === 0 ? (
-          <p style={{ color: C.gray, fontSize: 13, textAlign: "center", padding: 20 }}>발송된 초대가 없습니다.</p>
-        ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-            <thead>
-              <tr style={{ background: C.navy }}>
-                {["이메일", "역할", "상태", "초대코드", "발송일", "만료일", "액션"].map(h => (
-                  <th key={h} style={{ padding: "8px 10px", color: C.white, fontWeight: 700, textAlign: "center" }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {invitations.map((inv, i) => {
-                const st = getInvStatus(inv);
-                return (
-                <tr key={inv.id} style={{ background: i % 2 ? C.bg : C.white, opacity: st === "cancelled" ? 0.5 : 1 }}>
-                  <td style={{ padding: "8px 10px" }}>{inv.email}</td>
-                  <td style={{ padding: "8px 10px", textAlign: "center" }}>{ROLES[inv.role]}</td>
-                  <td style={{ padding: "8px 10px", textAlign: "center" }}><span style={statusStyle(st)}>{statusLabel[st]}</span></td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", fontFamily: "monospace", fontSize: 10, color: C.navy, fontWeight: 700 }}>
-                    {inv.token?.slice(0, 8)}...
-                    <button onClick={() => copyToken(inv.token)} title="코드 복사" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, marginLeft: 4 }}>📋</button>
-                  </td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{fmtDateTime(inv.created_at)}</td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", color: st === "expired" ? C.error : C.gray, fontWeight: st === "expired" ? 700 : 400 }}>{fmtDate(inv.expires_at)}{st === "expired" ? " (만료)" : ""}</td>
-                  <td style={{ padding: "8px 10px", textAlign: "center", whiteSpace: "nowrap" }}>
-                    {(st === "pending" || st === "expired") && (
-                      <>
-                        <button onClick={async () => {
-                          await resendInvite(inv.id);
-                          const subject = encodeURIComponent(`[ME.PARK] 관리자 초대 (재발송)`);
-                          const body = encodeURIComponent(`안녕하세요,\n\nME.PARK 관리 시스템 초대를 재발송합니다.\n\n📌 초대 코드: ${inv.token}\n🔗 가입 링크: ${APP_URL}\n\n※ 유효기간이 7일 연장되었습니다.\n\n주식회사 미스터팍`);
-                          window.open(`https://mail.google.com/mail/?view=cm&to=${inv.email}&su=${subject}&body=${body}`, "_blank");
-                        }} title={st === "expired" ? "만료됨 - 재발송하여 연장" : "재발송"} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13, marginRight: 4 }}>🔄</button>
-                        <button onClick={() => cancelInvite(inv.id)} title="취소" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>❌</button>
-                      </>
-                    )}
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-        <div style={{ fontSize: 11, color: C.gray, marginTop: 10, display: "flex", gap: 12 }}>
-          <span>● 초대 코드: 가입 시 사용 (유효기간 7일)</span>
-          <span>● 재발송: 만료일 갱신</span>
+      {/* 안내 */}
+      <div style={{ ...cardStyle, background: "#F0F4FF", border: `1px solid #D0D8F0` }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginBottom: 8 }}>💡 관리자 계정 안내</div>
+        <div style={{ fontSize: 11, color: C.gray, lineHeight: 1.8 }}>
+          • 슈퍼관리자가 직접 계정을 생성하고, 이메일/비밀번호를 본인에게 전달합니다.<br/>
+          • 관리자는 로그인 후 「🔑 비밀번호 변경」으로 비밀번호를 변경할 수 있습니다.<br/>
+          • 슈퍼관리자: 전체 권한 · 일반관리자: 편집 권한 · 뷰어: 읽기 전용
         </div>
       </div>
     </div>
@@ -6407,7 +6413,7 @@ function MainApp() {
     { key: "resignation", icon: "📄", label: "사직서" },
     { key: "certificate", icon: "📑", label: "재직증명서" },
     ...(can("settings") ? [{ key: "settings", icon: "⚙️", label: "계약서 조항변경" }] : []),
-    ...(can("invite") ? [{ key: "invite", icon: "🔐", label: "관리자 초대" }] : []),
+    ...(can("invite") ? [{ key: "invite", icon: "🔐", label: "관리자 계정" }] : []),
   ];
 
   const profitNavItems = [
