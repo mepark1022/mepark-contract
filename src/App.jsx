@@ -4303,6 +4303,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const removeOverheadItem = (idx) => {
     const arr = [...(overheadData[currentMonth] || [])];
     const removed = arr[idx];
+    if (!window.confirm(`"${removed?.label || "항목"}" 간접비를 삭제하시겠습니까?\n삭제 후 복구할 수 없습니다.`)) return;
     arr.splice(idx, 1);
     setOverheadData(p => ({ ...p, [currentMonth]: arr }));
     // ★ Phase C: DB에서도 삭제
