@@ -471,7 +471,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
   const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [] } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
-  const [chartPeriod, setChartPeriod] = useState("3m"); // ★ Phase C
+  const [chartPeriod, setChartPeriod] = useState("mtd"); // ★ Phase C: 기본 이번달
 
   // ★ Phase B: 기간선택 → 대상 월 목록 계산
   const periodMonths = useMemo(() => {
@@ -827,13 +827,20 @@ function MainDashboard({ employees, onNavigate, profitState }) {
         <div style={{ ...cardStyle, marginBottom: 20 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
             <h3 style={{ fontSize: 15, fontWeight: 800, color: C.dark, margin: 0 }}>📈 현금흐름 차트</h3>
-            <div style={{ display: "flex", gap: 4 }}>
-              {[["3m", "3개월"], ["6m", "6개월"], ["12m", "12개월"], ["mtd", "MTD"], ["ytd", "YTD"]].map(([k, v]) => (
-                <button key={k} onClick={() => setChartPeriod(k)} style={{
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              {[
+                ["mtd", "이번달", "이번 달 1일부터 오늘까지 (일별 집계)"],
+                ["3m", "3개월", "최근 3개월 주별 집계 (월~일 단위)"],
+                ["6m", "6개월", "최근 6개월 월별 집계"],
+                ["12m", "12개월", null],
+                ["ytd", "YTD", null],
+              ].map(([k, v, tip]) => (
+                <button key={k} onClick={() => setChartPeriod(k)} title={tip || undefined} style={{
                   padding: "5px 12px", borderRadius: 7, fontSize: 11, fontWeight: 700, cursor: "pointer",
                   border: `1.5px solid ${chartPeriod === k ? C.navy : C.border}`,
                   background: chartPeriod === k ? C.navy : "#fff",
                   color: chartPeriod === k ? "#fff" : C.gray,
+                  position: "relative",
                 }}>{v}</button>
               ))}
             </div>
