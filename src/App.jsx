@@ -4953,13 +4953,15 @@ function MonthlyParkingPage({ employees }) {
   const [form, setForm] = useState({ site_code: "", car_number: "", customer_name: "", phone: "", contract_start: "", contract_end: "", monthly_fee: 0, memo: "" });
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase.from("monthly_parking").select("*").order("contract_end", { ascending: true });
+  const loadParking = async () => {
+    try {
+      const { data, error } = await supabase.from("monthly_parking").select("*").order("contract_end", { ascending: true });
+      if (error) { console.error("월주차 로드 실패:", error.message); alert("월주차 데이터 로드 실패: " + error.message); }
       if (data) setParkingList(data);
-      setLoading(false);
-    })();
-  }, []);
+    } catch (e) { console.error("월주차 로드 에러:", e); }
+    setLoading(false);
+  };
+  useEffect(() => { loadParking(); }, []);
 
   const filtered = selectedSite === "ALL" ? parkingList : parkingList.filter(p => p.site_code === selectedSite);
   const activeList = filtered.filter(p => p.status === "계약중");
@@ -4977,23 +4979,44 @@ function MonthlyParkingPage({ employees }) {
   };
   const handleSave = async () => {
     if (!form.car_number.trim()) return alert("차량번호를 입력하세요");
-    if (editItem) {
-      await supabase.from("monthly_parking").update({ ...form, updated_at: new Date().toISOString() }).eq("id", editItem.id);
-      setParkingList(p => p.map(item => item.id === editItem.id ? { ...item, ...form } : item));
-    } else {
-      const { data } = await supabase.from("monthly_parking").insert({ ...form, status: "계약중" }).select().single();
-      if (data) setParkingList(p => [...p, data]);
+    if (!form.site_code) return alert("사업장을 선택하세요");
+    const payload = {
+      site_code: form.site_code,
+      car_number: form.car_number.trim(),
+      customer_name: form.customer_name.trim(),
+      phone: form.phone.trim(),
+      contract_start: form.contract_start || null,
+      contract_end: form.contract_end || null,
+      monthly_fee: toNum(form.monthly_fee),
+      memo: form.memo.trim(),
+    };
+    try {
+      if (editItem) {
+        const { error } = await supabase.from("monthly_parking").update({ ...payload, updated_at: new Date().toISOString() }).eq("id", editItem.id);
+        if (error) { alert("수정 실패: " + error.message); console.error("update error:", error); return; }
+        setParkingList(p => p.map(item => item.id === editItem.id ? { ...item, ...payload } : item));
+      } else {
+        const { data, error } = await supabase.from("monthly_parking").insert({ ...payload, status: "계약중" }).select().single();
+        if (error) { alert("저장 실패: " + error.message); console.error("insert error:", error); return; }
+        if (data) setParkingList(p => [...p, data]);
+        else { alert("저장되었으나 데이터를 불러오지 못했습니다. 새로고침해주세요."); return; }
+      }
+      setShowForm(false);
+    } catch (e) {
+      alert("오류 발생: " + (e.message || "알 수 없는 오류"));
+      console.error("handleSave error:", e);
     }
-    setShowForm(false);
   };
   const handleDelete = async (id) => {
     if (!window.confirm("삭제하시겠습니까?")) return;
-    await supabase.from("monthly_parking").delete().eq("id", id);
+    const { error } = await supabase.from("monthly_parking").delete().eq("id", id);
+    if (error) { alert("삭제 실패: " + error.message); return; }
     setParkingList(p => p.filter(item => item.id !== id));
   };
   const toggleStatus = async (item) => {
     const newStatus = item.status === "계약중" ? "만료" : "계약중";
-    await supabase.from("monthly_parking").update({ status: newStatus }).eq("id", item.id);
+    const { error } = await supabase.from("monthly_parking").update({ status: newStatus }).eq("id", item.id);
+    if (error) { alert("상태 변경 실패: " + error.message); return; }
     setParkingList(p => p.map(pk => pk.id === item.id ? { ...pk, status: newStatus } : pk));
   };
 
