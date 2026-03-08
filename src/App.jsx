@@ -4,8 +4,8 @@ import * as XLSX from "xlsx";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
-   (주)미스터팍 근로계약서 관리 시스템 v6.0
-   Phase 2: 엑셀 Import + Word 출력 + 계약 이력 + 복합/알바 계약서
+   (주)미스터팍 근로계약서 관리 시스템 v8.0
+   Phase A: clobe.ai 재무 데이터 Import + 기존 HR/수익분석 통합
    ═══════════════════════════════════════════════════════ */
 
 // ── 1. 상수 ──────────────────────────────────────────
@@ -3012,6 +3012,499 @@ function Settings() {
   );
 }
 
+// ── 16-0. clobe.ai Import 시스템 (v8.0) ────────────────
+
+const LABEL_CATEGORY_MAP = {
+  "매출": "revenue", "매출 취소/환불": "revenue_refund",
+  "급여": "cost_labor", "잡급": "cost_labor",
+  "보험료": "cost_overhead", "매출원가": "cost_direct",
+  "기타 영업비용": "cost_overhead", "차량유지비": "cost_overhead",
+  "지급수수료": "cost_overhead", "임차료": "cost_overhead",
+  "통신비": "cost_overhead", "복리후생비": "cost_overhead",
+  "광고선전비": "cost_overhead", "소모품비": "cost_overhead",
+  "여비교통비": "cost_overhead", "세금과공과": "cost_overhead",
+  "주주/임원/직원 차입금 상환": "financing", "금융자산 취득": "investing",
+  "금융자산 처분": "investing", "계정 없는 출금": "unclassified",
+  "계정 없는 입금": "unclassified",
+};
+
+const FILE_PATTERNS = [
+  { type: "bank_label",    pattern: /은행_거래내역_라벨/, label: "은행 거래내역 라벨", icon: "🏦", priority: 1 },
+  { type: "bank",          pattern: /은행_거래내역(?!_라벨)/, label: "은행 거래내역", icon: "🏧", priority: 2 },
+  { type: "tax_invoice",   pattern: /세금계산서/, label: "세금계산서", icon: "🧾", priority: 1 },
+  { type: "card_approval", pattern: /카드_승인내역/, label: "카드 승인내역", icon: "💳", priority: 1 },
+  { type: "card_billing",  pattern: /카드_청구내역/, label: "카드 청구내역 라벨", icon: "📋", priority: 2 },
+  { type: "cash_receipt",  pattern: /현금영수증/, label: "현금영수증", icon: "🧾", priority: 1 },
+];
+
+function parseMeta(wb) {
+  const ms = wb.SheetNames.find(n => n === "메타정보");
+  if (!ms) return {};
+  const ws = wb.Sheets[ms];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
+  const meta = {};
+  rows.forEach(r => {
+    if (r[0] === "워크스페이스") meta.workspace = r[1];
+    if (r[0] === "다운로드 일시") meta.downloadedAt = r[1];
+    if (r[0] === "조회 기간") meta.period = r[1];
+  });
+  return meta;
+}
+
+function parseBankLabel(wb) {
+  const sn = wb.SheetNames.find(n => n.includes("통합"));
+  if (!sn) return [];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
+  return rows.map(r => ({
+    tx_date: r["거래일시"] || "",
+    tx_type: "bank",
+    amount_in: Number(r["입금"]) || 0,
+    amount_out: Number(r["출금"]) || 0,
+    account_label: r["계정 라벨"] || "",
+    category: LABEL_CATEGORY_MAP[r["계정 라벨"]] || "unclassified",
+    vendor_label: r["거래처 라벨"] || "",
+    group_label: r["그룹 라벨"] || "",
+    description: r["적요"] || "",
+    counterpart: r["거래자명"] || "",
+    bank_name: r["은행"] || "",
+    account_no: r["계좌번호"] || "",
+    account_alias: r["계좌명"] || "",
+  }));
+}
+
+function parseBankPlain(wb) {
+  const sn = wb.SheetNames.find(n => n.includes("통합"));
+  if (!sn) return [];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
+  return rows.map(r => ({
+    tx_date: r["거래일시"] || "",
+    account_no: r["계좌번호"] || "",
+    amount_in: Number(r["입금액"]) || 0,
+    amount_out: Number(r["출금액"]) || 0,
+    balance_after: Number(r["거래후잔액"]) || 0,
+  }));
+}
+
+function mergeBankBalance(labelRows, plainRows) {
+  const balMap = {};
+  plainRows.forEach(r => {
+    const key = `${r.tx_date}|${r.account_no}|${r.amount_in}|${r.amount_out}`;
+    balMap[key] = r.balance_after;
+  });
+  return labelRows.map(r => {
+    const key = `${r.tx_date}|${r.account_no}|${r.amount_in}|${r.amount_out}`;
+    return { ...r, balance_after: balMap[key] || null };
+  });
+}
+
+function parseTaxInvoice(wb) {
+  const sn = wb.SheetNames.find(n => n === "통합");
+  if (!sn) return [];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
+  return rows.map(r => {
+    const isSale = (r["매출 매입 유형"] || "").includes("매출");
+    return {
+      tx_date: r["발급일자"] || "",
+      tx_type: "tax_invoice",
+      amount_in: isSale ? (Number(r["합계금액"]) || 0) : 0,
+      amount_out: !isSale ? (Number(r["합계금액"]) || 0) : 0,
+      sale_or_buy: isSale ? "매출" : "매입",
+      supply_amount: Number(r["공급가액"]) || 0,
+      tax_amount: Number(r["세액"]) || 0,
+      counterpart: (r["거래처 상호"] || "").trim(),
+      description: r["대표 품목"] || "",
+      biz_reg_no: r["거래처 사업자등록번호"] || "",
+      category: isSale ? "revenue" : "cost_direct",
+    };
+  });
+}
+
+function parseCardApproval(wb) {
+  const sn = wb.SheetNames.find(n => n === "카드 승인내역");
+  if (!sn) return [];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
+  return rows.map(r => ({
+    tx_date: r["승인일시"] || "",
+    tx_type: "card",
+    amount_out: Number(r["승인금액(원)"]) || 0,
+    amount_in: 0,
+    card_company: r["카드사"] || "",
+    card_no: r["카드번호"] || "",
+    merchant_name: r["가맹점명"] || "",
+    merchant_biz: r["가맹점 업종"] || "",
+    tax_amount: Number(r["부가세"]) || 0,
+    description: r["가맹점명"] || "",
+    category: "cost_overhead",
+  }));
+}
+
+function parseCashReceipt(wb) {
+  const sn = wb.SheetNames.find(n => n === "통합");
+  if (!sn) return [];
+  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
+  return rows.map(r => {
+    const isSale = (r["구분"] || "").includes("매출");
+    return {
+      tx_date: r["사용일시"] || "",
+      tx_type: "cash_receipt",
+      amount_in: isSale ? (Number(r["총금액"]) || 0) : 0,
+      amount_out: !isSale ? (Number(r["총금액"]) || 0) : 0,
+      sale_or_buy: isSale ? "매출" : "매입",
+      supply_amount: Number(r["공급가액"]) || 0,
+      tax_amount: Number(r["부가세"]) || 0,
+      counterpart: r["거래처명"] || "",
+      category: isSale ? "revenue" : "cost_overhead",
+    };
+  });
+}
+
+function FinancialImportPage() {
+  const [files, setFiles] = useState([]);
+  const [parsedFiles, setParsedFiles] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [dupMode, setDupMode] = useState("skip");
+  const [importHistory, setImportHistory] = useState([]);
+  const [dragOver, setDragOver] = useState(false);
+  const fileRef = useRef(null);
+
+  // Import 이력 로드
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase
+        .from("financial_transactions")
+        .select("import_batch, source_file, created_at")
+        .not("import_batch", "is", null)
+        .order("created_at", { ascending: false });
+      if (data) {
+        const batches = {};
+        data.forEach(d => {
+          if (!batches[d.import_batch]) batches[d.import_batch] = { batch: d.import_batch, file: d.source_file, date: d.created_at, count: 0 };
+          batches[d.import_batch].count++;
+        });
+        setImportHistory(Object.values(batches).slice(0, 20));
+      }
+    })();
+  }, [importResult]);
+
+  const detectFileType = (fileName) => {
+    for (const fp of FILE_PATTERNS) {
+      if (fp.pattern.test(fileName)) return fp;
+    }
+    return null;
+  };
+
+  const handleFiles = async (fileList) => {
+    const newFiles = Array.from(fileList).filter(f => f.name.endsWith(".xlsx") || f.name.endsWith(".xls"));
+    if (!newFiles.length) return;
+
+    setImportResult(null);
+    const results = [];
+
+    // 1차: 모든 파일 파싱
+    const parsed = {};
+    for (const f of newFiles) {
+      const det = detectFileType(f.name);
+      if (!det) continue;
+
+      const buf = await f.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const meta = parseMeta(wb);
+
+      let rows = [];
+      if (det.type === "bank_label") rows = parseBankLabel(wb);
+      else if (det.type === "bank") rows = parseBankPlain(wb);
+      else if (det.type === "tax_invoice") rows = parseTaxInvoice(wb);
+      else if (det.type === "card_approval") rows = parseCardApproval(wb);
+      else if (det.type === "cash_receipt") rows = parseCashReceipt(wb);
+
+      parsed[det.type] = { rows, meta, file: f, det };
+      results.push({ ...det, count: rows.length, meta, file: f, status: rows.length > 0 ? "ready" : "empty" });
+    }
+
+    // 2차: 은행 라벨 + 비라벨 잔액 머지
+    if (parsed.bank_label && parsed.bank) {
+      parsed.bank_label.rows = mergeBankBalance(parsed.bank_label.rows, parsed.bank.rows);
+      const bankIdx = results.findIndex(r => r.type === "bank");
+      if (bankIdx >= 0) results[bankIdx].status = "merged";
+    }
+
+    setFiles(newFiles);
+    setParsedFiles(results);
+  };
+
+  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); };
+  const handleDragOver = (e) => { e.preventDefault(); setDragOver(true); };
+
+  const doImport = async () => {
+    setImporting(true);
+    setImportResult(null);
+
+    try {
+      const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      let totalInserted = 0;
+
+      // 파싱된 모든 파일 재구성
+      const allFiles = Array.from(files);
+      const allTransactions = [];
+
+      for (const f of allFiles) {
+        const det = detectFileType(f.name);
+        if (!det) continue;
+        const buf = await f.arrayBuffer();
+        const wb = XLSX.read(buf, { type: "array" });
+
+        let rows = [];
+        if (det.type === "bank_label") {
+          rows = parseBankLabel(wb);
+          // 비라벨 파일에서 잔액 머지
+          const plainFile = allFiles.find(ff => detectFileType(ff.name)?.type === "bank");
+          if (plainFile) {
+            const buf2 = await plainFile.arrayBuffer();
+            const wb2 = XLSX.read(buf2, { type: "array" });
+            const plainRows = parseBankPlain(wb2);
+            rows = mergeBankBalance(rows, plainRows);
+          }
+        } else if (det.type === "bank") {
+          continue; // 라벨 버전에서 처리됨
+        } else if (det.type === "tax_invoice") rows = parseTaxInvoice(wb);
+        else if (det.type === "card_approval") rows = parseCardApproval(wb);
+        else if (det.type === "card_billing") continue; // 데이터 없으면 스킵
+        else if (det.type === "cash_receipt") rows = parseCashReceipt(wb);
+
+        rows.forEach(r => {
+          allTransactions.push({
+            ...r,
+            source_file: f.name,
+            import_batch: batchId,
+          });
+        });
+      }
+
+      // 중복 체크 + 기존 데이터 처리
+      const skipFiles = new Set();
+      const uniqueFiles = [...new Set(allTransactions.map(t => t.source_file))];
+
+      if (dupMode === "skip") {
+        for (const sf of uniqueFiles) {
+          const { count } = await supabase
+            .from("financial_transactions")
+            .select("id", { count: "exact", head: true })
+            .eq("source_file", sf);
+          if (count > 0) skipFiles.add(sf);
+        }
+      } else if (dupMode === "overwrite") {
+        for (const sf of uniqueFiles) {
+          await supabase.from("financial_transactions").delete().eq("source_file", sf);
+        }
+      }
+
+      const finalRows = allTransactions.filter(t => !skipFiles.has(t.source_file));
+      const totalSkippedCount = allTransactions.length - finalRows.length;
+
+      for (let i = 0; i < finalRows.length; i += 50) {
+        const chunk = finalRows.slice(i, i + 50);
+        const { error } = await supabase.from("financial_transactions").insert(chunk);
+        if (error) {
+          console.error("Insert error:", error);
+          throw error;
+        }
+        totalInserted += chunk.length;
+      }
+
+      // monthly_summary 갱신 (RPC 호출)
+      const months = [...new Set(finalRows.map(r => {
+        const d = r.tx_date?.slice(0, 7);
+        return d;
+      }).filter(Boolean))];
+      for (const m of months) {
+        await supabase.rpc("refresh_monthly_summary", { target_month: m });
+      }
+
+      setImportResult({
+        success: true,
+        inserted: totalInserted,
+        skipped: totalSkippedCount,
+        batchId,
+        months,
+      });
+    } catch (err) {
+      setImportResult({ success: false, error: err.message || "Import 실패" });
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const handleDeleteBatch = async (batchId) => {
+    if (!window.confirm("이 Import 배치의 모든 데이터를 삭제하시겠습니까?")) return;
+    await supabase.from("financial_transactions").delete().eq("import_batch", batchId);
+    setImportHistory(h => h.filter(x => x.batch !== batchId));
+  };
+
+  const statusIcon = (s) => s === "ready" ? "✅" : s === "empty" ? "⬜" : s === "merged" ? "🔗" : "❓";
+  const statusText = (s) => s === "ready" ? "감지됨" : s === "empty" ? "데이터 없음" : s === "merged" ? "라벨 버전으로 대체" : "";
+
+  const totalRows = parsedFiles.filter(f => f.status === "ready").reduce((s, f) => s + f.count, 0);
+  const periods = parsedFiles.filter(f => f.meta?.period).map(f => f.meta.period);
+  const periodText = periods.length > 0 ? periods[0] : "";
+
+  return (
+    <div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 900, color: C.navy, margin: 0 }}>📥 clobe.ai 데이터 Import</h2>
+          <p style={{ fontSize: 13, color: C.gray, margin: "4px 0 0" }}>clobe.ai에서 다운로드한 엑셀 파일을 업로드하여 재무 데이터를 가져옵니다</p>
+        </div>
+      </div>
+
+      {/* 파일 업로드 영역 */}
+      <div
+        onDrop={handleDrop}
+        onDragOver={handleDragOver}
+        onDragLeave={() => setDragOver(false)}
+        onClick={() => fileRef.current?.click()}
+        style={{
+          border: `2.5px dashed ${dragOver ? C.gold : C.border}`,
+          borderRadius: 16,
+          padding: "40px 24px",
+          textAlign: "center",
+          cursor: "pointer",
+          background: dragOver ? "#FFF8E1" : C.cardBg,
+          transition: "all 0.2s",
+          marginBottom: 20,
+        }}
+      >
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept=".xlsx,.xls"
+          style={{ display: "none" }}
+          onChange={e => handleFiles(e.target.files)}
+        />
+        <div style={{ fontSize: 40, marginBottom: 12 }}>📂</div>
+        <div style={{ fontSize: 15, fontWeight: 800, color: C.navy, marginBottom: 6 }}>파일을 드래그하거나 클릭하여 업로드</div>
+        <div style={{ fontSize: 12, color: C.gray }}>clobe.ai에서 다운로드한 엑셀 파일 6종 (은행거래내역, 세금계산서, 카드승인내역, 현금영수증 등)</div>
+      </div>
+
+      {/* 파싱 결과 */}
+      {parsedFiles.length > 0 && (
+        <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, padding: 20, marginBottom: 20 }}>
+          <div style={{ fontSize: 14, fontWeight: 900, color: C.navy, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
+            📊 파일 감지 결과
+            {periodText && <span style={{ fontSize: 12, fontWeight: 600, color: C.gray, background: C.lightGray, padding: "3px 10px", borderRadius: 20 }}>{periodText}</span>}
+          </div>
+
+          <div style={{ display: "grid", gap: 8 }}>
+            {FILE_PATTERNS.map(fp => {
+              const found = parsedFiles.find(p => p.type === fp.type);
+              return (
+                <div key={fp.type} style={{
+                  display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
+                  borderRadius: 10, background: found ? (found.status === "ready" ? "#E8F5E9" : found.status === "merged" ? "#E3F2FD" : "#FAFAFA") : "#FAFAFA",
+                  border: `1px solid ${found?.status === "ready" ? "#A5D6A7" : found?.status === "merged" ? "#90CAF9" : "#EEE"}`,
+                }}>
+                  <span style={{ fontSize: 20 }}>{fp.icon}</span>
+                  <div style={{ flex: 1 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: C.dark }}>{fp.label}</span>
+                    {found && found.count > 0 && <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 800, color: C.navy }}>{found.count}건</span>}
+                  </div>
+                  <span style={{ fontSize: 13 }}>
+                    {found ? `${statusIcon(found.status)} ${statusText(found.status)}` : "⬜ 미업로드"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* 중복 처리 + Import 버튼 */}
+          <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: C.dark }}>중복 처리:</span>
+              <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                <input type="radio" checked={dupMode === "skip"} onChange={() => setDupMode("skip")} /> 건너뛰기
+              </label>
+              <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
+                <input type="radio" checked={dupMode === "overwrite"} onChange={() => setDupMode("overwrite")} /> 덮어쓰기
+              </label>
+            </div>
+
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setFiles([]); setParsedFiles([]); setImportResult(null); }}
+                style={{ padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 13, fontWeight: 700, cursor: "pointer", color: C.gray }}>
+                초기화
+              </button>
+              <button onClick={doImport} disabled={importing || totalRows === 0}
+                style={{
+                  padding: "10px 28px", borderRadius: 10, border: "none", fontSize: 14, fontWeight: 900, cursor: totalRows > 0 && !importing ? "pointer" : "not-allowed",
+                  background: totalRows > 0 ? C.navy : C.lightGray, color: totalRows > 0 ? C.white : C.gray,
+                  display: "flex", alignItems: "center", gap: 6,
+                }}>
+                {importing ? "⏳ Import 중..." : `📥 Import 실행 (${totalRows}건)`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import 결과 */}
+      {importResult && (
+        <div style={{
+          background: importResult.success ? "#E8F5E9" : "#FFEBEE",
+          borderRadius: 14, padding: 20, marginBottom: 20,
+          border: `1px solid ${importResult.success ? "#A5D6A7" : "#EF9A9A"}`,
+        }}>
+          {importResult.success ? (
+            <>
+              <div style={{ fontSize: 16, fontWeight: 900, color: C.success, marginBottom: 8 }}>✅ Import 완료!</div>
+              <div style={{ fontSize: 13, color: C.dark, lineHeight: 1.8 }}>
+                총 <strong>{importResult.inserted}건</strong> 저장 완료
+                {importResult.skipped > 0 && <> · <span style={{ color: C.orange }}>{importResult.skipped}건 건너뜀 (중복)</span></>}
+                <br />
+                대상 월: <strong>{importResult.months?.join(", ")}</strong> · monthly_summary 갱신 완료
+              </div>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 16, fontWeight: 900, color: C.error, marginBottom: 8 }}>❌ Import 실패</div>
+              <div style={{ fontSize: 13, color: C.dark }}>{importResult.error}</div>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Import 이력 */}
+      <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, padding: 20 }}>
+        <div style={{ fontSize: 14, fontWeight: 900, color: C.navy, marginBottom: 16 }}>📜 Import 이력</div>
+        {importHistory.length === 0 ? (
+          <div style={{ padding: 24, textAlign: "center", color: C.gray, fontSize: 13 }}>Import 이력이 없습니다</div>
+        ) : (
+          <div style={{ display: "grid", gap: 6 }}>
+            {importHistory.map(h => (
+              <div key={h.batch} style={{
+                display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
+                borderRadius: 10, background: C.cardBg, border: `1px solid ${C.lightGray}`,
+              }}>
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.dark }}>
+                    {new Date(h.date).toLocaleString("ko-KR")}
+                    <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 800, color: C.navy, background: "#E3F2FD", padding: "2px 8px", borderRadius: 10 }}>{h.count}건</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{h.batch}</div>
+                </div>
+                <button onClick={() => handleDeleteBatch(h.batch)}
+                  style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.error}`, background: "transparent", color: C.error, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
+                  🗑 삭제
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── 16-1. 수익성 분석 시스템 (v7.0 통합) ────────────────
 const FIELD_SITES = SITES.filter(s => s.code !== "V000");
 const ALLOC_METHODS = [
@@ -3616,6 +4109,7 @@ function MainApp() {
     { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
     { key: "profit_comparison", icon: "📈", label: "비교 분석" },
     { key: "profit_alloc", icon: "⚙️", label: "배부 설정" },
+    { key: "profit_import", icon: "📥", label: "데이터 Import" },
   ];
 
   return (
@@ -3710,6 +4204,7 @@ function MainApp() {
         {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" profitState={profitState} />}
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
+        {page === "profit_import" && <FinancialImportPage />}
       </main>
     </div>
   );
