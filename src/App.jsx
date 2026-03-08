@@ -464,30 +464,86 @@ const DEFAULT_ARTICLES_PARTTIME = {
 };
 
 // ── 10. 메인 대시보드 (통합 홈) ──────────────────────────
-function MainDashboard({ employees, onNavigate }) {
+function MainDashboard({ employees, onNavigate, profitState }) {
+  const { profitMonth: currentMonth, revenueData, overheadData } = profitState;
+  const [period, setPeriod] = useState("month");
+  const [plSortBy, setPlSortBy] = useState("profit");
+
   const active = employees.filter(e => e.status === "재직");
-  const weekday = active.filter(e => ["weekday"].includes(getWorkCat(e.work_code)));
-  const weekend = active.filter(e => ["weekend"].includes(getWorkCat(e.work_code)));
+  const weekday = active.filter(e => getWorkCat(e.work_code) === "weekday");
+  const weekend = active.filter(e => getWorkCat(e.work_code) === "weekend");
   const mixed = active.filter(e => getWorkCat(e.work_code) === "mixed");
   const parttime = active.filter(e => getWorkCat(e.work_code) === "parttime");
-  const activeSites = [...new Set(active.map(e => e.site_code_1))].filter(Boolean).filter(c => c !== "V000");
+  const activeSites = [...new Set(active.filter(e => e.site_code_1 !== "V000").map(e => e.site_code_1))].filter(Boolean);
   const totalSalary = active.reduce((s, e) => s + toNum(e.base_salary) + toNum(e.meal_allow) + toNum(e.leader_allow) + toNum(e.childcare_allow) + toNum(e.car_allow) + (toNum(e.weekend_daily) > 0 ? toNum(e.weekend_daily) * 8 : 0), 0);
 
-  // 수습 알림
-  const probAlerts = active.filter(e => {
-    if (!e.probation_months || !e.hire_date) return false;
-    const end = new Date(e.hire_date);
-    end.setMonth(end.getMonth() + e.probation_months);
-    const d = dDay(end.toISOString().slice(0, 10));
-    return d !== null && d >= -7 && d <= 14;
-  });
+  // 수익성 계산 (ProfitabilityPage와 동일 로직)
+  const monthRevenue = revenueData[currentMonth] || {};
+  const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
 
-  // 사업장별 인원 집계
-  const siteData = activeSites.sort().map(sc => {
-    const siteEmps = active.filter(e => e.site_code_1 === sc);
-    const labor = siteEmps.reduce((s, e) => s + toNum(e.base_salary) + toNum(e.meal_allow) + toNum(e.leader_allow) + toNum(e.childcare_allow) + toNum(e.car_allow) + (toNum(e.weekend_daily) > 0 ? toNum(e.weekend_daily) * 8 : 0), 0);
-    return { code: sc, name: getSiteName(sc), count: siteEmps.length, labor };
-  });
+  const laborBySite = useMemo(() => {
+    const map = {};
+    FIELD_SITES.forEach(s => { map[s.code] = { total: 0, count: 0 }; });
+    employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000").forEach(e => {
+      const sc = e.site_code_1;
+      if (!map[sc]) map[sc] = { total: 0, count: 0 };
+      const monthly = toNum(e.base_salary) + toNum(e.leader_allow) + toNum(e.meal_allow) + toNum(e.childcare_allow) + toNum(e.car_allow) + (toNum(e.weekend_daily) > 0 ? toNum(e.weekend_daily) * 8 : 0);
+      map[sc].total += monthly;
+      map[sc].count++;
+    });
+    return map;
+  }, [employees]);
+
+  const allocated = useMemo(() => {
+    const totalRev = FIELD_SITES.reduce((s, site) => s + toNum(monthRevenue[site.code]), 0);
+    const totalHead = FIELD_SITES.reduce((s, site) => s + (laborBySite[site.code]?.count || 0), 0);
+    const activeSiteCount = FIELD_SITES.filter(s => (laborBySite[s.code]?.count || 0) > 0).length || 1;
+    const result = {};
+    FIELD_SITES.forEach(s => { result[s.code] = 0; });
+    monthOverhead.forEach(oh => {
+      if (oh.method === "hq_only") return;
+      FIELD_SITES.forEach(site => {
+        const rev = toNum(monthRevenue[site.code]);
+        const head = laborBySite[site.code]?.count || 0;
+        let share = 0;
+        if (oh.method === "revenue" && totalRev > 0) share = (rev / totalRev) * toNum(oh.amount);
+        else if (oh.method === "headcount" && totalHead > 0) share = (head / totalHead) * toNum(oh.amount);
+        else if (oh.method === "site_count" && head > 0) share = toNum(oh.amount) / activeSiteCount;
+        result[site.code] += Math.round(share);
+      });
+    });
+    return result;
+  }, [monthRevenue, monthOverhead, laborBySite]);
+
+  const sitePLs = useMemo(() => {
+    return FIELD_SITES.map(site => {
+      const rev = toNum(monthRevenue[site.code]);
+      const labor = laborBySite[site.code]?.total || 0;
+      const overhead = allocated[site.code] || 0;
+      const profit = rev - labor - overhead;
+      const margin = rev > 0 ? (profit / rev) * 100 : 0;
+      const count = laborBySite[site.code]?.count || 0;
+      return { ...site, rev, labor, overhead, profit, margin, count };
+    }).filter(s => s.rev > 0 || s.count > 0);
+  }, [monthRevenue, laborBySite, allocated]);
+
+  const sortedPLs = useMemo(() => {
+    const arr = [...sitePLs];
+    if (plSortBy === "profit") arr.sort((a, b) => b.profit - a.profit);
+    else if (plSortBy === "margin") arr.sort((a, b) => b.margin - a.margin);
+    else if (plSortBy === "revenue") arr.sort((a, b) => b.rev - a.rev);
+    else if (plSortBy === "labor") arr.sort((a, b) => b.labor - a.labor);
+    return arr;
+  }, [sitePLs, plSortBy]);
+
+  const ptotals = useMemo(() => {
+    const t = { rev: 0, labor: 0, overhead: 0, profit: 0, count: 0, black: 0, red: 0 };
+    sitePLs.forEach(s => {
+      t.rev += s.rev; t.labor += s.labor; t.overhead += s.overhead; t.profit += s.profit; t.count += s.count;
+      if (s.profit >= 0) t.black++; else t.red++;
+    });
+    return t;
+  }, [sitePLs]);
 
   const kpiCard = (icon, value, label, sub, color, onClick) => (
     <div onClick={onClick} style={{
@@ -507,143 +563,107 @@ function MainDashboard({ employees, onNavigate }) {
 
   return (
     <div>
-      {/* 헤더 */}
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontSize: 20, fontWeight: 900, color: C.dark, margin: 0 }}>ME.PARK 종합 대시보드</h2>
-        <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>HR·계약관리 + 수익성분석 통합 현황</div>
-      </div>
-
-      {/* KPI 카드 — 1열 5개 */}
-      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 24 }}>
-        {kpiCard("👥", `${active.length}명`, "총 재직 인원", `퇴직 ${employees.length - active.length}명 · 전체 ${employees.length}명`, C.navy, () => onNavigate("employees"))}
-        {kpiCard("📅", `${weekday.length} / ${weekend.length} / ${mixed.length}`, "평일 / 주말 / 복합", `알바 ${parttime.length}명`, C.navy)}
-        {kpiCard("💰", `${fmt(totalSalary)}원`, "월 총 인건비", "고정급 + 주말일당 포함", C.orange)}
-        {kpiCard("🏢", `${activeSites.length}곳`, "운영 사업장", `전체 ${SITES.length - 1}개 중`, C.navy, () => onNavigate("profit_summary"))}
-        {kpiCard("⏰", `${probAlerts.length}명`, "수습 종료 임박", probAlerts.length > 0 ? "±7일 이내" : "해당 없음", probAlerts.length > 0 ? C.orange : C.success, () => onNavigate("dashboard"))}
-      </div>
-
-      {/* 2열 레이아웃: 좌 HR 요약 / 우 수익성 요약 */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-
-        {/* 좌: 근무유형 분포 */}
-        <div style={{ ...cardStyle }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>👥 근무유형 분포</h3>
-            <button onClick={() => onNavigate("dashboard")} style={{ fontSize: 11, color: C.navy, fontWeight: 700, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>상세 →</button>
-          </div>
+      {/* 헤더 + 기간 선택 */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ fontSize: 20, fontWeight: 900, color: C.dark, margin: 0 }}>ME.PARK 종합 대시보드</h2>
+          <div style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>{currentMonth} 기준</div>
+        </div>
+        <div style={{ display: "flex", gap: 4, background: C.lightGray, padding: 3, borderRadius: 10 }}>
           {[
-            { label: "평일", count: weekday.length, color: C.navy },
-            { label: "주말", count: weekend.length, color: C.orange },
-            { label: "복합", count: mixed.length, color: C.skyBlue },
-            { label: "알바", count: parttime.length, color: C.gray },
-          ].map(b => (
-            <div key={b.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, width: 36, color: C.dark }}>{b.label}</span>
-              <div style={{ flex: 1, height: 24, background: C.lightGray, borderRadius: 6, overflow: "hidden" }}>
-                <div style={{ width: `${active.length ? (b.count / active.length) * 100 : 0}%`, height: "100%", background: b.color, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 6, transition: "width 0.5s" }}>
-                  {b.count > 0 && <span style={{ fontSize: 10, fontWeight: 800, color: "#fff" }}>{b.count}</span>}
-                </div>
-              </div>
-              <span style={{ fontSize: 12, fontWeight: 800, color: b.color, width: 36, textAlign: "right" }}>{active.length ? ((b.count / active.length) * 100).toFixed(0) : 0}%</span>
-            </div>
+            ["month", "해당월"],
+            ["week", "주간"],
+            ["monthly", "월간"],
+            ["quarter", "분기"],
+            ["year", "연간"],
+          ].map(([k, v]) => (
+            <button key={k} onClick={() => setPeriod(k)} style={{
+              padding: "6px 14px", borderRadius: 7, fontSize: 12, fontWeight: 700, cursor: "pointer",
+              border: "none", background: period === k ? C.navy : "transparent",
+              color: period === k ? "#fff" : C.gray, transition: "all 0.15s",
+            }}>{v}</button>
           ))}
         </div>
-
-        {/* 우: 사업장 인건비 TOP 5 */}
-        <div style={{ ...cardStyle }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-            <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>🏢 사업장 인건비 TOP {Math.min(5, siteData.length)}</h3>
-            <button onClick={() => onNavigate("profit_summary")} style={{ fontSize: 11, color: C.navy, fontWeight: 700, background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>수익분석 →</button>
-          </div>
-          {siteData.sort((a, b) => b.labor - a.labor).slice(0, 5).map((s, i) => {
-            const maxLabor = siteData[0]?.labor || 1;
-            return (
-              <div key={s.code} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-                <span style={{ fontSize: 11, fontWeight: 800, color: C.navy, width: 20, textAlign: "center" }}>{i + 1}</span>
-                <span style={{ fontSize: 11, fontWeight: 600, width: 80, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name}</span>
-                <div style={{ flex: 1, height: 20, background: C.lightGray, borderRadius: 5, overflow: "hidden" }}>
-                  <div style={{ width: `${(s.labor / maxLabor) * 100}%`, height: "100%", background: C.orange, borderRadius: 5, transition: "width 0.5s" }} />
-                </div>
-                <span style={{ fontSize: 11, fontWeight: 700, color: C.orange, width: 65, textAlign: "right" }}>{fmt(s.labor)}</span>
-                <span style={{ fontSize: 10, color: C.gray, width: 28, textAlign: "right" }}>{s.count}명</span>
-              </div>
-            );
-          })}
-          {siteData.length === 0 && <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: 20 }}>배치 인원 없음</div>}
-        </div>
       </div>
 
-      {/* 사업장별 인원 전체 테이블 */}
-      <div style={cardStyle}>
+      {/* 1열: HR KPI 카드 */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
+        {kpiCard("👥", `${active.length}명`, "총 재직 인원", `퇴직 ${employees.length - active.length}명`, C.navy, () => onNavigate("employees"))}
+        {kpiCard("💰", `${fmt(totalSalary)}원`, "월 고정급 합계", "고정급 + 주말일당 포함", C.orange)}
+        {kpiCard("🏢", `${activeSites.length}곳`, "운영 사업장", `전체 ${SITES.length - 1}개 중`, C.navy, () => onNavigate("profit_summary"))}
+        {kpiCard("📅", (() => {
+          const parts = [];
+          if (weekday.length) parts.push(`평${weekday.length}`);
+          if (weekend.length) parts.push(`주${weekend.length}`);
+          if (mixed.length) parts.push(`복${mixed.length}`);
+          if (parttime.length) parts.push(`알${parttime.length}`);
+          return parts.join(" / ") || "0명";
+        })(), "재직인원 구성", `평일 ${weekday.length} / 주말 ${weekend.length} / 복합 ${mixed.length} / 알바 ${parttime.length}`, C.navy)}
+      </div>
+
+      {/* 2열: 수익성 KPI 카드 */}
+      <div style={{ display: "flex", gap: 14, flexWrap: "wrap", marginBottom: 20 }}>
+        {kpiCard("📊", pFmt(ptotals.rev), "총 매출", null, C.navy, () => onNavigate("profit_cost_input"))}
+        {kpiCard("🔶", pFmt(ptotals.labor), "총 인건비", ptotals.rev > 0 ? `매출의 ${((ptotals.labor / ptotals.rev) * 100).toFixed(0)}%` : null, C.orange)}
+        {kpiCard("📦", pFmt(ptotals.overhead), "간접비 배부", ptotals.rev > 0 ? `매출의 ${((ptotals.overhead / ptotals.rev) * 100).toFixed(0)}%` : null, C.gray)}
+        {kpiCard("💹", pFmt(ptotals.profit), "영업이익", ptotals.rev > 0 ? `이익률 ${((ptotals.profit / ptotals.rev) * 100).toFixed(1)}%` : null, ptotals.profit >= 0 ? C.success : C.error)}
+        {kpiCard("🏁", `${ptotals.black}곳 / ${ptotals.red}곳`, "흑자 / 적자", null, ptotals.red > 0 ? C.error : C.success)}
+      </div>
+
+      {/* 사업장별 손익 PL 테이블 */}
+      <div style={{ ...cardStyle, overflowX: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>📋 사업장별 인원·인건비 현황</h3>
-          <div style={{ fontSize: 11, color: C.gray }}>재직자 기준 · 본사(V000) 제외</div>
+          <h3 style={{ fontSize: 15, fontWeight: 800, color: C.dark, margin: 0 }}>사업장별 손익 (P&L)</h3>
+          <div style={{ display: "flex", gap: 4 }}>
+            {[["profit", "이익순"], ["margin", "이익률순"], ["revenue", "매출순"], ["labor", "인건비순"]].map(([k, v]) => (
+              <button key={k} onClick={() => setPlSortBy(k)} style={{
+                padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer",
+                border: `1.5px solid ${plSortBy === k ? C.navy : C.border}`,
+                background: plSortBy === k ? C.navy : "#fff",
+                color: plSortBy === k ? "#fff" : C.gray,
+              }}>{v}</button>
+            ))}
+          </div>
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr style={{ background: C.navy }}>
-              {["코드", "사업장", "평일", "주말", "복합", "알바", "합계", "월 인건비"].map(h => (
-                <th key={h} style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: h === "사업장" ? "left" : "center" }}>{h}</th>
+              {["#", "코드", "사업장", "인원", "매출", "인건비", "간접비", "이익", "이익률"].map(h => (
+                <th key={h} style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: h === "사업장" ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {siteData.map((s, i) => {
-              const siteEmps = active.filter(e => e.site_code_1 === s.code);
-              const wd = siteEmps.filter(e => getWorkCat(e.work_code) === "weekday").length;
-              const we = siteEmps.filter(e => getWorkCat(e.work_code) === "weekend").length;
-              const mx = siteEmps.filter(e => getWorkCat(e.work_code) === "mixed").length;
-              const pt = siteEmps.filter(e => getWorkCat(e.work_code) === "parttime").length;
-              return (
-                <tr key={s.code} style={{ background: i % 2 ? C.bg : C.white, borderBottom: `1px solid ${C.border}` }}>
-                  <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 700, color: C.navy }}>{s.code}</td>
-                  <td style={{ padding: "7px 6px", fontWeight: 600 }}>{s.name}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{wd || "−"}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{we || "−"}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{mx || "−"}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "center" }}>{pt || "−"}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "center", fontWeight: 800 }}>{s.count}</td>
-                  <td style={{ padding: "7px 6px", textAlign: "right", fontWeight: 700, color: C.orange }}>{fmt(s.labor)}</td>
-                </tr>
-              );
-            })}
-            <tr style={{ background: C.navy }}>
-              <td colSpan={2} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
-              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{weekday.length}</td>
-              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{weekend.length}</td>
-              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{mixed.length}</td>
-              <td style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{parttime.length}</td>
-              <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>{active.filter(e => e.site_code_1 !== "V000").length}</td>
-              <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{fmt(totalSalary)}</td>
-            </tr>
+            {sortedPLs.map((s, i) => (
+              <tr key={s.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, color: C.gray }}>{i + 1}</td>
+                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, color: C.navy }}>{s.code}</td>
+                <td style={{ padding: "8px", fontWeight: 600 }}>{s.name}</td>
+                <td style={{ padding: "8px", textAlign: "center" }}>{s.count}명</td>
+                <td style={{ padding: "8px", textAlign: "right", fontWeight: 700 }}>{pFmtFull(s.rev)}</td>
+                <td style={{ padding: "8px", textAlign: "right", color: C.orange, fontWeight: 700 }}>{pFmtFull(s.labor)}</td>
+                <td style={{ padding: "8px", textAlign: "right", color: C.gray }}>{pFmtFull(s.overhead)}</td>
+                <td style={{ padding: "8px", textAlign: "right", fontWeight: 800, color: s.profit >= 0 ? C.success : C.error }}>{pFmtFull(s.profit)}</td>
+                <td style={{ padding: "8px", textAlign: "center", fontWeight: 700, color: s.margin >= 0 ? C.success : C.error }}>{s.rev > 0 ? s.margin.toFixed(1) + "%" : "0.0%"}</td>
+              </tr>
+            ))}
+            {sortedPLs.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 24, textAlign: "center", color: C.gray }}>수익성 분석 → 비용입력에서 매출을 입력하세요</td></tr>
+            )}
+            {sortedPLs.length > 0 && (
+              <tr style={{ background: C.navy }}>
+                <td colSpan={3} style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
+                <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{ptotals.count}명</td>
+                <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.rev)}</td>
+                <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "right" }}>{pFmtFull(ptotals.labor)}</td>
+                <td style={{ padding: "9px 8px", color: "#fff", fontWeight: 700, textAlign: "right" }}>{pFmtFull(ptotals.overhead)}</td>
+                <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{pFmtFull(ptotals.profit)}</td>
+                <td style={{ padding: "9px 8px", color: C.gold, fontWeight: 800, textAlign: "center" }}>{ptotals.rev > 0 ? ((ptotals.profit / ptotals.rev) * 100).toFixed(1) + "%" : "—"}</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
-
-      {/* 수습 알림 */}
-      {probAlerts.length > 0 && (
-        <div style={{ ...cardStyle, borderLeft: `4px solid ${C.orange}`, marginTop: 16 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.orange, margin: "0 0 12px" }}>⏰ 수습 종료 임박</h3>
-          {probAlerts.map(e => {
-            const end = new Date(e.hire_date);
-            end.setMonth(end.getMonth() + e.probation_months);
-            const dd = dDay(end.toISOString().slice(0, 10));
-            return (
-              <div key={e.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${C.lightGray}` }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: C.navy }}>{e.emp_no}</span>
-                <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>{e.name}</span>
-                <span style={{ fontSize: 11, color: C.gray }}>{getSiteName(e.site_code_1)}</span>
-                <span style={{ fontSize: 11, color: C.gray }}>종료: {dateFmt(end.toISOString().slice(0, 10))}</span>
-                <span style={{
-                  fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 10,
-                  background: dd <= 0 ? "#FEE2E2" : "#FFF3E0",
-                  color: dd <= 0 ? C.error : C.orange,
-                }}>D{dd <= 0 ? dd : "−" + dd}</span>
-              </div>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
@@ -714,59 +734,6 @@ function Dashboard({ employees }) {
           ))}
         </div>
       )}
-
-      {/* 근무유형 분포 */}
-      <div style={cardStyle}>
-        <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>근무유형 분포</h3>
-        {[
-          { label: "평일계열", count: weekday.length, color: C.navy },
-          { label: "주말계열", count: weekend.length, color: C.orange },
-          { label: "복합", count: mixed.length, color: C.skyBlue },
-          { label: "알바", count: parttime.length, color: C.gray },
-        ].map(b => (
-          <div key={b.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
-            <span style={{ fontSize: 12, fontWeight: 700, width: 60, color: C.dark }}>{b.label}</span>
-            <div style={{ flex: 1, height: 22, background: C.lightGray, borderRadius: 6, overflow: "hidden" }}>
-              <div style={{ width: `${active.length ? (b.count / active.length) * 100 : 0}%`, height: "100%", background: b.color, borderRadius: 6, transition: "width 0.5s" }} />
-            </div>
-            <span style={{ fontSize: 12, fontWeight: 800, color: b.color, width: 30, textAlign: "right" }}>{b.count}명</span>
-          </div>
-        ))}
-      </div>
-
-      {/* 사업장별 */}
-      <div style={cardStyle}>
-        <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>🏢 사업장별 인원</h3>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead>
-            <tr style={{ background: C.navy }}>
-              {["코드", "사업장", "평일", "주말", "복합", "알바", "합계"].map(h => (
-                <th key={h} style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {activeSites.sort().map((sc, i) => {
-              const siteEmps = active.filter(e => e.site_code_1 === sc);
-              const wd = siteEmps.filter(e => getWorkCat(e.work_code) === "weekday").length;
-              const we = siteEmps.filter(e => getWorkCat(e.work_code) === "weekend").length;
-              const mx = siteEmps.filter(e => getWorkCat(e.work_code) === "mixed").length;
-              const pt = siteEmps.filter(e => getWorkCat(e.work_code) === "parttime").length;
-              return (
-                <tr key={sc} style={{ background: i % 2 ? C.lightGray : C.white }}>
-                  <td style={{ padding: "6px", textAlign: "center", fontWeight: 700 }}>{sc}</td>
-                  <td style={{ padding: "6px" }}>{getSiteName(sc)}</td>
-                  <td style={{ padding: "6px", textAlign: "center" }}>{wd || "−"}</td>
-                  <td style={{ padding: "6px", textAlign: "center" }}>{we || "−"}</td>
-                  <td style={{ padding: "6px", textAlign: "center" }}>{mx || "−"}</td>
-                  <td style={{ padding: "6px", textAlign: "center" }}>{pt || "−"}</td>
-                  <td style={{ padding: "6px", textAlign: "center", fontWeight: 800 }}>{siteEmps.length}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
     </div>
   );
 }
@@ -829,7 +796,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   return (
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>👥 직원대장</h2>
+        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>👥 직원현황</h2>
         {can("edit") && (
           <div style={{ display: "flex", gap: 8 }}>
             <button onClick={() => setShowImport(true)} style={{ ...btnOutline, display: "flex", alignItems: "center", gap: 4 }}>📤 엑셀 Import</button>
@@ -842,6 +809,69 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
           </div>
         )}
       </div>
+
+      {/* 근무유형 분포 + 사업장별 인원 요약 */}
+      {(() => {
+        const active = employees.filter(e => e.status === "재직");
+        const wdC = active.filter(e => getWorkCat(e.work_code) === "weekday").length;
+        const weC = active.filter(e => getWorkCat(e.work_code) === "weekend").length;
+        const mxC = active.filter(e => getWorkCat(e.work_code) === "mixed").length;
+        const ptC = active.filter(e => getWorkCat(e.work_code) === "parttime").length;
+        const aSites = [...new Set(active.map(e => e.site_code_1))].filter(Boolean).sort();
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
+            {/* 근무유형 분포 */}
+            <div style={cardStyle}>
+              <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 10px" }}>근무유형 분포</h3>
+              {[
+                { label: "평일계열", count: wdC, color: C.navy },
+                { label: "주말계열", count: weC, color: C.orange },
+                { label: "복합", count: mxC, color: C.skyBlue },
+                { label: "알바", count: ptC, color: C.gray },
+              ].map(b => (
+                <div key={b.label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                  <span style={{ fontSize: 11, fontWeight: 700, width: 55, color: C.dark }}>{b.label}</span>
+                  <div style={{ flex: 1, height: 20, background: C.lightGray, borderRadius: 6, overflow: "hidden" }}>
+                    <div style={{ width: `${active.length ? (b.count / active.length) * 100 : 0}%`, height: "100%", background: b.color, borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "flex-end", paddingRight: 4, transition: "width 0.5s" }}>
+                      {b.count > 0 && <span style={{ fontSize: 9, fontWeight: 800, color: "#fff" }}>{b.count}</span>}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: b.color, width: 36, textAlign: "right" }}>{active.length ? ((b.count / active.length) * 100).toFixed(0) : 0}%</span>
+                </div>
+              ))}
+            </div>
+            {/* 사업장별 인원 */}
+            <div style={cardStyle}>
+              <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 10px" }}>🏢 사업장별 인원</h3>
+              <div style={{ maxHeight: 160, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                  <thead><tr style={{ background: C.navy }}>
+                    {["코드", "사업장", "평일", "주말", "복합", "알바", "합계"].map(h => (
+                      <th key={h} style={{ padding: "5px 4px", color: C.white, fontWeight: 700, textAlign: "center", position: "sticky", top: 0, background: C.navy }}>{h}</th>
+                    ))}
+                  </tr></thead>
+                  <tbody>
+                    {aSites.map((sc, i) => {
+                      const se = active.filter(e => e.site_code_1 === sc);
+                      return (
+                        <tr key={sc} style={{ background: i % 2 ? C.bg : C.white }}>
+                          <td style={{ padding: "4px", textAlign: "center", fontWeight: 700, color: C.navy, fontSize: 10 }}>{sc}</td>
+                          <td style={{ padding: "4px", fontSize: 10 }}>{getSiteName(sc)}</td>
+                          <td style={{ padding: "4px", textAlign: "center" }}>{se.filter(e => getWorkCat(e.work_code) === "weekday").length || "−"}</td>
+                          <td style={{ padding: "4px", textAlign: "center" }}>{se.filter(e => getWorkCat(e.work_code) === "weekend").length || "−"}</td>
+                          <td style={{ padding: "4px", textAlign: "center" }}>{se.filter(e => getWorkCat(e.work_code) === "mixed").length || "−"}</td>
+                          <td style={{ padding: "4px", textAlign: "center" }}>{se.filter(e => getWorkCat(e.work_code) === "parttime").length || "−"}</td>
+                          <td style={{ padding: "4px", textAlign: "center", fontWeight: 800 }}>{se.length}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 필터 */}
       <div style={{ ...cardStyle, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", padding: 12 }}>
@@ -3017,10 +3047,8 @@ const pFmt = (n) => {
 const pFmtFull = (n) => (n == null || n === "" || isNaN(n)) ? "0" : Math.round(Number(n)).toLocaleString("ko-KR");
 const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
-function ProfitabilityPage({ employees, subPage }) {
-  const [currentMonth, setCurrentMonth] = useState("2026-02");
-  const [revenueData, setRevenueData] = useState({ "2026-02": {} });
-  const [overheadData, setOverheadData] = useState({ "2026-02": DEFAULT_OVERHEAD.map(o => ({ ...o })) });
+function ProfitabilityPage({ employees, subPage, profitState }) {
+  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
@@ -3534,6 +3562,12 @@ function MainApp() {
   const [contractEdit, setContractEdit] = useState(null);
   const [empLoading, setEmpLoading] = useState(true);
 
+  // 수익성 분석 공유 state (MainDashboard + ProfitabilityPage)
+  const [profitMonth, setProfitMonth] = useState("2026-02");
+  const [revenueData, setRevenueData] = useState({ "2026-02": {} });
+  const [overheadData, setOverheadData] = useState({ "2026-02": DEFAULT_OVERHEAD.map(o => ({ ...o })) });
+  const profitState = { profitMonth, setProfitMonth, revenueData, setRevenueData, overheadData, setOverheadData };
+
   // Supabase에서 직원 데이터 로드
   const loadEmployees = async () => {
     const { data, error } = await supabase.from("employees").select("*").order("emp_no");
@@ -3567,7 +3601,7 @@ function MainApp() {
 
   const hrNavItems = [
     { key: "dashboard", icon: "📊", label: "HR 대시보드" },
-    { key: "employees", icon: "👥", label: "직원대장" },
+    { key: "employees", icon: "👥", label: "직원현황" },
     { key: "contract", icon: "📝", label: "계약서" },
     { key: "history", icon: "📋", label: "계약 이력" },
     { key: "resignation", icon: "📄", label: "사직서" },
@@ -3662,7 +3696,7 @@ function MainApp() {
 
       {/* 메인 콘텐츠 */}
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
-        {page === "main_dashboard" && <MainDashboard employees={employees} onNavigate={setPage} />}
+        {page === "main_dashboard" && <MainDashboard employees={employees} onNavigate={setPage} profitState={profitState} />}
         {page === "dashboard" && <Dashboard employees={employees} />}
         {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onReload={loadEmployees} />}
         {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={() => {}} />}
@@ -3671,11 +3705,11 @@ function MainApp() {
         {page === "certificate" && <Certificate employees={employees} />}
         {page === "settings" && <Settings />}
         {page === "invite" && <AdminInvitePanel />}
-        {page === "profit_summary" && <ProfitabilityPage employees={employees} subPage="summary" />}
-        {page === "profit_site_pl" && <ProfitabilityPage employees={employees} subPage="site_pl" />}
-        {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" />}
-        {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" />}
-        {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" />}
+        {page === "profit_summary" && <ProfitabilityPage employees={employees} subPage="summary" profitState={profitState} />}
+        {page === "profit_site_pl" && <ProfitabilityPage employees={employees} subPage="site_pl" profitState={profitState} />}
+        {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" profitState={profitState} />}
+        {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
+        {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
       </main>
     </div>
   );
