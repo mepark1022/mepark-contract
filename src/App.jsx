@@ -392,6 +392,23 @@ function NumInput({ value, onChange, style: st, placeholder, ...rest }) {
   );
 }
 
+// ── 5-1.5 BlurSaveNum — 포커스 해제 시에만 저장하는 숫자 입력 ──
+function BlurSaveNum({ value, onSave, style: st, placeholder, ...rest }) {
+  const [localVal, setLocalVal] = useState(String(value ?? "0"));
+  const [focused, setFocused] = useState(false);
+  // 외부 value가 변경되면 (사업장 전환 등) 동기화
+  useEffect(() => { if (!focused) setLocalVal(String(value ?? "0")); }, [value, focused]);
+  return (
+    <input inputMode="decimal" placeholder={placeholder} style={{ ...inputStyle, ...st }}
+      value={focused ? localVal : (value === "" || value == null || value === 0 ? "0" : fmt(value))}
+      onFocus={() => { setFocused(true); setLocalVal(String(value ?? "0")); }}
+      onChange={e => { const raw = e.target.value.replace(/,/g, ""); setLocalVal(raw); }}
+      onBlur={() => { setFocused(false); const n = Number(localVal.replace(/,/g, "")); onSave(isNaN(n) ? 0 : n); }}
+      {...rest}
+    />
+  );
+}
+
 // ── 5-2. ME.PARK 커스텀 달력 컴포넌트 ─────────────────
 function MeParkDatePicker({ value, onChange, style: st, label }) {
   const [open, setOpen] = useState(false);
@@ -4797,7 +4814,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                           style={{ ...inputStyle, padding: "5px 6px", fontSize: 11 }} />
                       </td>
                       <td style={{ padding: "4px 6px", width: 130 }}>
-                        <NumInput value={toNum(d.monthly_contract)} onChange={v => handleDetailChange(site.code, "monthly_contract", v)}
+                        <BlurSaveNum value={toNum(d.monthly_contract)} onSave={v => handleDetailChange(site.code, "monthly_contract", v)}
                           style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} />
                       </td>
                       <td style={{ padding: "6px", textAlign: "center", fontWeight: 700, fontSize: 11,
@@ -5191,7 +5208,7 @@ function SiteManagementPage({ employees }) {
                   </div>
                   <div>
                     <label style={labelStyle}>월 계약금액</label>
-                    <NumInput value={toNum(detail.monthly_contract)} onChange={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fieldStyle, textAlign: "right" }} />
+                    <BlurSaveNum value={toNum(detail.monthly_contract)} onSave={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fieldStyle, textAlign: "right" }} />
                   </div>
                 </div>
                 <div>
