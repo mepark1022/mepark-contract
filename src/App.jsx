@@ -6501,12 +6501,12 @@ function MainApp() {
           {/* 구분선 */}
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
 
-          {/* 수익성 분석 영역 */}
+          {/* 사업장 현황 영역 */}
           <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>수익성 분석</span>
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>사업장 현황</span>
           </div>
-          {profitNavItems.map(item => (
+          {siteNavItems.map(item => (
             <button key={item.key} onClick={() => setPage(item.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
@@ -6522,12 +6522,12 @@ function MainApp() {
           {/* 구분선 */}
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
 
-          {/* 사업장 현황 영역 */}
+          {/* 수익성 분석 영역 */}
           <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>사업장 현황</span>
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>수익성 분석</span>
           </div>
-          {siteNavItems.map(item => (
+          {profitNavItems.map(item => (
             <button key={item.key} onClick={() => setPage(item.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
