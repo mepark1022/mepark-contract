@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment } from "react";
-import { supabase, supabaseUrl, supabaseAnonKey, supabaseAdmin } from "./supabaseClient";
+import { supabase, supabaseUrl, supabaseAnonKey, callAdminApi } from "./supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
@@ -53,7 +53,7 @@ const WORK_CODES = [
 
 const POSITIONS = ["대표", "본부장", "운영이사", "수석팀장", "센터장", "팀장", "일반"];
 const TAX_TYPES = ["4대보험", "3.3%", "3.3%(타인)", "고용&산재", "미신고"];
-const ROLES = { super_admin: "슈퍼관리자", admin: "일반관리자", viewer: "뷰어" };
+const ROLES = { super_admin: "슈퍼관리자", admin: "일반관리자", viewer: "뷰어", field_leader: "현장팀장", field_staff: "현장요원" };
 
 // 날짜 포맷 헬퍼 (어드민 패널용)
 const fmtDate = (d) => {
@@ -243,21 +243,21 @@ function AuthProvider({ children }) {
   const signIn = async (email, pw) => {
     const { data: authData, error } = await supabase.auth.signInWithPassword({ email, password: pw });
     if (error) return { error: error.message };
-    await loadData();
-    // 프로필이 없는 경우 자동 생성 (이전 가입 시 프로필 미생성 복구)
+    // 프로필 존재 확인 (없으면 로그인 거부 — 관리자가 직접 생성한 계정만 허용)
     if (authData?.user) {
       const { data: existingProfile } = await supabase.from("profiles")
-        .select("id").eq("id", authData.user.id).single();
+        .select("id, role").eq("id", authData.user.id).single();
       if (!existingProfile) {
-        await supabase.from("profiles").insert({
-          id: authData.user.id,
-          email: email,
-          name: authData.user.user_metadata?.name || email.split("@")[0],
-          role: "viewer",
-        });
-        await loadData();
+        await supabase.auth.signOut();
+        return { error: "등록된 관리자 계정이 아닙니다. 슈퍼관리자에게 문의하세요." };
+      }
+      // 현장 계정(field_leader/field_staff)은 ERP 접근 차단
+      if (existingProfile.role === "field_leader" || existingProfile.role === "field_staff") {
+        await supabase.auth.signOut();
+        return { error: "현장 계정은 현장일보 앱을 이용해주세요." };
       }
     }
+    await loadData();
     return { error: null };
   };
 
@@ -303,30 +303,21 @@ function AuthProvider({ children }) {
     setUser(null); setProfiles([]); setInvitations([]);
   };
 
-  // ── 계정 직접 생성 (슈퍼관리자 전용 — Admin API) ──
-  const createAccount = async (name, email, password, role) => {
+  // ── 계정 직접 생성 (슈퍼관리자 전용 — Edge Function) ──
+  const createAccount = async (name, email, password, role, options = {}) => {
     try {
       const existingProfile = profiles.find(p => p.email === email);
       if (existingProfile) return { error: "이미 등록된 관리자입니다." };
 
-      // Admin API로 유저 생성 (이메일 확인 자동 완료, SMTP 불필요)
-      const { data, error } = await supabaseAdmin.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-        user_metadata: { name }
+      // Edge Function으로 계정 생성 (service_role 키는 서버에서만 사용)
+      const { data, error: apiError } = await callAdminApi("create_user", {
+        email, password, name, role,
+        site_code: options.site_code || null,
+        employee_id: options.employee_id || null,
+        emp_no: options.emp_no || null,
       });
 
-      if (error) return { error: "계정 생성 실패: " + error.message };
-      const userId = data?.user?.id;
-      if (!userId) return { error: "계정 생성 실패: ID를 받지 못했습니다." };
-
-      // 프로필 생성
-      const { error: profErr } = await supabase.from("profiles").upsert({
-        id: userId, email, name, role,
-        created_at: new Date().toISOString(),
-      }, { onConflict: "id" });
-      if (profErr) return { error: "계정 생성 완료, 프로필 저장 실패: " + profErr.message };
+      if (apiError) return { error: apiError };
 
       await loadData();
       return { error: null };
@@ -389,8 +380,9 @@ function AuthProvider({ children }) {
 
   const removeAdmin = async (id) => {
     try {
-      const { error } = await supabase.from("profiles").delete().eq("id", id);
-      if (error) { alert("관리자 제거 실패: " + error.message); return; }
+      // Edge Function으로 Auth ban + profiles 삭제 동시 처리
+      const { error: apiError } = await callAdminApi("ban_user", { userId: id });
+      if (apiError) { alert("관리자 제거 실패: " + apiError); return; }
       await loadData();
     } catch (e) { alert("오류: " + e.message); }
   };
@@ -404,8 +396,10 @@ function AuthProvider({ children }) {
   };
 
   const profile = user ? profiles.find(p => p.id === user.id) : null;
+  const isFieldRole = profile && (profile.role === "field_leader" || profile.role === "field_staff");
   const can = (action) => {
     if (!profile) return false;
+    if (isFieldRole) return false; // 현장 역할은 ERP 기능 접근 불가
     if (profile.role === "super_admin") return true;
     if (profile.role === "admin") return !["invite", "manage_admins", "settings"].includes(action);
     return action === "view";
@@ -415,7 +409,7 @@ function AuthProvider({ children }) {
     <AuthCtx.Provider value={{
       user, profile, loading, signIn, signUp, signOut, createAccount, changePassword, sendInvite,
       cancelInvite, resendInvite, removeAdmin, updateRole,
-      profiles, invitations, can, loadData,
+      profiles, invitations, can, loadData, callAdminApi,
     }}>
       {children}
     </AuthCtx.Provider>
@@ -6803,12 +6797,26 @@ export default function App() {
 }
 
 function AppRouter() {
-  const { user, loading } = useAuth();
+  const { user, profile, loading } = useAuth();
   if (loading) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, background: C.bg }}>
     <div style={{ textAlign: "center" }}>
       <div style={{ width: 48, height: 48, borderRadius: 12, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: C.navy, marginBottom: 12 }}>MP</div>
       <div style={{ color: C.gray, fontSize: 13 }}>로딩 중...</div>
     </div>
   </div>;
+  // 현장 계정이 ERP에 접근한 경우 차단 안내
+  if (user && profile && (profile.role === "field_leader" || profile.role === "field_staff")) {
+    return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, background: C.bg }}>
+      <div style={{ textAlign: "center", maxWidth: 400, padding: 32 }}>
+        <div style={{ width: 64, height: 64, borderRadius: 16, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 900, color: C.navy, marginBottom: 16 }}>MP</div>
+        <h2 style={{ fontSize: 18, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>관리자 전용 시스템</h2>
+        <p style={{ fontSize: 14, color: C.gray, lineHeight: 1.6, margin: "0 0 24px" }}>
+          현장 계정({profile.emp_no || profile.name})은 이 시스템에 접근할 수 없습니다.<br/>
+          현장일보 앱을 이용해주세요.
+        </p>
+        <button onClick={() => supabase.auth.signOut()} style={{ ...btnPrimary, padding: "12px 32px", fontSize: 14 }}>로그아웃</button>
+      </div>
+    </div>;
+  }
   return user ? <MainApp /> : <LoginPage />;
 }
