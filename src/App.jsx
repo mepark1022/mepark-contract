@@ -322,8 +322,10 @@ function AuthProvider({ children }) {
 
       // signUp 에러 처리
       if (error) {
-        // 이미 존재하는 유저 → RPC로 ID 조회
-        if (error.message.includes("already") || error.message.includes("registered") || error.message.includes("exists")) {
+        // 확인 이메일 발송 실패는 무시 (계정 자체는 생성됨)
+        if (error.message.includes("confirmation") || error.message.includes("sending")) {
+          // 무시 — userId가 있으면 진행
+        } else if (error.message.includes("already") || error.message.includes("registered") || error.message.includes("exists")) {
           const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
           if (foundId) userId = foundId;
           else return { error: "이미 가입된 이메일입니다." };
