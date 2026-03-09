@@ -7532,6 +7532,737 @@ function SalaryCalculatorPage() {
   );
 }
 
+// ── 16-5. 급여대장 모듈 (v8.2) ────────────────────────
+const PY_TAX_TYPES = [
+  { key: "4대보험", label: "4대보험", color: "#1428A0" },
+  { key: "3.3%", label: "3.3%", color: "#E97132" },
+  { key: "3.3%(타인)", label: "3.3%(타인)", color: "#E97132" },
+  { key: "고용&산재", label: "고용&산재", color: "#156082" },
+  { key: "미신고", label: "미신고", color: "#999" },
+];
+
+const PY_PAY_FIELDS = [
+  { key: "basic_pay", label: "기본급" },
+  { key: "meal", label: "식대" },
+  { key: "childcare", label: "보육수당" },
+  { key: "car_allow", label: "자가운전" },
+  { key: "team_allow", label: "팀장수당" },
+  { key: "holiday_bonus", label: "명절상여" },
+  { key: "incentive", label: "인센티브" },
+  { key: "extra_work", label: "추가근무" },
+  { key: "manual_write", label: "수기수당" },
+  { key: "extra1", label: "기타수당" },
+];
+
+const PY_DED_FIELDS_4 = [
+  { key: "np", label: "국민연금" },
+  { key: "hi", label: "건강보험" },
+  { key: "lt", label: "장기요양" },
+  { key: "ei", label: "고용보험" },
+  { key: "income_tax", label: "소득세" },
+  { key: "local_tax", label: "지방소득세" },
+];
+
+function calcPyDeductions(record) {
+  const gross = (record.basic_pay || 0) + (record.meal || 0) + (record.childcare || 0) +
+    (record.car_allow || 0) + (record.team_allow || 0) + (record.holiday_bonus || 0) +
+    (record.incentive || 0) + (record.extra_work || 0) + (record.manual_write || 0) + (record.extra1 || 0);
+
+  let np=0, hi=0, lt=0, ei=0, income_tax=0, local_tax=0;
+
+  if (record.tax_type === "3.3%" || record.tax_type === "3.3%(타인)") {
+    income_tax = Math.round(gross * 0.03);
+    local_tax = Math.round(gross * 0.003);
+  }
+  // 4대보험 → 수동입력 (자동계산 금지)
+  // 고용&산재 → 수동입력
+  // 미신고 → 전부 0
+
+  const tot_ded = np + hi + lt + ei + income_tax + local_tax +
+    (record.accident_deduct || 0) + (record.prepaid || 0);
+  return { np, hi, lt, ei, income_tax, local_tax, gross_pay: gross, net_pay: gross - tot_ded };
+}
+
+function PayrollPage({ employees, profitState }) {
+  const confirm = useConfirm();
+  const now = new Date();
+  const [pyYear, setPyYear] = useState(now.getFullYear());
+  const [pyMonth, setPyMonth] = useState(now.getMonth() + 1);
+  const [pyMonthData, setPyMonthData] = useState(null); // payroll_months row
+  const [pyRecords, setPyRecords] = useState([]);
+  const [pyLoading, setPyLoading] = useState(false);
+  const [pySiteTab, setPySiteTab] = useState("all");
+  const [pyEditRecord, setPyEditRecord] = useState(null); // slide panel
+  const [pyEditTab, setPyEditTab] = useState("pay"); // pay / deduct / summary
+  const [pySaving, setPySaving] = useState(false);
+  const [pyBatchCreating, setPyBatchCreating] = useState(false);
+
+  // 월 데이터 로딩
+  const loadPayrollMonth = useCallback(async () => {
+    setPyLoading(true);
+    const { data: mData } = await supabase.from("payroll_months")
+      .select("*").eq("year", pyYear).eq("month", pyMonth).maybeSingle();
+    setPyMonthData(mData || null);
+
+    if (mData) {
+      const { data: recs } = await supabase.from("payroll_records")
+        .select("*").eq("month_id", mData.id).order("site_code");
+      setPyRecords(recs || []);
+    } else {
+      setPyRecords([]);
+    }
+    setPyLoading(false);
+  }, [pyYear, pyMonth]);
+
+  useEffect(() => { loadPayrollMonth(); }, [loadPayrollMonth]);
+
+  // 월 급여대장 생성 (재직 직원 기준 레코드 일괄 생성)
+  const handleCreateMonth = async () => {
+    const ok = await confirm("급여대장 생성", `${pyYear}년 ${pyMonth}월 급여대장을 생성하시겠습니까?\n재직 직원 기준으로 레코드가 자동 생성됩니다.`);
+    if (!ok) return;
+    setPyBatchCreating(true);
+    try {
+      // 1. payroll_months 생성
+      const { data: newMonth, error: mErr } = await supabase.from("payroll_months")
+        .insert({ year: pyYear, month: pyMonth, status: "draft" })
+        .select().single();
+      if (mErr) throw mErr;
+
+      // 2. 재직 직원 기준 레코드 생성
+      const activeEmps = employees.filter(e => e.is_active !== false);
+      const records = activeEmps.map(e => ({
+        month_id: newMonth.id,
+        employee_id: e.id,
+        site_code: e.site_code || "V000",
+        work_type: e.work_code || e.work_type || "",
+        basic_pay: e.weekday_pay || 0,
+        meal: e.meal || 200000,
+        childcare: e.childcare || 0,
+        car_allow: e.car_allowance || 0,
+        team_allow: e.team_allowance || 0,
+        holiday_bonus: e.holiday_bonus || 0,
+        incentive: e.incentive || 0,
+        extra1: e.extra1 || 0,
+        tax_type: e.tax_type || "4대보험",
+        reporter_name: e.reporter_name || "",
+        reporter_rrn: e.reporter_rrn || "",
+      }));
+
+      // gross, net 계산 후 저장
+      const finalRecords = records.map(r => {
+        const calc = calcPyDeductions(r);
+        return { ...r, gross_pay: calc.gross_pay, net_pay: calc.gross_pay }; // 초기 생성 시 공제 미적용
+      });
+
+      if (finalRecords.length > 0) {
+        const { error: rErr } = await supabase.from("payroll_records").insert(finalRecords);
+        if (rErr) throw rErr;
+      }
+
+      await loadPayrollMonth();
+    } catch (err) {
+      alert("급여대장 생성 오류: " + err.message);
+    }
+    setPyBatchCreating(false);
+  };
+
+  // 레코드 저장
+  const savePayrollRecord = async (rec) => {
+    setPySaving(true);
+    try {
+      const gross = PY_PAY_FIELDS.reduce((s, f) => s + (rec[f.key] || 0), 0);
+      const totDed = (rec.np || 0) + (rec.hi || 0) + (rec.lt || 0) + (rec.ei || 0) +
+        (rec.income_tax || 0) + (rec.local_tax || 0) + (rec.accident_deduct || 0) + (rec.prepaid || 0);
+      const net = gross - totDed;
+      const updated = { ...rec, gross_pay: gross, net_pay: net };
+      delete updated.created_at;
+      const { error } = await supabase.from("payroll_records").update(updated).eq("id", rec.id);
+      if (error) throw error;
+      setPyRecords(prev => prev.map(r => r.id === rec.id ? updated : r));
+      setPyEditRecord(updated);
+    } catch (err) { alert("저장 오류: " + err.message); }
+    setPySaving(false);
+  };
+
+  // 급여 확정
+  const handleConfirmPayroll = async () => {
+    if (!pyMonthData) return;
+    const totalGross = pyRecords.reduce((s, r) => s + (r.gross_pay || 0), 0);
+    const totalNet = pyRecords.reduce((s, r) => s + (r.net_pay || 0), 0);
+    const ok = await confirm("급여 확정",
+      `${pyYear}년 ${pyMonth}월 급여를 확정하시겠습니까?\n\n총 ${pyRecords.length}명\n급여총계: ${fmt(totalGross)}원\n실입금합계: ${fmt(totalNet)}원\n\n확정 후 site_revenue.labor_fixed가 자동 업데이트됩니다.`);
+    if (!ok) return;
+
+    try {
+      // 1. 사업장별 급여 합산 → site_revenue.labor_fixed 업데이트
+      const bySite = {};
+      pyRecords.forEach(r => {
+        if (!r.site_code) return;
+        bySite[r.site_code] = (bySite[r.site_code] || 0) + (r.gross_pay || 0);
+      });
+      const monthStr = `${pyYear}-${String(pyMonth).padStart(2, "0")}`;
+      for (const [siteCode, total] of Object.entries(bySite)) {
+        await supabase.from("site_revenue")
+          .upsert({ site_code: siteCode, month: monthStr, labor_fixed: Math.round(total) },
+            { onConflict: "site_code,month" });
+      }
+
+      // 2. payroll_months 상태 확정
+      await supabase.from("payroll_months")
+        .update({ status: "confirmed", total_gross: totalGross, total_net: totalNet, closed_at: new Date().toISOString() })
+        .eq("id", pyMonthData.id);
+
+      await loadPayrollMonth();
+      // 수익성 데이터 리로드
+      if (profitState?.saveLaborToDB) {
+        // trigger reload in parent
+      }
+    } catch (err) { alert("확정 오류: " + err.message); }
+  };
+
+  // 필터링
+  const filteredRecords = useMemo(() => {
+    let list = pyRecords;
+    if (pySiteTab !== "all") list = list.filter(r => r.site_code === pySiteTab);
+    return list;
+  }, [pyRecords, pySiteTab]);
+
+  // 사업장별 집계
+  const siteSummary = useMemo(() => {
+    const map = {};
+    pyRecords.forEach(r => {
+      const sc = r.site_code || "unknown";
+      if (!map[sc]) map[sc] = { count: 0, gross: 0, net: 0 };
+      map[sc].count++;
+      map[sc].gross += r.gross_pay || 0;
+      map[sc].net += r.net_pay || 0;
+    });
+    return map;
+  }, [pyRecords]);
+
+  // KPI
+  const totalGross = pyRecords.reduce((s, r) => s + (r.gross_pay || 0), 0);
+  const totalNet = pyRecords.reduce((s, r) => s + (r.net_pay || 0), 0);
+  const totalDed = totalGross - totalNet;
+
+  // employee lookup
+  const empMap = useMemo(() => {
+    const m = {};
+    employees.forEach(e => { m[e.id] = e; });
+    return m;
+  }, [employees]);
+
+  const statusBadge = (s) => {
+    const map = { draft: { bg: "#FFF3CD", color: "#856404", label: "🟡 작성중" },
+      confirmed: { bg: "#D4EDDA", color: "#155724", label: "🟢 확정" },
+      locked: { bg: "#E2E3E5", color: "#383D41", label: "🔒 잠금" } };
+    const st = map[s] || map.draft;
+    return { display: "inline-block", padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 800, background: st.bg, color: st.color, content: st.label };
+  };
+
+  // ── 급여 편집 패널 핸들러 ──
+  const handleFieldChange = (field, value) => {
+    setPyEditRecord(prev => {
+      const updated = { ...prev, [field]: value };
+      // 3.3% 자동계산
+      if (field !== "income_tax" && field !== "local_tax" &&
+          (updated.tax_type === "3.3%" || updated.tax_type === "3.3%(타인)")) {
+        const gross = PY_PAY_FIELDS.reduce((s, f) => s + (updated[f.key] || 0), 0);
+        updated.income_tax = Math.round(gross * 0.03);
+        updated.local_tax = Math.round(gross * 0.003);
+      }
+      return updated;
+    });
+  };
+
+  const handleTaxTypeChange = (newType) => {
+    setPyEditRecord(prev => {
+      const updated = { ...prev, tax_type: newType };
+      // 타입 변경 시 공제 초기화
+      if (newType === "미신고") {
+        updated.np = 0; updated.hi = 0; updated.lt = 0; updated.ei = 0;
+        updated.income_tax = 0; updated.local_tax = 0;
+      } else if (newType === "3.3%" || newType === "3.3%(타인)") {
+        updated.np = 0; updated.hi = 0; updated.lt = 0; updated.ei = 0;
+        const gross = PY_PAY_FIELDS.reduce((s, f) => s + (updated[f.key] || 0), 0);
+        updated.income_tax = Math.round(gross * 0.03);
+        updated.local_tax = Math.round(gross * 0.003);
+      } else if (newType === "고용&산재") {
+        updated.np = 0; updated.hi = 0; updated.lt = 0;
+        updated.income_tax = 0; updated.local_tax = 0;
+      }
+      return updated;
+    });
+  };
+
+  // ── 렌더 ──
+  const pyCardStyle = { background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, padding: "16px 20px", textAlign: "center", flex: 1 };
+  const pyThStyle = { padding: "8px 6px", fontSize: 11, fontWeight: 700, color: C.white, background: C.navy, position: "sticky", top: 0, whiteSpace: "nowrap" };
+  const pyTdStyle = { padding: "7px 6px", fontSize: 12, borderBottom: `1px solid ${C.lightGray}`, whiteSpace: "nowrap" };
+
+  // ── 편집 패널 렌더 ──
+  function renderEditPanel() {
+    if (!pyEditRecord) return null;
+    const rec = pyEditRecord;
+    const emp = empMap[rec.employee_id];
+    const gross = PY_PAY_FIELDS.reduce((s, f) => s + (rec[f.key] || 0), 0);
+    const totDed = (rec.np || 0) + (rec.hi || 0) + (rec.lt || 0) + (rec.ei || 0) +
+      (rec.income_tax || 0) + (rec.local_tax || 0) + (rec.accident_deduct || 0) + (rec.prepaid || 0);
+    const net = gross - totDed;
+    const isConfirmed = pyMonthData?.status === "confirmed" || pyMonthData?.status === "locked";
+
+    return (
+      <div style={{ position: "fixed", top: 0, right: 0, width: 480, height: "100vh", background: C.white,
+        boxShadow: "-4px 0 24px rgba(0,0,0,0.15)", zIndex: 1000, display: "flex", flexDirection: "column", fontFamily: FONT }}>
+        {/* 헤더 */}
+        <div style={{ padding: "16px 20px", background: C.navy, color: C.white, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 900 }}>{emp?.name || "?"} ({emp?.emp_no || ""})</div>
+            <div style={{ fontSize: 11, opacity: 0.8, marginTop: 2 }}>{getSiteName(rec.site_code)} · {getWorkLabel(rec.work_type)}</div>
+          </div>
+          <button onClick={() => setPyEditRecord(null)} style={{ background: "none", border: "none", color: C.white, fontSize: 22, cursor: "pointer", padding: 4 }}>✕</button>
+        </div>
+
+        {/* 요약 strip */}
+        <div style={{ display: "flex", padding: "10px 20px", gap: 12, borderBottom: `1px solid ${C.lightGray}`, background: "#FAFBFC" }}>
+          {[
+            { label: "총지급", value: fmt(gross), color: C.navy },
+            { label: "공제합계", value: fmt(totDed), color: C.error },
+            { label: "실입금", value: fmt(net), color: C.success },
+          ].map(k => (
+            <div key={k.label} style={{ flex: 1, textAlign: "center" }}>
+              <div style={{ fontSize: 15, fontWeight: 900, color: k.color, fontFamily: "monospace" }}>{k.value}</div>
+              <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>{k.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* 탭 */}
+        <div style={{ display: "flex", borderBottom: `2px solid ${C.lightGray}` }}>
+          {[{ k: "pay", label: "💰 급여항목" }, { k: "deduct", label: "📊 공제내역" }, { k: "summary", label: "📋 요약" }].map(t => (
+            <button key={t.k} onClick={() => setPyEditTab(t.k)}
+              style={{ flex: 1, padding: "10px 0", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                background: pyEditTab === t.k ? C.white : "#F4F5F7",
+                color: pyEditTab === t.k ? C.navy : C.gray,
+                borderBottom: pyEditTab === t.k ? `3px solid ${C.navy}` : "3px solid transparent",
+                fontFamily: FONT }}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+
+        {/* 탭 콘텐츠 */}
+        <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
+          {pyEditTab === "pay" && (
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 12 }}>급여 항목</div>
+              {PY_PAY_FIELDS.map(f => (
+                <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+                  <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
+                  <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
+                    style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }}
+                    disabled={isConfirmed} />
+                </div>
+              ))}
+              <div style={{ marginTop: 16, padding: "12px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>총 지급액</span>
+                <span style={{ fontSize: 16, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(gross)}원</span>
+              </div>
+            </div>
+          )}
+
+          {pyEditTab === "deduct" && (
+            <div>
+              {/* 세금처리방식 선택 */}
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 8 }}>세금 처리방식</div>
+              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16 }}>
+                {PY_TAX_TYPES.map(t => (
+                  <button key={t.key} onClick={() => !isConfirmed && handleTaxTypeChange(t.key)}
+                    style={{ padding: "6px 12px", borderRadius: 20, border: rec.tax_type === t.key ? `2px solid ${t.color}` : `1px solid ${C.border}`,
+                      background: rec.tax_type === t.key ? `${t.color}15` : C.white,
+                      color: rec.tax_type === t.key ? t.color : C.gray,
+                      fontSize: 11, fontWeight: 700, cursor: isConfirmed ? "default" : "pointer", fontFamily: FONT }}>
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* 4대보험: 수동입력 */}
+              {rec.tax_type === "4대보험" && (
+                <div>
+                  <div style={{ fontSize: 11, color: C.gray, marginBottom: 8, padding: "6px 10px", background: "#FFF8E1", borderRadius: 6 }}>
+                    ⚠️ 4대보험 공제액은 수동 입력해주세요 (합계만 자동 계산)
+                  </div>
+                  {PY_DED_FIELDS_4.map(f => (
+                    <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                      <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
+                      <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
+                        style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 3.3% */}
+              {(rec.tax_type === "3.3%" || rec.tax_type === "3.3%(타인)") && (
+                <div>
+                  <div style={{ fontSize: 11, color: C.orange, marginBottom: 8 }}>총지급액 × 3.3% 자동계산</div>
+                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>소득세(3%)</label>
+                    <div style={{ flex: 1, textAlign: "right", fontSize: 13, fontWeight: 700, color: C.error }}>{fmt(rec.income_tax || 0)}원</div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>지방세(0.3%)</label>
+                    <div style={{ flex: 1, textAlign: "right", fontSize: 13, fontWeight: 700, color: C.error }}>{fmt(rec.local_tax || 0)}원</div>
+                  </div>
+                  {rec.tax_type === "3.3%(타인)" && (
+                    <div style={{ marginTop: 12, padding: 12, background: "#FFF3E0", borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: C.orange, marginBottom: 6 }}>타인신고 정보</div>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: 10, color: C.gray }}>신고자명</label>
+                          <input value={rec.reporter_name || ""} onChange={e => handleFieldChange("reporter_name", e.target.value)}
+                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} disabled={isConfirmed} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label style={{ fontSize: 10, color: C.gray }}>주민번호</label>
+                          <input value={rec.reporter_rrn || ""} onChange={e => handleFieldChange("reporter_rrn", e.target.value)}
+                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} disabled={isConfirmed} />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* 고용&산재 */}
+              {rec.tax_type === "고용&산재" && (
+                <div>
+                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>고용보험</label>
+                    <NumInput value={rec.ei || 0} onChange={v => handleFieldChange("ei", v)}
+                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>산재공제</label>
+                    <NumInput value={rec.accident_deduct || 0} onChange={v => handleFieldChange("accident_deduct", v)}
+                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                  </div>
+                </div>
+              )}
+
+              {/* 미신고 */}
+              {rec.tax_type === "미신고" && (
+                <div style={{ padding: 16, background: "#F5F5F5", borderRadius: 8, textAlign: "center", color: C.gray, fontSize: 12 }}>
+                  공제 없음 (총지급액 = 실입금)
+                </div>
+              )}
+
+              {/* 공통: 사고공제 + 선지급 */}
+              <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.lightGray}` }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: C.dark, marginBottom: 8 }}>기타 공제</div>
+                <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                  <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>사고공제</label>
+                  <NumInput value={rec.accident_deduct || 0} onChange={v => handleFieldChange("accident_deduct", v)}
+                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed || rec.tax_type === "고용&산재"} />
+                </div>
+                <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
+                  <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>선지급</label>
+                  <NumInput value={rec.prepaid || 0} onChange={v => handleFieldChange("prepaid", v)}
+                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                </div>
+              </div>
+
+              {/* 공제 합계 */}
+              <div style={{ marginTop: 16, padding: "12px 16px", background: "#FFEBEE", borderRadius: 8, display: "flex", justifyContent: "space-between" }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.error }}>공제 합계</span>
+                <span style={{ fontSize: 16, fontWeight: 900, color: C.error, fontFamily: "monospace" }}>{fmt(totDed)}원</span>
+              </div>
+            </div>
+          )}
+
+          {pyEditTab === "summary" && (
+            <div>
+              {/* 급여 요약 */}
+              <div style={{ padding: "16px 0" }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.navy, marginBottom: 12 }}>급여 내역</div>
+                {PY_PAY_FIELDS.filter(f => (rec[f.key] || 0) > 0).map(f => (
+                  <div key={f.key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
+                    <span style={{ color: C.gray }}>{f.label}</span>
+                    <span style={{ fontWeight: 700, fontFamily: "monospace" }}>{fmt(rec[f.key])}원</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", marginTop: 8, borderTop: `2px solid ${C.navy}`, fontSize: 14, fontWeight: 900, color: C.navy }}>
+                  <span>총 지급액</span>
+                  <span style={{ fontFamily: "monospace" }}>{fmt(gross)}원</span>
+                </div>
+              </div>
+
+              {/* 공제 요약 */}
+              <div style={{ padding: "16px 0", borderTop: `1px solid ${C.lightGray}` }}>
+                <div style={{ fontSize: 14, fontWeight: 800, color: C.error, marginBottom: 12 }}>공제 내역 ({rec.tax_type})</div>
+                {[...PY_DED_FIELDS_4, { key: "accident_deduct", label: "사고공제" }, { key: "prepaid", label: "선지급" }]
+                  .filter(f => (rec[f.key] || 0) > 0).map(f => (
+                  <div key={f.key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
+                    <span style={{ color: C.gray }}>{f.label}</span>
+                    <span style={{ fontWeight: 700, fontFamily: "monospace", color: C.error }}>-{fmt(rec[f.key])}원</span>
+                  </div>
+                ))}
+                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", marginTop: 8, borderTop: `2px solid ${C.error}`, fontSize: 14, fontWeight: 900, color: C.error }}>
+                  <span>공제 합계</span>
+                  <span style={{ fontFamily: "monospace" }}>-{fmt(totDed)}원</span>
+                </div>
+              </div>
+
+              {/* 실입금 */}
+              <div style={{ marginTop: 12, padding: 20, background: `linear-gradient(135deg, ${C.navy}, #1e3a8a)`, borderRadius: 12, textAlign: "center" }}>
+                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>실입금액</div>
+                <div style={{ fontSize: 28, fontWeight: 900, color: C.gold, fontFamily: "monospace" }}>{fmt(net)}원</div>
+              </div>
+
+              {/* 계좌 정보 */}
+              {emp && (emp.bank_name || emp.account_number) && (
+                <div style={{ marginTop: 16, padding: 12, background: "#F5F5F5", borderRadius: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 6 }}>💳 이체 정보</div>
+                  <div style={{ fontSize: 12 }}>
+                    <div>예금주: <strong>{emp.account_holder || emp.name}</strong></div>
+                    <div>{emp.bank_name} {emp.account_number}</div>
+                    {emp.is_third_party_payment && <div style={{ color: C.orange, fontWeight: 700, marginTop: 4 }}>⚠️ 타인 입금</div>}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 하단 버튼 */}
+        {!isConfirmed && (
+          <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.lightGray}`, display: "flex", gap: 8 }}>
+            <button onClick={() => setPyEditRecord(null)} style={{ ...btnOutline, flex: 1, padding: "10px" }}>닫기</button>
+            <button onClick={() => savePayrollRecord(pyEditRecord)} disabled={pySaving}
+              style={{ ...btnPrimary, flex: 2, padding: "10px", opacity: pySaving ? 0.6 : 1 }}>
+              {pySaving ? "저장 중..." : "💾 저장"}
+            </button>
+          </div>
+        )}
+        {isConfirmed && (
+          <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.lightGray}` }}>
+            <button onClick={() => setPyEditRecord(null)} style={{ ...btnOutline, width: "100%", padding: "10px" }}>닫기</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── 메인 렌더 ──
+  return (
+    <div>
+      {/* 페이지 헤더 */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+        <div>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: C.dark }}>💰 급여대장</h2>
+          <p style={{ margin: "4px 0 0", fontSize: 12, color: C.gray }}>월별 급여 관리 · 세금처리 · 은행이체 목록</p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* 연/월 선택 */}
+          <select value={pyYear} onChange={e => setPyYear(Number(e.target.value))}
+            style={{ ...inputStyle, width: 90, padding: "8px", fontWeight: 700 }}>
+            {[2024, 2025, 2026, 2027].map(y => <option key={y} value={y}>{y}년</option>)}
+          </select>
+          <select value={pyMonth} onChange={e => setPyMonth(Number(e.target.value))}
+            style={{ ...inputStyle, width: 75, padding: "8px", fontWeight: 700 }}>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m}월</option>)}
+          </select>
+          {pyMonthData && (
+            <span style={(() => { const s = statusBadge(pyMonthData.status); return { display: s.display, padding: s.padding, borderRadius: s.borderRadius, fontSize: s.fontSize, fontWeight: s.fontWeight, background: s.bg, color: s.color }; })()}>
+              {statusBadge(pyMonthData.status).content}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* 급여대장 없는 경우 */}
+      {pyLoading ? (
+        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>로딩 중...</div>
+      ) : !pyMonthData ? (
+        <div style={{ textAlign: "center", padding: 60, background: C.white, borderRadius: 12, border: `1px solid ${C.border}` }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>📋</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark, marginBottom: 8 }}>
+            {pyYear}년 {pyMonth}월 급여대장이 없습니다
+          </div>
+          <p style={{ fontSize: 13, color: C.gray, marginBottom: 20 }}>재직 직원 기준으로 급여 레코드가 자동 생성됩니다.</p>
+          <button onClick={handleCreateMonth} disabled={pyBatchCreating}
+            style={{ ...btnPrimary, padding: "12px 32px", fontSize: 14, opacity: pyBatchCreating ? 0.6 : 1 }}>
+            {pyBatchCreating ? "생성 중..." : "📋 급여대장 생성"}
+          </button>
+        </div>
+      ) : (
+        <div>
+          {/* KPI 카드 */}
+          <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+            {[
+              { icon: "👥", label: "총 인원", value: `${pyRecords.length}명`, color: C.navy },
+              { icon: "💰", label: "급여 총계", value: `${fmt(totalGross)}원`, color: C.navy },
+              { icon: "💚", label: "실입금 합계", value: `${fmt(totalNet)}원`, color: C.success },
+              { icon: "📊", label: "공제 합계", value: `${fmt(totalDed)}원`, color: C.error },
+            ].map(k => (
+              <div key={k.label} style={pyCardStyle}>
+                <div style={{ fontSize: 20, marginBottom: 4 }}>{k.icon}</div>
+                <div style={{ fontSize: 18, fontWeight: 900, color: k.color, fontFamily: "monospace" }}>{k.value}</div>
+                <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>{k.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* 사업장 탭 */}
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16, background: C.white, padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.border}` }}>
+            <button onClick={() => setPySiteTab("all")}
+              style={{ padding: "5px 12px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 700,
+                background: pySiteTab === "all" ? C.navy : "transparent", color: pySiteTab === "all" ? C.white : C.gray, fontFamily: FONT }}>
+              전체 ({pyRecords.length})
+            </button>
+            {SITES.filter(s => siteSummary[s.code]).map(s => (
+              <button key={s.code} onClick={() => setPySiteTab(s.code)}
+                style={{ padding: "5px 10px", borderRadius: 6, border: "none", cursor: "pointer", fontSize: 11, fontWeight: 600,
+                  background: pySiteTab === s.code ? C.navy : "transparent", color: pySiteTab === s.code ? C.white : C.gray, fontFamily: FONT }}>
+                {s.name} ({siteSummary[s.code]?.count || 0})
+              </button>
+            ))}
+          </div>
+
+          {/* 직원 급여 테이블 */}
+          <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    {["#", "사번", "성명", "사업장", "근무형태", "세금처리", "기본급", "식대", "수당계", "총지급", "공제합계", "실입금", ""].map((h, i) => (
+                      <th key={i} style={{ ...pyThStyle, textAlign: i >= 6 ? "right" : "left", ...(i === 0 ? { width: 30 } : {}) }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredRecords.map((r, idx) => {
+                    const emp = empMap[r.employee_id];
+                    const gross = r.gross_pay || 0;
+                    const net = r.net_pay || 0;
+                    const totD = gross - net;
+                    const extras = (r.childcare || 0) + (r.car_allow || 0) + (r.team_allow || 0) +
+                      (r.holiday_bonus || 0) + (r.incentive || 0) + (r.extra_work || 0) + (r.manual_write || 0) + (r.extra1 || 0);
+                    const taxInfo = PY_TAX_TYPES.find(t => t.key === r.tax_type);
+                    return (
+                      <tr key={r.id} style={{ background: idx % 2 ? "#FAFBFC" : C.white, cursor: "pointer" }}
+                        onClick={() => { setPyEditRecord({ ...r }); setPyEditTab("pay"); }}>
+                        <td style={{ ...pyTdStyle, textAlign: "center", color: C.gray }}>{idx + 1}</td>
+                        <td style={{ ...pyTdStyle, fontWeight: 700, fontSize: 11, color: C.navy }}>{emp?.emp_no || "-"}</td>
+                        <td style={{ ...pyTdStyle, fontWeight: 700 }}>{emp?.name || "-"}</td>
+                        <td style={{ ...pyTdStyle, fontSize: 11, color: C.gray }}>{getSiteName(r.site_code)}</td>
+                        <td style={pyTdStyle}>{getWorkLabel(r.work_type)}</td>
+                        <td style={pyTdStyle}>
+                          <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700,
+                            background: `${taxInfo?.color || C.gray}15`, color: taxInfo?.color || C.gray }}>
+                            {r.tax_type || "-"}
+                          </span>
+                        </td>
+                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace" }}>{fmt(r.basic_pay)}</td>
+                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace" }}>{fmt(r.meal)}</td>
+                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", color: extras > 0 ? C.blue : C.gray }}>{fmt(extras)}</td>
+                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.navy }}>{fmt(gross)}</td>
+                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", color: C.error }}>{totD > 0 ? `-${fmt(totD)}` : "0"}</td>
+                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.success }}>{fmt(net)}</td>
+                        <td style={{ ...pyTdStyle, textAlign: "center" }}>
+                          <span style={{ fontSize: 14, cursor: "pointer" }}>✏️</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                {/* 합계행 */}
+                <tfoot>
+                  <tr style={{ background: C.navy }}>
+                    <td colSpan={6} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.white }}>
+                      합계 ({filteredRecords.length}명)
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
+                      {fmt(filteredRecords.reduce((s, r) => s + (r.basic_pay || 0), 0))}
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
+                      {fmt(filteredRecords.reduce((s, r) => s + (r.meal || 0), 0))}
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
+                      {fmt(filteredRecords.reduce((s, r) => s + ((r.childcare||0)+(r.car_allow||0)+(r.team_allow||0)+(r.holiday_bonus||0)+(r.incentive||0)+(r.extra_work||0)+(r.manual_write||0)+(r.extra1||0)), 0))}
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>
+                      {fmt(filteredRecords.reduce((s, r) => s + (r.gross_pay || 0), 0))}
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: "#FF8A80" }}>
+                      -{fmt(filteredRecords.reduce((s, r) => s + ((r.gross_pay||0)-(r.net_pay||0)), 0))}
+                    </td>
+                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>
+                      {fmt(filteredRecords.reduce((s, r) => s + (r.net_pay || 0), 0))}
+                    </td>
+                    <td style={{ padding: "8px 6px" }} />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+
+          {/* 하단 액션 버튼 */}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+            {pyMonthData.status === "draft" && (
+              <button onClick={handleConfirmPayroll} style={{ ...btnGold, padding: "12px 28px", fontSize: 14 }}>
+                ✅ 급여 확정
+              </button>
+            )}
+            {pyMonthData.status === "confirmed" && (
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: "#D4EDDA", borderRadius: 8 }}>
+                <span style={{ fontSize: 16 }}>✅</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: "#155724" }}>
+                  {pyYear}년 {pyMonth}월 급여가 확정되었습니다
+                  {pyMonthData.closed_at && ` (${fmtDateTime(pyMonthData.closed_at)})`}
+                </span>
+              </div>
+            )}
+          </div>
+
+          {/* 사업장별 집계 카드 */}
+          {pySiteTab === "all" && Object.keys(siteSummary).length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.dark, marginBottom: 10 }}>📊 사업장별 급여 집계</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10 }}>
+                {SITES.filter(s => siteSummary[s.code]).map(s => {
+                  const d = siteSummary[s.code];
+                  return (
+                    <div key={s.code} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.border}`, padding: 14, cursor: "pointer" }}
+                      onClick={() => setPySiteTab(s.code)}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4 }}>{s.code}</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 8 }}>{s.name}</div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                        <span style={{ color: C.gray }}>{d.count}명</span>
+                        <span style={{ fontWeight: 700, color: C.navy, fontFamily: "monospace" }}>{fmt(d.gross)}원</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 편집 패널 (슬라이드 오버) */}
+      {pyEditRecord && (
+        <Fragment>
+          <div onClick={() => setPyEditRecord(null)}
+            style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.3)", zIndex: 999 }} />
+          {renderEditPanel()}
+        </Fragment>
+      )}
+    </div>
+  );
+}
+
 // ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
   const { profile, signOut, can } = useAuth();
@@ -7731,6 +8462,7 @@ function MainApp() {
     { key: "profit_summary", icon: "📊", label: "전체 요약" },
     { key: "profit_site_pl", icon: "🏢", label: "사업장 PL" },
     { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
+    { key: "payroll", icon: "💰", label: "급여대장" },
     { key: "monthly_parking", icon: "🅿️", label: "월주차 관리" },
     { key: "profit_comparison", icon: "📈", label: "비교 분석" },
     { key: "profit_alloc", icon: "⚙️", label: "배부 설정" },
@@ -7888,6 +8620,7 @@ function MainApp() {
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
         {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
         {page === "monthly_parking" && <MonthlyParkingPage employees={employees} />}
+        {page === "payroll" && <PayrollPage employees={employees} profitState={profitState} />}
         {page === "site_management" && <SiteManagementPage employees={employees} />}
         {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} />}
         {page === "salary_calc" && <SalaryCalculatorPage />}
