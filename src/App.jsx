@@ -87,7 +87,7 @@ const toNum = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };
 const today = () => new Date().toISOString().slice(0, 10);
 const uid = () => Math.random().toString(36).slice(2, 10);
 const dateFmt = (d) => d ? new Date(d).toLocaleDateString("ko-KR") : "";
-const dDay = (dateStr) => { if (!dateStr) return null; const diff = Math.ceil((new Date(dateStr) - new Date()) / 86400000); return diff; };
+const dDay = (dateStr) => { if (!dateStr) return null; const t = new Date(dateStr + "T00:00:00"); const n = new Date(); const td = new Date(n.getFullYear(), n.getMonth(), n.getDate()); return Math.round((t - td) / 86400000); };
 const getSiteName = (code) => SITES.find(s => s.code === code)?.name || "";
 const getWorkLabel = (code) => WORK_CODES.find(w => w.code === code)?.label || code;
 const getWorkCat = (code) => WORK_CODES.find(w => w.code === code)?.cat || "weekday";
@@ -1495,8 +1495,8 @@ function MainDashboard({ employees, onNavigate, profitState }) {
       {monthlyParkingData.length > 0 && (() => {
         const expiringSoon = monthlyParkingData.filter(p => {
           if (!p.contract_end) return false;
-          const dd = Math.ceil((new Date(p.contract_end) - new Date()) / 86400000);
-          return dd <= 7;
+          const dd = dDay(p.contract_end);
+          return dd !== null && dd <= 7;
         });
         const parkingBySite = {};
         monthlyParkingData.forEach(p => {
@@ -1514,7 +1514,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
                 <div style={{ fontSize: 13, fontWeight: 800, color: C.orange, marginBottom: 8 }}>⚠️ 월주차 만기 임박 ({expiringSoon.length}건)</div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   {expiringSoon.map(p => {
-                    const dd = Math.ceil((new Date(p.contract_end) - new Date()) / 86400000);
+                    const dd = dDay(p.contract_end) || 0;
                     return (
                       <div key={p.id} style={{ background: "#fff", borderRadius: 8, padding: "8px 12px", border: `1px solid ${dd <= 0 ? C.error : C.orange}`, display: "flex", alignItems: "center", gap: 10 }}>
                         <span style={{ fontSize: 12, fontWeight: 800, color: dd <= 0 ? C.error : C.orange }}>{dd <= 0 ? `D+${Math.abs(dd)}` : `D-${dd}`}</span>
@@ -5013,7 +5013,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
               <tbody>
                 {FIELD_SITES.map((site, i) => {
                   const d = siteDetailsMap[site.code] || {};
-                  const dDay = d.contract_end_date ? Math.ceil((new Date(d.contract_end_date) - new Date()) / 86400000) : null;
+                  const ddVal = d.contract_end_date ? dDay(d.contract_end_date) : null;
                   return (
                     <tr key={site.code} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
                       <td style={{ padding: "6px", textAlign: "center", fontWeight: 600, color: C.navy, fontSize: 10 }}>{site.code}</td>
@@ -5031,8 +5031,8 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                           style={{ ...inputStyle, textAlign: "right", padding: "5px 6px", fontSize: 11 }} />
                       </td>
                       <td style={{ padding: "6px", textAlign: "center", fontWeight: 700, fontSize: 11,
-                        color: dDay === null ? C.gray : dDay <= 7 ? C.error : dDay <= 30 ? C.orange : C.success }}>
-                        {dDay !== null ? (dDay >= 0 ? `D-${dDay}` : `D+${Math.abs(dDay)}`) : "—"}
+                        color: ddVal === null ? C.gray : ddVal <= 7 ? C.error : ddVal <= 30 ? C.orange : C.success }}>
+                        {ddVal !== null ? (ddVal >= 0 ? `D-${ddVal}` : `D+${Math.abs(ddVal)}`) : "—"}
                       </td>
                       <td style={{ padding: "4px 6px", width: 120 }}>
                         <input value={d.memo || ""} onChange={e => handleDetailChange(site.code, "memo", e.target.value)}
@@ -5397,7 +5397,7 @@ function SiteManagementPage({ employees }) {
             {allSites.map(site => {
               const d = siteDetails[site.code] || {};
               const isSel = sel?.code === site.code;
-              const dDay = d.contract_end_date ? Math.ceil((new Date(d.contract_end_date) - new Date()) / 86400000) : null;
+              const dVal = d.contract_end_date ? dDay(d.contract_end_date) : null;
               return (
                 <div key={site.code} onClick={() => setSelectedSite(site)}
                   style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid #f0f0f0`, background: isSel ? "#EFF3FF" : "#fff", transition: "all 0.1s" }}>
@@ -5420,7 +5420,7 @@ function SiteManagementPage({ employees }) {
                   </div>
                   {d.monthly_contract > 0 && (
                     <div style={{ fontSize: 10, color: C.gray, marginTop: 3 }}>
-                      월 {pFmt(d.monthly_contract)} {dDay !== null && <span style={{ color: dDay <= 30 ? C.error : C.success, fontWeight: 700, marginLeft: 6 }}>만기 D{dDay > 0 ? "-" + dDay : "+" + Math.abs(dDay)}</span>}
+                      월 {pFmt(d.monthly_contract)} {dVal !== null && <span style={{ color: dVal <= 30 ? C.error : C.success, fontWeight: 700, marginLeft: 6 }}>만기 D{dVal > 0 ? "-" + dVal : "+" + Math.abs(dVal)}</span>}
                     </div>
                   )}
                 </div>
@@ -5650,7 +5650,10 @@ function MonthlyParkingPage({ employees, onDataChange }) {
 
   const getDday = (endDate) => {
     if (!endDate) return null;
-    return Math.ceil((new Date(endDate) - new Date()) / 86400000);
+    const t = new Date(endDate + "T00:00:00");
+    const n = new Date();
+    const td = new Date(n.getFullYear(), n.getMonth(), n.getDate());
+    return Math.round((t - td) / 86400000);
   };
 
   const fieldSt = { ...inputStyle, fontSize: 12, padding: "7px 10px" };
