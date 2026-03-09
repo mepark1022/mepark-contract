@@ -53,6 +53,7 @@ CREATE TABLE IF NOT EXISTS daily_report_extra (
 
 -- 5. 기존 테이블 컬럼 추가 (IF NOT EXISTS로 안전)
 ALTER TABLE site_revenue ADD COLUMN IF NOT EXISTS valet_fee INTEGER DEFAULT 0;
+ALTER TABLE site_details ADD COLUMN IF NOT EXISTS valet_rate INTEGER DEFAULT 0;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS site_code TEXT;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS role TEXT DEFAULT 'manager';
 

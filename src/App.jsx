@@ -5792,6 +5792,23 @@ function DailyReportPage({ employees }) {
   const [editMode, setEditMode] = useState(false);
   const [viewMode, setViewMode] = useState("calendar"); // "calendar" | "table"
 
+  // ── 사업장별 발렛비 단가 (site_details.valet_rate) ──
+  const [valetRates, setValetRates] = useState({}); // { V001: 5000, V002: 6000, ... }
+  useEffect(() => {
+    (async () => {
+      const { data } = await supabase.from("site_details").select("site_code, valet_rate");
+      if (data) {
+        const map = {};
+        data.forEach(d => { if (d.valet_rate) map[d.site_code] = d.valet_rate; });
+        setValetRates(map);
+      }
+    })();
+  }, []);
+  const saveValetRate = async (siteCode, rate) => {
+    setValetRates(prev => ({ ...prev, [siteCode]: rate }));
+    await supabase.from("site_details").upsert({ site_code: siteCode, valet_rate: rate }, { onConflict: "site_code" });
+  };
+
   const emptyForm = { valet_count: 0, valet_amount: 0, memo: "", staffList: [], payList: PAYMENT_TYPES.map(p => ({ payment_type: p.key, count: 0, amount: 0, memo: "" })), extraList: [] };
   const [form, setForm] = useState(emptyForm);
 
@@ -6195,7 +6212,7 @@ function DailyReportPage({ employees }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 12 }}>
           <div style={{ background: "#F0F4FF", borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
             <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>{fmt(report.valet_count)}건</div>
-            <div style={{ fontSize: 11, color: C.gray }}>발렛 건수</div>
+            <div style={{ fontSize: 11, color: C.gray }}>발렛 건수{valetRates[report.site_code] > 0 ? ` · @${fmt(valetRates[report.site_code])}원` : ""}</div>
           </div>
           <div style={{ background: "#FFF8E1", borderRadius: 8, padding: "10px 14px", textAlign: "center" }}>
             <div style={{ fontSize: 18, fontWeight: 900, color: "#F57F17" }}>{fmt(report.valet_amount)}원</div>
@@ -6275,16 +6292,39 @@ function DailyReportPage({ employees }) {
           </select>
         </div>
 
-        {/* 발렛 현황 */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-          <div>
-            <label style={labelSt}>🚗 발렛 건수</label>
-            {renderNumField(form.valet_count, v => setForm(f => ({ ...f, valet_count: v })), { placeholder: "건수", style: { ...fieldSt } })}
+        {/* 발렛 현황 — 건수 × 단가 = 발렛비 자동계산 */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, alignItems: "end" }}>
+            <div>
+              <label style={labelSt}>🚗 발렛 건수</label>
+              {renderNumField(form.valet_count, v => {
+                const cnt = toNum(v);
+                const rate = valetRates[form.site_code] || 0;
+                setForm(f => ({ ...f, valet_count: v, ...(rate > 0 ? { valet_amount: cnt * rate } : {}) }));
+              }, { placeholder: "건수", style: { ...fieldSt } })}
+            </div>
+            <div>
+              <label style={labelSt}>💲 단가 (원/건)</label>
+              {renderNumField(valetRates[form.site_code] || 0, v => {
+                const rate = toNum(v);
+                saveValetRate(form.site_code, rate);
+                const cnt = toNum(form.valet_count);
+                if (cnt > 0 && rate > 0) setForm(f => ({ ...f, valet_amount: cnt * rate }));
+              }, { placeholder: "단가", style: { ...fieldSt } })}
+            </div>
+            <div>
+              <label style={labelSt}>💰 발렛비 (원)</label>
+              {renderNumField(form.valet_amount, v => setForm(f => ({ ...f, valet_amount: v })), { placeholder: "금액", style: { ...fieldSt } })}
+            </div>
           </div>
-          <div>
-            <label style={labelSt}>💰 발렛비 (원)</label>
-            {renderNumField(form.valet_amount, v => setForm(f => ({ ...f, valet_amount: v })), { placeholder: "금액", style: { ...fieldSt } })}
-          </div>
+          {valetRates[form.site_code] > 0 && toNum(form.valet_count) > 0 && (
+            <div style={{ fontSize: 11, color: C.navy, marginTop: 6, fontWeight: 600, textAlign: "right" }}>
+              💡 {fmt(form.valet_count)}건 × {fmt(valetRates[form.site_code])}원 = {fmt(toNum(form.valet_count) * valetRates[form.site_code])}원
+              {toNum(form.valet_amount) !== toNum(form.valet_count) * valetRates[form.site_code] && (
+                <span style={{ color: "#E97132", marginLeft: 6 }}>(수동 수정됨)</span>
+              )}
+            </div>
+          )}
         </div>
 
         {/* 근무자 배치 */}
