@@ -53,6 +53,7 @@ const WORK_CODES = [
 
 const POSITIONS = ["대표", "본부장", "운영이사", "수석팀장", "센터장", "팀장", "일반"];
 const TAX_TYPES = ["4대보험", "3.3%", "3.3%(타인)", "고용&산재", "미신고"];
+const BANKS = ["국민은행","신한은행","우리은행","하나은행","농협은행","기업은행","SC제일은행","카카오뱅크","토스뱅크","케이뱅크","수협은행","대구은행","부산은행","경남은행","광주은행","전북은행","제주은행","새마을금고","우체국","신협","산업은행"];
 const ROLES = { super_admin: "슈퍼관리자", admin: "일반관리자", viewer: "뷰어", field_member: "현장팀원" };
 
 // 날짜 포맷 헬퍼 (어드민 패널용)
@@ -1961,6 +1962,98 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                 <NumInput value={editEmp.leader_allow} onChange={v => setEditEmp(p => ({ ...p, leader_allow: v }))} />
               </div>
             </div>
+
+            {/* ── 급여조건 확장 (v8.2) ── */}
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `2px solid ${C.lightGray}` }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10 }}>💰 급여조건 (급여대장 연동)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>평일수당(월급)</label>
+                  <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>주말수당(일당)</label>
+                  <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>명절상여</label>
+                  <NumInput value={editEmp.holiday_bonus} onChange={v => setEditEmp(p => ({ ...p, holiday_bonus: v }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>보육수당</label>
+                  <NumInput value={editEmp.childcare} onChange={v => setEditEmp(p => ({ ...p, childcare: v }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>자가운전보조</label>
+                  <NumInput value={editEmp.car_allowance} onChange={v => setEditEmp(p => ({ ...p, car_allowance: v }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>인센티브</label>
+                  <NumInput value={editEmp.incentive} onChange={v => setEditEmp(p => ({ ...p, incentive: v }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>급여식대</label>
+                  <NumInput value={editEmp.meal} onChange={v => setEditEmp(p => ({ ...p, meal: v }))} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>기타수당</label>
+                  <NumInput value={editEmp.extra1} onChange={v => setEditEmp(p => ({ ...p, extra1: v }))} />
+                </div>
+              </div>
+            </div>
+
+            {/* ── 계좌정보 (v8.2) ── */}
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `2px solid ${C.lightGray}` }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10 }}>🏦 계좌정보 (은행이체 연동)</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>예금주</label>
+                  <input value={editEmp.account_holder || ""} onChange={e => setEditEmp(p => ({ ...p, account_holder: e.target.value }))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>은행명</label>
+                  <select value={editEmp.bank_name || ""} onChange={e => setEditEmp(p => ({ ...p, bank_name: e.target.value }))} style={inputStyle}>
+                    <option value="">선택</option>
+                    {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
+                  </select>
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>계좌번호</label>
+                  <input value={editEmp.account_number || ""} onChange={e => setEditEmp(p => ({ ...p, account_number: e.target.value }))} placeholder="숫자만 입력" style={inputStyle} />
+                </div>
+                <div style={{ gridColumn: "1 / -1" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.gray, cursor: "pointer" }}>
+                    <input type="checkbox" checked={editEmp.is_third_party_payment || false}
+                      onChange={e => setEditEmp(p => ({ ...p, is_third_party_payment: e.target.checked }))} />
+                    타인 입금 (예금주 ≠ 본인)
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* ── 세금/보험 정보 (v8.2) ── */}
+            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `2px solid ${C.lightGray}` }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10 }}>📋 세금/보험 정보</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>보험 취득일</label>
+                  <input type="date" value={editEmp.insurance_enroll_date || ""} onChange={e => setEditEmp(p => ({ ...p, insurance_enroll_date: e.target.value }))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>보험 상실일</label>
+                  <input type="date" value={editEmp.insurance_loss_date || ""} onChange={e => setEditEmp(p => ({ ...p, insurance_loss_date: e.target.value }))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>신고자명 (타인신고용)</label>
+                  <input value={editEmp.reporter_name || ""} onChange={e => setEditEmp(p => ({ ...p, reporter_name: e.target.value }))} style={inputStyle} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>신고자 주민번호</label>
+                  <input value={editEmp.reporter_rrn || ""} onChange={e => setEditEmp(p => ({ ...p, reporter_rrn: e.target.value }))} placeholder="000000-0000000" style={inputStyle} />
+                </div>
+              </div>
+            </div>
+
             <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
               <button onClick={() => setShowForm(false)} style={btnOutline}>취소</button>
               <button onClick={() => saveEmp(editEmp)} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? "저장 중..." : "저장"}</button>
@@ -1991,8 +2084,15 @@ const EXCEL_COL_MAP = {
   "수당구분": "salary_type", "평일수당": "base_salary", "기본급": "base_salary",
   "주말수당": "weekend_daily", "팀장수당": "leader_allow", "식대": "meal_allow",
   "보육수당": "childcare_allow", "자가운전보조금": "car_allow",
-  "신고여부": "tax_type", "신고자": "reporter_name",
+  "신고여부": "tax_type", "신고자": "reporter_name", "신고자명": "reporter_name",
+  "주민번호": "reporter_rrn", "신고자주민번호": "reporter_rrn",
   "예금주": "account_holder", "은행명": "bank_name", "계좌번호": "account_number",
+  "평일수당(급여)": "weekday_pay", "주말수당(급여)": "weekend_pay",
+  "명절상여": "holiday_bonus", "인센티브": "incentive", "기타수당": "extra1",
+  "급여식대": "meal", "보육": "childcare", "자가운전": "car_allowance",
+  "팀장": "team_allowance", "타인입금": "is_third_party_payment",
+  "보험취득일": "insurance_enroll_date", "보험상실일": "insurance_loss_date",
+  "퇴사여부": "_resign_flag",
   "메모": "memo",
 };
 
@@ -2073,13 +2173,25 @@ function ExcelImportModal({ onClose, onImport, existingEmpNos }) {
       const emp = {};
       Object.entries(mapping).forEach(([excelCol, empField]) => {
         let val = row[excelCol];
-        if (["hire_date", "resign_date", "probation_end"].includes(empField)) {
+        if (["hire_date", "resign_date", "probation_end", "insurance_enroll_date", "insurance_loss_date"].includes(empField)) {
           val = parseExcelDate(val);
-        } else if (["base_salary", "weekend_daily", "leader_allow", "meal_allow", "childcare_allow", "car_allow"].includes(empField)) {
+        } else if (["base_salary", "weekend_daily", "leader_allow", "meal_allow", "childcare_allow", "car_allow",
+          "weekday_pay", "weekend_pay", "holiday_bonus", "meal", "childcare", "car_allowance",
+          "incentive", "extra1", "team_allowance"].includes(empField)) {
           val = parseInt(val) || 0;
+        } else if (empField === "is_third_party_payment") {
+          val = val === true || val === "Y" || val === "O" || val === "예" || val === "타인";
         }
         emp[empField] = val;
       });
+      // 퇴사여부 처리
+      if (emp._resign_flag) {
+        const flag = String(emp._resign_flag).trim();
+        if (flag === "퇴사" || flag === "Y") {
+          emp.is_active = false;
+        }
+        delete emp._resign_flag;
+      }
       // 근무코드 자동 판정
       if (!emp.work_code && emp.work_type_1) {
         emp.work_code = mapWorkCode(emp.work_type_1, emp.work_type_2);
@@ -2087,6 +2199,7 @@ function ExcelImportModal({ onClose, onImport, existingEmpNos }) {
       if (!emp.work_code) emp.work_code = "C";
       // 상태 자동 판정
       emp.status = emp.resign_date ? "퇴사" : "재직";
+      if (emp.is_active === false) emp.status = "퇴사";
       // 사번 없으면 스킵
       emp._valid = !!emp.emp_no && !!emp.name;
       emp._isDuplicate = existingEmpNos.has(String(emp.emp_no));
@@ -7602,6 +7715,7 @@ function PayrollPage({ employees, profitState }) {
   const [pyEditTab, setPyEditTab] = useState("pay"); // pay / deduct / summary
   const [pySaving, setPySaving] = useState(false);
   const [pyBatchCreating, setPyBatchCreating] = useState(false);
+  const [pyViewMode, setPyViewMode] = useState("payroll"); // payroll | transfer
 
   // 월 데이터 로딩
   const loadPayrollMonth = useCallback(async () => {
@@ -7799,6 +7913,130 @@ function PayrollPage({ employees, profitState }) {
       }
       return updated;
     });
+  };
+
+  // ── 은행 이체 목록 생성 ──
+  const transferList = useMemo(() => {
+    if (!pyRecords.length) return [];
+    return pyRecords
+      .filter(r => (r.net_pay || 0) > 0)
+      .map(r => {
+        const emp = empMap[r.employee_id];
+        if (!emp) return null;
+        const holder = emp.account_holder || emp.name;
+        const isThirdParty = emp.is_third_party_payment || (holder && holder !== emp.name);
+        return {
+          id: r.id,
+          emp_no: emp.emp_no || "",
+          name: emp.name || "",
+          site_code: r.site_code,
+          account_holder: holder,
+          bank_name: emp.bank_name || "",
+          account_number: emp.account_number || "",
+          amount: r.net_pay || 0,
+          isThirdParty,
+          noAccount: !emp.bank_name || !emp.account_number,
+          tax_type: r.tax_type,
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (a.site_code || "").localeCompare(b.site_code || "") || a.emp_no.localeCompare(b.emp_no));
+  }, [pyRecords, empMap]);
+
+  const transferTotal = transferList.reduce((s, t) => s + t.amount, 0);
+  const transferWarnings = transferList.filter(t => t.isThirdParty).length;
+  const transferNoAccount = transferList.filter(t => t.noAccount).length;
+
+  // ── 급여 엑셀 Export ──
+  const handlePayrollExport = async () => {
+    const X = (await import("xlsx")).default || (await import("xlsx"));
+
+    // Sheet 1: 급여 명세
+    const sheet1 = pyRecords.map((r, idx) => {
+      const emp = empMap[r.employee_id];
+      const gross = r.gross_pay || 0;
+      const net = r.net_pay || 0;
+      return {
+        "#": idx + 1,
+        "사번": emp?.emp_no || "",
+        "성명": emp?.name || "",
+        "사업장": getSiteName(r.site_code),
+        "근무형태": getWorkLabel(r.work_type),
+        "세금처리": r.tax_type || "",
+        "기본급": r.basic_pay || 0,
+        "식대": r.meal || 0,
+        "보육수당": r.childcare || 0,
+        "자가운전": r.car_allow || 0,
+        "팀장수당": r.team_allow || 0,
+        "명절상여": r.holiday_bonus || 0,
+        "인센티브": r.incentive || 0,
+        "추가근무": r.extra_work || 0,
+        "수기수당": r.manual_write || 0,
+        "기타수당": r.extra1 || 0,
+        "총지급액": gross,
+        "국민연금": r.np || 0,
+        "건강보험": r.hi || 0,
+        "장기요양": r.lt || 0,
+        "고용보험": r.ei || 0,
+        "소득세": r.income_tax || 0,
+        "지방소득세": r.local_tax || 0,
+        "사고공제": r.accident_deduct || 0,
+        "선지급": r.prepaid || 0,
+        "공제합계": gross - net,
+        "실입금": net,
+      };
+    });
+
+    // Sheet 2: 은행 이체 목록
+    const sheet2 = transferList.map((t, idx) => ({
+      "#": idx + 1,
+      "사번": t.emp_no,
+      "성명": t.name,
+      "사업장": getSiteName(t.site_code),
+      "예금주": t.account_holder,
+      "은행명": t.bank_name,
+      "계좌번호": t.account_number,
+      "이체금액": t.amount,
+      "비고": t.isThirdParty ? "⚠️타인입금" : (t.noAccount ? "❌계좌미등록" : ""),
+    }));
+
+    // Sheet 3: 사업장별 집계
+    const sheet3 = SITES.filter(s => siteSummary[s.code]).map(s => {
+      const d = siteSummary[s.code];
+      return {
+        "코드": s.code,
+        "사업장": s.name,
+        "인원": d.count,
+        "급여총계": d.gross,
+        "실입금합계": d.net,
+        "공제합계": d.gross - d.net,
+      };
+    });
+    // 합계행
+    sheet3.push({
+      "코드": "",
+      "사업장": "합 계",
+      "인원": pyRecords.length,
+      "급여총계": totalGross,
+      "실입금합계": totalNet,
+      "공제합계": totalDed,
+    });
+
+    const wb = X.utils.book_new();
+    const ws1 = X.utils.json_to_sheet(sheet1);
+    const ws2 = X.utils.json_to_sheet(sheet2);
+    const ws3 = X.utils.json_to_sheet(sheet3);
+    ws1["!cols"] = Array(27).fill({ wch: 12 });
+    ws1["!cols"][0] = { wch: 4 };
+    ws1["!cols"][1] = { wch: 10 };
+    ws1["!cols"][2] = { wch: 8 };
+    ws1["!cols"][3] = { wch: 14 };
+    ws2["!cols"] = [{ wch: 4 }, { wch: 10 }, { wch: 8 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 18 }, { wch: 14 }, { wch: 14 }];
+    ws3["!cols"] = [{ wch: 8 }, { wch: 16 }, { wch: 8 }, { wch: 14 }, { wch: 14 }, { wch: 14 }];
+    X.utils.book_append_sheet(wb, ws1, "급여명세");
+    X.utils.book_append_sheet(wb, ws2, "은행이체목록");
+    X.utils.book_append_sheet(wb, ws3, "사업장별집계");
+    X.writeFile(wb, `급여대장_${pyYear}년${pyMonth}월.xlsx`);
   };
 
   // ── 렌더 ──
@@ -8120,6 +8358,32 @@ function PayrollPage({ employees, profitState }) {
             ))}
           </div>
 
+          {/* 뷰 모드 토글 + Export */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+            <div style={{ display: "flex", gap: 2, background: "#F0F1F4", padding: 3, borderRadius: 10 }}>
+              {[
+                { k: "payroll", label: "📋 급여대장" },
+                { k: "transfer", label: "🏦 은행이체" },
+              ].map(m => (
+                <button key={m.k} onClick={() => setPyViewMode(m.k)}
+                  style={{ padding: "7px 16px", borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+                    background: pyViewMode === m.k ? C.white : "transparent",
+                    color: pyViewMode === m.k ? C.navy : C.gray,
+                    boxShadow: pyViewMode === m.k ? "0 1px 4px rgba(0,0,0,0.1)" : "none",
+                    fontFamily: FONT }}>
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <button onClick={handlePayrollExport}
+              style={{ ...btnOutline, display: "flex", alignItems: "center", gap: 4, padding: "7px 16px", fontSize: 12 }}>
+              📥 엑셀 Export
+            </button>
+          </div>
+
+          {/* ── 급여대장 뷰 ── */}
+          {pyViewMode === "payroll" && (<div>
+
           {/* 사업장 탭 */}
           <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16, background: C.white, padding: "8px 12px", borderRadius: 10, border: `1px solid ${C.border}` }}>
             <button onClick={() => setPySiteTab("all")}
@@ -8252,6 +8516,92 @@ function PayrollPage({ employees, profitState }) {
                   );
                 })}
               </div>
+            </div>
+          )}
+          </div>)}
+
+          {/* ── 은행이체 뷰 ── */}
+          {pyViewMode === "transfer" && (
+            <div>
+              {/* 이체 요약 KPI */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
+                {[
+                  { icon: "🏦", label: "이체 건수", value: `${transferList.length}건`, color: C.navy },
+                  { icon: "💰", label: "이체 총액", value: `${fmt(transferTotal)}원`, color: C.success },
+                  { icon: "⚠️", label: "타인입금", value: `${transferWarnings}건`, color: transferWarnings > 0 ? C.orange : C.gray },
+                  { icon: "❌", label: "계좌미등록", value: `${transferNoAccount}건`, color: transferNoAccount > 0 ? C.error : C.gray },
+                ].map(k => (
+                  <div key={k.label} style={pyCardStyle}>
+                    <div style={{ fontSize: 20, marginBottom: 4 }}>{k.icon}</div>
+                    <div style={{ fontSize: 18, fontWeight: 900, color: k.color, fontFamily: "monospace" }}>{k.value}</div>
+                    <div style={{ fontSize: 11, color: C.gray, marginTop: 4 }}>{k.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 이체 목록 테이블 */}
+              <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+                <div style={{ overflowX: "auto" }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        {["#", "사번", "성명", "사업장", "예금주", "은행명", "계좌번호", "이체금액", "비고"].map((h, i) => (
+                          <th key={i} style={{ ...pyThStyle, textAlign: i === 7 ? "right" : "left", ...(i === 0 ? { width: 30 } : {}) }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {transferList.map((t, idx) => (
+                        <tr key={t.id} style={{ background: t.noAccount ? "#FFF3E0" : (t.isThirdParty ? "#FFF8E1" : (idx % 2 ? "#FAFBFC" : C.white)) }}>
+                          <td style={{ ...pyTdStyle, textAlign: "center", color: C.gray }}>{idx + 1}</td>
+                          <td style={{ ...pyTdStyle, fontWeight: 700, fontSize: 11, color: C.navy }}>{t.emp_no}</td>
+                          <td style={{ ...pyTdStyle, fontWeight: 700 }}>{t.name}</td>
+                          <td style={{ ...pyTdStyle, fontSize: 11, color: C.gray }}>{getSiteName(t.site_code)}</td>
+                          <td style={{ ...pyTdStyle, fontWeight: 600, color: t.isThirdParty ? C.orange : C.dark }}>
+                            {t.account_holder || "-"}
+                            {t.isThirdParty && <span style={{ marginLeft: 4, fontSize: 10, color: C.orange }}>⚠️</span>}
+                          </td>
+                          <td style={pyTdStyle}>{t.bank_name || <span style={{ color: C.error, fontSize: 10 }}>미등록</span>}</td>
+                          <td style={{ ...pyTdStyle, fontFamily: "monospace", fontSize: 11 }}>{t.account_number || <span style={{ color: C.error, fontSize: 10 }}>미등록</span>}</td>
+                          <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.success }}>{fmt(t.amount)}</td>
+                          <td style={pyTdStyle}>
+                            {t.isThirdParty && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: "#FFF3E0", color: C.orange }}>타인입금</span>}
+                            {t.noAccount && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700, background: "#FFEBEE", color: C.error }}>계좌미등록</span>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr style={{ background: C.navy }}>
+                        <td colSpan={7} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.white }}>
+                          합계 ({transferList.length}건)
+                        </td>
+                        <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>
+                          {fmt(transferTotal)}
+                        </td>
+                        <td style={{ padding: "8px 6px" }} />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+
+              {/* 주의사항 */}
+              {(transferWarnings > 0 || transferNoAccount > 0) && (
+                <div style={{ marginTop: 12, padding: 14, background: "#FFF8E1", borderRadius: 10, border: "1px solid #FFE082" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: "#F57F17", marginBottom: 6 }}>⚠️ 이체 시 주의사항</div>
+                  {transferWarnings > 0 && (
+                    <div style={{ fontSize: 12, color: C.orange, marginBottom: 4 }}>
+                      • 타인 입금 {transferWarnings}건 — 예금주와 성명이 다릅니다. 이체 전 확인하세요.
+                    </div>
+                  )}
+                  {transferNoAccount > 0 && (
+                    <div style={{ fontSize: 12, color: C.error }}>
+                      • 계좌 미등록 {transferNoAccount}건 — 직원현황에서 계좌정보를 등록해주세요.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
