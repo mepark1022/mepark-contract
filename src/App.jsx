@@ -53,7 +53,7 @@ const WORK_CODES = [
 
 const POSITIONS = ["대표", "본부장", "운영이사", "수석팀장", "센터장", "팀장", "일반"];
 const TAX_TYPES = ["4대보험", "3.3%", "3.3%(타인)", "고용&산재", "미신고"];
-const ROLES = { super_admin: "슈퍼관리자", admin: "일반관리자", viewer: "뷰어", field_leader: "현장팀장", field_staff: "현장요원" };
+const ROLES = { super_admin: "슈퍼관리자", admin: "일반관리자", viewer: "뷰어", field_member: "현장팀원" };
 
 // 날짜 포맷 헬퍼 (어드민 패널용)
 const fmtDate = (d) => {
@@ -251,8 +251,8 @@ function AuthProvider({ children }) {
         await supabase.auth.signOut();
         return { error: "등록된 관리자 계정이 아닙니다. 슈퍼관리자에게 문의하세요." };
       }
-      // 현장 계정(field_leader/field_staff)은 ERP 접근 차단
-      if (existingProfile.role === "field_leader" || existingProfile.role === "field_staff") {
+      // 현장 계정(field_member)은 ERP 접근 차단
+      if (existingProfile.role === "field_member") {
         await supabase.auth.signOut();
         return { error: "현장 계정은 현장일보 앱을 이용해주세요." };
       }
@@ -396,7 +396,7 @@ function AuthProvider({ children }) {
   };
 
   const profile = user ? profiles.find(p => p.id === user.id) : null;
-  const isFieldRole = profile && (profile.role === "field_leader" || profile.role === "field_staff");
+  const isFieldRole = profile && profile.role === "field_member";
   const can = (action) => {
     if (!profile) return false;
     if (isFieldRole) return false; // 현장 역할은 ERP 기능 접근 불가
@@ -3397,7 +3397,7 @@ function AdminInvitePanel() {
                           }}>
                           {label}
                           <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>
-                            {key === "super_admin" ? "전체 권한" : key === "admin" ? "편집 권한" : "읽기 전용"}
+                            {key === "super_admin" ? "전체 권한" : key === "admin" ? "편집 권한" : key === "viewer" ? "읽기 전용" : "현장앱 전용"}
                           </div>
                         </button>
                       ))}
@@ -3542,7 +3542,7 @@ function AdminInvitePanel() {
         <div style={{ fontSize: 11, color: C.gray, lineHeight: 1.8 }}>
           • 슈퍼관리자가 직접 계정을 생성하고, 이메일/비밀번호를 본인에게 전달합니다.<br/>
           • 관리자는 로그인 후 「🔑 비밀번호 변경」으로 비밀번호를 변경할 수 있습니다.<br/>
-          • 슈퍼관리자: 전체 권한 · 일반관리자: 편집 권한 · 뷰어: 읽기 전용
+          • 슈퍼관리자: 전체 권한 · 일반관리자: 편집 권한 · 뷰어: 읽기 전용 · 현장팀원: 현장앱 전용
         </div>
       </div>
     </div>
@@ -6805,7 +6805,7 @@ function AppRouter() {
     </div>
   </div>;
   // 현장 계정이 ERP에 접근한 경우 차단 안내
-  if (user && profile && (profile.role === "field_leader" || profile.role === "field_staff")) {
+  if (user && profile && profile.role === "field_member") {
     return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, background: C.bg }}>
       <div style={{ textAlign: "center", maxWidth: 400, padding: 32 }}>
         <div style={{ width: 64, height: 64, borderRadius: 16, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 900, color: C.navy, marginBottom: 16 }}>MP</div>

@@ -249,7 +249,7 @@ Deno.serve(async (req) => {
             id: userId,
             email,
             name: acc.name,
-            role: acc.role || "field_staff",
+            role: acc.role || "field_member",
             site_code: acc.site_code,
             employee_id: acc.employee_id,
             emp_no: acc.emp_no,
