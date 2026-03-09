@@ -5963,6 +5963,20 @@ function DailyReportPage({ employees }) {
         report_id: reportId, employee_id: e.employee_id || null, extra_type: e.extra_type, extra_hours: toNum(e.extra_hours), extra_amount: toNum(e.extra_amount), memo: e.memo || null,
       }));
       if (extRows.length > 0) await supabase.from("daily_report_extra").insert(extRows);
+      // 기존 확정 일보 수정 시 → submitted로 변경되므로 valet_fee 재계산
+      const prevReport = reports.find(r => r.id === form.id);
+      if (prevReport && prevReport.status === "confirmed") {
+        const monthStr = selDate.slice(0, 7);
+        const remaining = reports.filter(r =>
+          r.id !== form.id && r.site_code === form.site_code &&
+          r.report_date.startsWith(monthStr) && r.status === "confirmed"
+        );
+        const totalValet = remaining.reduce((s, r) => s + toNum(r.valet_amount), 0);
+        await supabase.from("site_revenue").upsert(
+          { site_code: form.site_code, month: monthStr, valet_fee: totalValet },
+          { onConflict: "site_code,month" }
+        );
+      }
       setEditMode(false);
       await loadReports();
     } catch (e) { alert("저장 실패: " + (e.message || e)); }
@@ -5993,10 +6007,24 @@ function DailyReportPage({ employees }) {
     await loadReports();
   };
 
-  // ── 삭제 ──
+  // ── 삭제 (확정 일보 삭제 시 valet_fee 재계산) ──
   const handleDelete = async (reportId) => {
     if (!(await confirm("일보를 삭제하시겠습니까?", "일보 데이터가 모두 삭제됩니다."))) return;
+    const target = reports.find(r => r.id === reportId);
     await supabase.from("daily_reports").delete().eq("id", reportId);
+    // 확정 일보 삭제 시 site_revenue.valet_fee 재계산
+    if (target && target.status === "confirmed") {
+      const monthStr = target.report_date.slice(0, 7);
+      const remaining = reports.filter(r =>
+        r.id !== reportId && r.site_code === target.site_code &&
+        r.report_date.startsWith(monthStr) && r.status === "confirmed"
+      );
+      const totalValet = remaining.reduce((s, r) => s + toNum(r.valet_amount), 0);
+      await supabase.from("site_revenue").upsert(
+        { site_code: target.site_code, month: monthStr, valet_fee: totalValet },
+        { onConflict: "site_code,month" }
+      );
+    }
     setEditMode(false);
     await loadReports();
   };
