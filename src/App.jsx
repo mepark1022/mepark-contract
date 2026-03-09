@@ -842,7 +842,7 @@ const DEFAULT_ARTICLES_PARTTIME = {
 
 // ── 10. 메인 대시보드 (통합 홈) ── Phase C 업그레이드 ──────
 function MainDashboard({ employees, onNavigate, profitState }) {
-  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [], monthlyParkingData = [], laborData = {}, siteDetailsMap = {} } = profitState;
+  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [], monthlyParkingData = [], laborData = {}, siteDetailsMap = {}, dailyReportSummary = {}, valetFeeData = {} } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
   const [chartPeriod, setChartPeriod] = useState("mtd"); // ★ Phase C: 기본 이번달
@@ -1437,6 +1437,60 @@ function MainDashboard({ employees, onNavigate, profitState }) {
         </table>
       </div>
 
+      {/* ── D-0. 현장일보 현황 ── */}
+      {(() => {
+        const { todayReports = [], monthReports = [], staffMap: drStaffMap = {} } = dailyReportSummary;
+        const todayStr = today();
+        const monthStr = todayStr.slice(0, 7);
+        const activeSiteCodes = FIELD_SITES.filter(s => {
+          const empCount = employees.filter(e => e.site_code === s.code && e.status === "재직").length;
+          return empCount > 0;
+        }).map(s => s.code);
+        const reportedSites = new Set(todayReports.map(r => r.site_code));
+        const missingToday = activeSiteCodes.filter(c => !reportedSites.has(c));
+        const confirmedCount = monthReports.filter(r => r.status === "confirmed").length;
+        const totalCount = monthReports.length;
+        const confirmedRate = totalCount > 0 ? Math.round(confirmedCount / totalCount * 100) : 0;
+        const monthValet = monthReports.filter(r => r.status === "confirmed").reduce((s, r) => s + toNum(r.valet_amount), 0);
+        const monthTotalValet = monthReports.reduce((s, r) => s + toNum(r.valet_amount), 0);
+
+        if (totalCount === 0 && todayReports.length === 0) return null;
+        return (
+          <div style={{ ...cardStyle, marginTop: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>📋 현장일보 현황</h3>
+              <button onClick={() => onNavigate("daily_report")} style={{ fontSize: 11, fontWeight: 700, color: C.navy, background: "none", border: `1px solid ${C.navy}`, borderRadius: 6, padding: "3px 10px", cursor: "pointer", fontFamily: FONT }}>상세 →</button>
+            </div>
+            {/* 오늘 KPI */}
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 12 }}>
+              <div style={{ background: "#F0F4FF", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.navy }}>{todayReports.length}<span style={{ fontSize: 11, fontWeight: 600 }}>건</span></div>
+                <div style={{ fontSize: 10, color: C.gray }}>금일 작성</div>
+              </div>
+              <div style={{ background: missingToday.length > 0 ? "#FFF3E0" : "#E8F5E9", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 900, color: missingToday.length > 0 ? C.orange : C.success }}>{missingToday.length}<span style={{ fontSize: 11, fontWeight: 600 }}>곳</span></div>
+                <div style={{ fontSize: 10, color: C.gray }}>금일 미작성</div>
+              </div>
+              <div style={{ background: "#E8F5E9", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 18, fontWeight: 900, color: C.success }}>{confirmedRate}<span style={{ fontSize: 11, fontWeight: 600 }}>%</span></div>
+                <div style={{ fontSize: 10, color: C.gray }}>월 확정률 ({confirmedCount}/{totalCount})</div>
+              </div>
+              <div style={{ background: "#FFF8E1", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
+                <div style={{ fontSize: 15, fontWeight: 900, color: "#F57F17" }}>{pFmt(monthValet)}</div>
+                <div style={{ fontSize: 10, color: C.gray }}>확정 발렛비</div>
+              </div>
+            </div>
+            {/* 미작성 사업장 */}
+            {missingToday.length > 0 && (
+              <div style={{ background: "#FFF8E1", borderRadius: 8, padding: "8px 12px", fontSize: 11 }}>
+                <span style={{ fontWeight: 800, color: C.orange }}>⚠️ 금일 미작성:</span>{" "}
+                <span style={{ color: C.gray }}>{missingToday.map(c => getSiteName(c)).join(", ")}</span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       {/* ── D. 월주차 만기 알림 + 업장별 매출 카드 ── */}
       {monthlyParkingData.length > 0 && (() => {
         const expiringSoon = monthlyParkingData.filter(p => {
@@ -1485,20 +1539,25 @@ function MainDashboard({ employees, onNavigate, profitState }) {
                 {FIELD_SITES.filter(s => {
                   const rev = toNum((revenueData[currentMonth] || {})[s.code]);
                   const pk = parkingBySite[s.code];
-                  return rev > 0 || pk;
+                  const vf = toNum((valetFeeData[currentMonth] || {})[s.code]);
+                  return rev > 0 || pk || vf > 0;
                 }).map(site => {
                   const valetRev = toNum((revenueData[currentMonth] || {})[site.code]);
                   const pk = parkingBySite[site.code] || { count: 0, revenue: 0 };
-                  const totalRev = valetRev + pk.revenue;
+                  const vf = toNum((valetFeeData[currentMonth] || {})[site.code]);
+                  const totalRev = valetRev + pk.revenue + vf;
                   return (
                     <div key={site.code} style={{ background: "#fff", borderRadius: 10, border: `1px solid ${C.border}`, padding: "10px 12px" }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
                         <span style={{ fontSize: 10, fontWeight: 700, color: C.navy }}>{site.code} {site.name}</span>
                         <span style={{ fontSize: 12, fontWeight: 900, color: C.dark }}>{pFmt(totalRev)}</span>
                       </div>
-                      <div style={{ display: "flex", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                         {valetRev > 0 && (
-                          <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#EFF3FF", color: C.navy, fontWeight: 700 }}>발렛 {pFmt(valetRev)}</span>
+                          <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#EFF3FF", color: C.navy, fontWeight: 700 }}>계약금 {pFmt(valetRev)}</span>
+                        )}
+                        {vf > 0 && (
+                          <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#E8F5E9", color: C.success, fontWeight: 700 }}>일보발렛 {pFmt(vf)}</span>
                         )}
                         {pk.revenue > 0 && (
                           <span style={{ fontSize: 9, padding: "2px 6px", borderRadius: 4, background: "#FFF8E1", color: C.orange, fontWeight: 700 }}>월주차 {pFmt(pk.revenue)} ({pk.count}대)</span>
@@ -5776,7 +5835,7 @@ const EXTRA_TYPES = [
   { key: "other", label: "기타수당" },
 ];
 
-function DailyReportPage({ employees }) {
+function DailyReportPage({ employees, onDataChange }) {
   const confirm = useConfirm();
   const { profile } = useAuth();
   const todayStr = today();
@@ -6032,6 +6091,7 @@ function DailyReportPage({ employees }) {
       }
       setEditMode(false);
       await loadReports();
+      onDataChange?.();
     } catch (e) { alert("저장 실패: " + (e.message || e)); }
     setSaving(false);
   };
@@ -6058,6 +6118,7 @@ function DailyReportPage({ employees }) {
       { onConflict: "site_code,month" }
     );
     await loadReports();
+    onDataChange?.();
   };
 
   // ── 삭제 (확정 일보 삭제 시 valet_fee 재계산) ──
@@ -6080,6 +6141,128 @@ function DailyReportPage({ employees }) {
     }
     setEditMode(false);
     await loadReports();
+    onDataChange?.();
+  };
+
+  // ── 일괄확정 ──
+  const handleBatchConfirm = async () => {
+    const targetReports = (selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite))
+      .filter(r => r.status === "submitted");
+    if (targetReports.length === 0) { alert("확정할 미확정 일보가 없습니다."); return; }
+    const siteLabel = selSite === "ALL" ? "전체 사업장" : `${getSiteName(selSite)}`;
+    if (!(await confirm(
+      `${siteLabel} 미확정 일보 ${targetReports.length}건을 일괄 확정하시겠습니까?`,
+      `${selMonth} 기준 · 확정 시 발렛비가 수익성 분석에 반영됩니다.`
+    ))) return;
+    setSaving(true);
+    try {
+      const ids = targetReports.map(r => r.id);
+      const { error } = await supabase.from("daily_reports").update({
+        status: "confirmed",
+        confirmed_by: profile?.id || null,
+        confirmed_at: new Date().toISOString(),
+      }).in("id", ids);
+      if (error) throw error;
+      // 영향받는 사업장별 valet_fee 재계산
+      const affectedSites = [...new Set(targetReports.map(r => r.site_code))];
+      for (const siteCode of affectedSites) {
+        const monthStr = selMonth;
+        // 기존 확정 + 이번에 새로 확정된 것 합산
+        const allConfirmed = reports.filter(r =>
+          r.site_code === siteCode && r.report_date.startsWith(monthStr) &&
+          (r.status === "confirmed" || ids.includes(r.id))
+        );
+        const totalValet = allConfirmed.reduce((s, r) => s + toNum(r.valet_amount), 0);
+        await supabase.from("site_revenue").upsert(
+          { site_code: siteCode, month: monthStr, valet_fee: totalValet },
+          { onConflict: "site_code,month" }
+        );
+      }
+      await loadReports();
+      onDataChange?.();
+    } catch (e) { alert("일괄확정 실패: " + (e.message || e)); }
+    setSaving(false);
+  };
+
+  // ── 엑셀 Export ──
+  const handleExportExcel = async () => {
+    const XLSX = (await import("xlsx")).default || (await import("xlsx"));
+    const filtered = selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite);
+    const sorted = [...filtered].sort((a, b) => a.report_date.localeCompare(b.report_date));
+    if (sorted.length === 0) { alert("내보낼 일보가 없습니다."); return; }
+
+    // Sheet 1: 사업장별 요약
+    const summaryMap = {};
+    sorted.forEach(r => {
+      if (!summaryMap[r.site_code]) summaryMap[r.site_code] = {
+        사업장코드: r.site_code, 사업장명: getSiteName(r.site_code),
+        작성일수: 0, 확정일수: 0, 총발렛건수: 0, 총발렛비: 0, 확정발렛비: 0, 근무자수: 0,
+      };
+      const m = summaryMap[r.site_code];
+      m.작성일수++;
+      if (r.status === "confirmed") { m.확정일수++; m.확정발렛비 += toNum(r.valet_amount); }
+      m.총발렛건수 += toNum(r.valet_count);
+      m.총발렛비 += toNum(r.valet_amount);
+      m.근무자수 += (staffMap[r.id] || []).length;
+    });
+    const sheet1Data = Object.values(summaryMap);
+
+    // Sheet 2: 일자별 상세
+    const sheet2Data = sorted.map(r => {
+      const staff = staffMap[r.id] || [];
+      const pay = payMap[r.id] || [];
+      const extra = extraMap[r.id] || [];
+      return {
+        날짜: r.report_date,
+        사업장코드: r.site_code,
+        사업장명: getSiteName(r.site_code),
+        발렛건수: r.valet_count || 0,
+        발렛비: r.valet_amount || 0,
+        상태: r.status === "confirmed" ? "확정" : "미확정",
+        근무자수: staff.length,
+        근무자: staff.map(s => {
+          const emp = s.employee_id ? employees.find(e => e.id === s.employee_id) : null;
+          return `${emp?.name || s.name_raw || "?"}(${s.work_hours}h)`;
+        }).join(", "),
+        현금: pay.find(p => p.payment_type === "cash")?.amount || 0,
+        카드: pay.find(p => p.payment_type === "card")?.amount || 0,
+        계좌이체: pay.find(p => p.payment_type === "transfer")?.amount || 0,
+        기타결제: pay.find(p => p.payment_type === "etc")?.amount || 0,
+        추가수당합계: extra.reduce((s, e) => s + toNum(e.extra_amount), 0),
+        메모: r.memo || "",
+      };
+    });
+
+    // Sheet 3: 근무자 상세
+    const sheet3Data = [];
+    sorted.forEach(r => {
+      const staff = staffMap[r.id] || [];
+      staff.forEach(s => {
+        const emp = s.employee_id ? employees.find(e => e.id === s.employee_id) : null;
+        sheet3Data.push({
+          날짜: r.report_date,
+          사업장: getSiteName(r.site_code),
+          이름: emp?.name || s.name_raw || "?",
+          사번: emp?.emp_no || "",
+          구분: s.staff_type === "regular" ? "정규" : s.staff_type === "substitute" ? "대근" : "추가",
+          근무시간: s.work_hours || 0,
+        });
+      });
+    });
+
+    const wb = XLSX.utils.book_new();
+    const ws1 = XLSX.utils.json_to_sheet(sheet1Data);
+    const ws2 = XLSX.utils.json_to_sheet(sheet2Data);
+    const ws3 = XLSX.utils.json_to_sheet(sheet3Data);
+    // 열 너비 설정
+    ws1["!cols"] = [{ wch: 10 }, { wch: 14 }, { wch: 8 }, { wch: 8 }, { wch: 10 }, { wch: 14 }, { wch: 14 }, { wch: 8 }];
+    ws2["!cols"] = [{ wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 6 }, { wch: 6 }, { wch: 30 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 20 }];
+    ws3["!cols"] = [{ wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 6 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws1, "사업장별 요약");
+    XLSX.utils.book_append_sheet(wb, ws2, "일자별 상세");
+    XLSX.utils.book_append_sheet(wb, ws3, "근무자 상세");
+    const siteLabel = selSite === "ALL" ? "전체" : getSiteName(selSite);
+    XLSX.writeFile(wb, `현장일보_${selMonth}_${siteLabel}.xlsx`);
   };
 
   // ── 월간 통계 ──
@@ -6568,11 +6751,30 @@ function DailyReportPage({ employees }) {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>📋 현장 일보 관리</h2>
-        {/* 뷰 모드 토글 */}
-        <div style={{ display: "flex", gap: 4, background: C.lightGray, borderRadius: 8, padding: 3 }}>
+        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+          {/* 일괄확정 */}
+          {(() => {
+            const unconfirmed = (selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite)).filter(r => r.status === "submitted").length;
+            return unconfirmed > 0 ? (
+              <button onClick={handleBatchConfirm} disabled={saving}
+                style={{ ...btnSmall, padding: "6px 14px", fontSize: 11, borderRadius: 8, background: C.success, color: C.white, fontWeight: 800, fontFamily: FONT, border: "none", cursor: "pointer" }}>
+                ✅ 일괄확정 ({unconfirmed})
+              </button>
+            ) : null;
+          })()}
+          {/* 엑셀 Export */}
+          {reports.length > 0 && (
+            <button onClick={handleExportExcel}
+              style={{ ...btnSmall, padding: "6px 14px", fontSize: 11, borderRadius: 8, background: "#E8F5E9", color: "#2E7D32", fontWeight: 800, fontFamily: FONT, border: "1px solid #A5D6A7", cursor: "pointer" }}>
+              📥 엑셀
+            </button>
+          )}
+          {/* 뷰 모드 토글 */}
+          <div style={{ display: "flex", gap: 4, background: C.lightGray, borderRadius: 8, padding: 3 }}>
           {[["calendar", "📅 달력"], ["table", "📊 목록"]].map(([k, v]) => (
             <button key={k} onClick={() => setViewMode(k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, background: viewMode === k ? C.white : "transparent", color: viewMode === k ? C.navy : C.gray, boxShadow: viewMode === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}>{v}</button>
           ))}
+          </div>
         </div>
       </div>
 
@@ -7344,6 +7546,7 @@ function MainApp() {
   const [revenueData, setRevenueData] = useState({});
   const [overheadData, setOverheadData] = useState({});
   const [laborData, setLaborData] = useState({});       // ★ 인건비(고정/대체)
+  const [valetFeeData, setValetFeeData] = useState({}); // ★ 현장일보 확정 발렛비
   const [siteDetailsMap, setSiteDetailsMap] = useState({}); // ★ 사업장 상세(월계약금 등)
 
   // ★ Phase B: monthly_summary 로딩 (재무 KPI + 기간연산)
@@ -7351,6 +7554,31 @@ function MainApp() {
   const loadMonthlySummary = async () => {
     const { data } = await supabase.from("monthly_summary").select("*").order("month", { ascending: false });
     if (data) setMonthlySummary(data);
+  };
+
+  // ★ 현장일보 대시보드 연동 데이터
+  const [dailyReportSummary, setDailyReportSummary] = useState({ todayReports: [], monthReports: [], staffMap: {} });
+  const loadDailyReportSummary = async () => {
+    try {
+      const todayStr = today();
+      const monthStr = todayStr.slice(0, 7);
+      const startDate = `${monthStr}-01`;
+      const [y, m] = monthStr.split("-").map(Number);
+      const nm = m === 12 ? 1 : m + 1;
+      const ny = m === 12 ? y + 1 : y;
+      const endDate = `${ny}-${String(nm).padStart(2, "0")}-01`;
+      const { data: reps } = await supabase.from("daily_reports").select("*").gte("report_date", startDate).lt("report_date", endDate).order("report_date");
+      const reportList = reps || [];
+      const todayReports = reportList.filter(r => r.report_date === todayStr);
+      // staff count per report
+      let sMap = {};
+      if (reportList.length > 0) {
+        const ids = reportList.map(r => r.id);
+        const { data: staffData } = await supabase.from("daily_report_staff").select("report_id, id").in("report_id", ids);
+        (staffData || []).forEach(s => { if (!sMap[s.report_id]) sMap[s.report_id] = 0; sMap[s.report_id]++; });
+      }
+      setDailyReportSummary({ todayReports, monthReports: reportList, staffMap: sMap });
+    } catch (e) { console.error("loadDailyReportSummary error:", e); }
   };
 
   // ★ Phase C: 차트용 은행거래 데이터
@@ -7392,14 +7620,21 @@ function MainApp() {
     if (revRows && revRows.length > 0) {
       const revMap = {};
       const labMap = {};
+      const vfMap = {};
       revRows.forEach(r => {
         if (!revMap[r.month]) revMap[r.month] = {};
         revMap[r.month][r.site_code] = r.revenue;
         if (!labMap[r.month]) labMap[r.month] = {};
         labMap[r.month][r.site_code] = { fixed: r.labor_fixed || 0, sub: r.labor_sub || 0 };
+        // valet_fee (현장일보 확정분)
+        if (r.valet_fee) {
+          if (!vfMap[r.month]) vfMap[r.month] = {};
+          vfMap[r.month][r.site_code] = r.valet_fee;
+        }
       });
       setRevenueData(revMap);
       setLaborData(labMap);
+      setValetFeeData(vfMap);
     }
     const { data: ohRows } = await supabase.from("site_overhead").select("*");
     if (ohRows && ohRows.length > 0) {
@@ -7442,10 +7677,12 @@ function MainApp() {
     profitMonth, setProfitMonth,
     revenueData, setRevenueData, overheadData, setOverheadData,
     laborData, setLaborData,
+    valetFeeData,
     siteDetailsMap,
     monthlySummary, chartTransactions,
     saveRevenueToDB, saveOverheadToDB, saveLaborToDB, saveDetailToDB,
     monthlyParkingData,
+    dailyReportSummary, loadDailyReportSummary,
   };
 
   // Supabase에서 직원 데이터 로드
@@ -7455,7 +7692,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); loadSiteDetails(); }, []);
+  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); loadSiteDetails(); loadDailyReportSummary(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
@@ -7652,7 +7889,7 @@ function MainApp() {
         {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
         {page === "monthly_parking" && <MonthlyParkingPage employees={employees} />}
         {page === "site_management" && <SiteManagementPage employees={employees} />}
-        {page === "daily_report" && <DailyReportPage employees={employees} />}
+        {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} />}
         {page === "salary_calc" && <SalaryCalculatorPage />}
       </main>
     </div>
