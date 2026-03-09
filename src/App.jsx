@@ -5569,7 +5569,7 @@ function SiteManagementPage({ employees }) {
 
 
 // ── 16-2-1. 월주차 관리 시스템 ──────────────────────────
-function MonthlyParkingPage({ employees }) {
+function MonthlyParkingPage({ employees, onDataChange }) {
   const confirm = useConfirm();
   const [parkingList, setParkingList] = useState([]);
   const [selectedSite, setSelectedSite] = useState("ALL");
@@ -5627,6 +5627,7 @@ function MonthlyParkingPage({ employees }) {
         else { alert("저장되었으나 데이터를 불러오지 못했습니다. 새로고침해주세요."); return; }
       }
       setShowForm(false);
+      onDataChange?.();
     } catch (e) {
       alert("오류 발생: " + (e.message || "알 수 없는 오류"));
       console.error("handleSave error:", e);
@@ -5637,12 +5638,14 @@ function MonthlyParkingPage({ employees }) {
     const { error } = await supabase.from("monthly_parking").delete().eq("id", id);
     if (error) { alert("삭제 실패: " + error.message); return; }
     setParkingList(p => p.filter(item => item.id !== id));
+    onDataChange?.();
   };
   const toggleStatus = async (item) => {
     const newStatus = item.status === "계약중" ? "만료" : "계약중";
     const { error } = await supabase.from("monthly_parking").update({ status: newStatus }).eq("id", item.id);
     if (error) { alert("상태 변경 실패: " + error.message); return; }
     setParkingList(p => p.map(pk => pk.id === item.id ? { ...pk, status: newStatus } : pk));
+    onDataChange?.();
   };
 
   const getDday = (endDate) => {
@@ -8619,7 +8622,7 @@ function MainApp() {
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
         {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
-        {page === "monthly_parking" && <MonthlyParkingPage employees={employees} />}
+        {page === "monthly_parking" && <MonthlyParkingPage employees={employees} onDataChange={loadMonthlyParking} />}
         {page === "payroll" && <PayrollPage employees={employees} profitState={profitState} />}
         {page === "site_management" && <SiteManagementPage employees={employees} />}
         {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} />}
