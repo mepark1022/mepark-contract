@@ -303,31 +303,32 @@ function AuthProvider({ children }) {
     setUser(null); setProfiles([]); setInvitations([]);
   };
 
-  // ── 계정 직접 생성 (슈퍼관리자 전용) — DB RPC 방식 ──
+  // ── 계정 직접 생성 (슈퍼관리자 전용) ──
   const createAccount = async (name, email, password, role) => {
     try {
-      // 이미 등록된 사용자 체크 (프로필 기준)
       const existingProfile = profiles.find(p => p.email === email);
       if (existingProfile) return { error: "이미 등록된 관리자입니다." };
 
-      // RPC로 auth.users에 직접 생성 (signUp 우회 — 이메일 확인 불필요)
-      const { data: userId, error: rpcErr } = await supabase.rpc("admin_create_user", {
-        user_email: email,
-        user_password: password,
-        user_name: name
+      // 별도 클라이언트로 signUp (현재 세션 보호)
+      const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { storageKey: "mepark-temp-signup", persistSession: false }
       });
 
-      if (rpcErr) {
-        return { error: "계정 생성 실패: " + rpcErr.message + "\n\n💡 Supabase SQL Editor에서 admin-rpc-functions.sql을 실행했는지 확인하세요." };
-      }
-      if (!userId) return { error: "계정 생성 실패: ID를 반환받지 못했습니다." };
+      const { data: authData, error } = await tempClient.auth.signUp({
+        email, password, options: { data: { name } }
+      });
+
+      if (error) return { error: "계정 생성 실패: " + error.message };
+
+      const userId = authData?.user?.id;
+      if (!userId) return { error: "계정 생성 실패: 사용자 ID를 받지 못했습니다." };
 
       // 프로필 생성
       const { error: profErr } = await supabase.from("profiles").upsert({
         id: userId, email, name, role,
         created_at: new Date().toISOString(),
       }, { onConflict: "id" });
-      if (profErr) return { error: "계정은 생성되었으나 프로필 저장 실패: " + profErr.message };
+      if (profErr) return { error: "계정 생성 완료, 프로필 저장 실패: " + profErr.message };
 
       await loadData();
       return { error: null };
