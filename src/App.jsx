@@ -303,57 +303,18 @@ function AuthProvider({ children }) {
     setUser(null); setProfiles([]); setInvitations([]);
   };
 
-  // ── 계정 직접 생성 (슈퍼관리자 전용) ──
+  // ── 계정 직접 생성 (슈퍼관리자 전용) — RPC 방식 ──
   const createAccount = async (name, email, password, role) => {
     try {
       const existingProfile = profiles.find(p => p.email === email);
       if (existingProfile) return { error: "이미 등록된 관리자입니다." };
 
-      // 별도 클라이언트로 signUp (현재 세션 보호)
-      const tempClient = createClient(supabaseUrl, supabaseAnonKey, {
-        auth: { storageKey: "mepark-temp-signup", persistSession: false }
+      // DB에서 직접 유저 생성 (signUp 우회 — 이메일 확인/SMTP 불필요)
+      const { data: userId, error: rpcErr } = await supabase.rpc("admin_create_user", {
+        user_email: email, user_password: password, user_name: name
       });
-
-      const { data: authData, error } = await tempClient.auth.signUp({
-        email, password, options: { data: { name } }
-      });
-
-      let userId = authData?.user?.id;
-
-      // signUp 에러 처리
-      if (error) {
-        // 확인 이메일 발송 실패는 무시 (계정 자체는 생성됨)
-        if (error.message.includes("confirmation") || error.message.includes("sending")) {
-          // userId가 없으면 RPC로 조회
-          if (!userId) {
-            const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
-            if (foundId) userId = foundId;
-          }
-        } else if (error.message.includes("already") || error.message.includes("registered") || error.message.includes("exists")) {
-          const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
-          if (foundId) userId = foundId;
-          else return { error: "이미 가입된 이메일입니다." };
-        } else {
-          return { error: "계정 생성 실패: " + error.message };
-        }
-      }
-
-      // identities 빈 배열 = 이미 존재 (Supabase fake 응답)
-      if (!userId && authData?.user?.identities?.length === 0) {
-        const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
-        if (foundId) userId = foundId;
-        else return { error: "계정 생성 실패: ID를 확인할 수 없습니다." };
-      }
-
-      // 최종 userId 확인 — 없으면 RPC로 마지막 시도
-      if (!userId) {
-        const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
-        if (foundId) userId = foundId;
-        else return { error: "계정 생성 실패: 사용자 ID를 받지 못했습니다." };
-      }
-
-      // 이메일 즉시 확인 처리 (RPC — Confirm email 설정과 무관하게 동작)
-      await supabase.rpc("confirm_user_by_email", { user_email: email }).catch(() => {});
+      if (rpcErr) return { error: "계정 생성 실패: " + rpcErr.message };
+      if (!userId) return { error: "계정 생성 실패: ID를 반환받지 못했습니다." };
 
       // 프로필 생성
       const { error: profErr } = await supabase.from("profiles").upsert({
