@@ -324,7 +324,11 @@ function AuthProvider({ children }) {
       if (error) {
         // 확인 이메일 발송 실패는 무시 (계정 자체는 생성됨)
         if (error.message.includes("confirmation") || error.message.includes("sending")) {
-          // 무시 — userId가 있으면 진행
+          // userId가 없으면 RPC로 조회
+          if (!userId) {
+            const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
+            if (foundId) userId = foundId;
+          }
         } else if (error.message.includes("already") || error.message.includes("registered") || error.message.includes("exists")) {
           const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
           if (foundId) userId = foundId;
@@ -341,7 +345,12 @@ function AuthProvider({ children }) {
         else return { error: "계정 생성 실패: ID를 확인할 수 없습니다." };
       }
 
-      if (!userId) return { error: "계정 생성 실패: 사용자 ID를 받지 못했습니다." };
+      // 최종 userId 확인 — 없으면 RPC로 마지막 시도
+      if (!userId) {
+        const { data: foundId } = await supabase.rpc("get_user_id_by_email", { user_email: email });
+        if (foundId) userId = foundId;
+        else return { error: "계정 생성 실패: 사용자 ID를 받지 못했습니다." };
+      }
 
       // 이메일 즉시 확인 처리 (RPC — Confirm email 설정과 무관하게 동작)
       await supabase.rpc("confirm_user_by_email", { user_email: email }).catch(() => {});
