@@ -5817,14 +5817,21 @@ function DailyReportPage({ employees }) {
     if (files.length === 0) return;
     setImgUploading(true);
     const newImages = [];
+    const errors = [];
     for (const file of files) {
       const ext = file.name.split(".").pop();
       const path = `receipts/${form.site_code || "misc"}/${selDate}_${Date.now()}.${ext}`;
       const { error } = await supabase.storage.from("daily-report-images").upload(path, file);
-      if (!error) {
+      if (error) {
+        console.error("이미지 업로드 실패:", error);
+        errors.push(error.message || "업로드 실패");
+      } else {
         const { data: urlData } = supabase.storage.from("daily-report-images").getPublicUrl(path);
         newImages.push({ url: urlData.publicUrl, name: file.name, path, uploaded_at: new Date().toISOString() });
       }
+    }
+    if (errors.length > 0) {
+      alert(`이미지 업로드 실패:\n${errors.join("\n")}\n\n💡 Supabase Dashboard → Storage에서\n'daily-report-images' 버킷을 Public으로 생성해주세요.`);
     }
     if (newImages.length > 0) setForm(f => ({ ...f, images: [...(f.images || []), ...newImages] }));
     setImgUploading(false);
@@ -6452,10 +6459,13 @@ function DailyReportPage({ employees }) {
         <div>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
             <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>📸 영수증 · 사진 첨부</span>
-            <label style={{ ...miniBtn, background: "#E8F5E9", color: C.success, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <button type="button" onClick={() => {
+              const inp = document.getElementById("dr-img-input");
+              if (inp) inp.click();
+            }} disabled={imgUploading} style={{ ...miniBtn, background: "#E8F5E9", color: C.success, cursor: "pointer" }}>
               {imgUploading ? "업로드 중..." : "📷 추가"}
-              <input type="file" accept="image/*" multiple onChange={handleImageUpload} style={{ display: "none" }} disabled={imgUploading} />
-            </label>
+            </button>
+            <input id="dr-img-input" type="file" accept="image/*" multiple onChange={handleImageUpload} style={{ display: "none" }} />
           </div>
           {(form.images || []).length > 0 ? (
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8 }}>
@@ -6470,7 +6480,10 @@ function DailyReportPage({ employees }) {
               ))}
             </div>
           ) : (
-            <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: "12px 0", background: C.bg, borderRadius: 8, border: `1px dashed ${C.border}` }}>카드영수증, 현장사진 등을 첨부하세요</div>
+            <div onClick={() => { const inp = document.getElementById("dr-img-input"); if (inp) inp.click(); }}
+              style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: "16px 0", background: C.bg, borderRadius: 8, border: `1px dashed ${C.border}`, cursor: "pointer" }}>
+              📷 카드영수증, 현장사진 등을 첨부하세요
+            </div>
           )}
         </div>
       </div>
