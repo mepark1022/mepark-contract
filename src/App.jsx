@@ -5809,7 +5809,34 @@ function DailyReportPage({ employees }) {
     await supabase.from("site_details").upsert({ site_code: siteCode, valet_rate: rate }, { onConflict: "site_code" });
   };
 
-  const emptyForm = { valet_count: 0, valet_amount: 0, memo: "", staffList: [], payList: PAYMENT_TYPES.map(p => ({ payment_type: p.key, count: 0, amount: 0, memo: "" })), extraList: [] };
+  // ── 이미지 첨부 (Supabase Storage) ──
+  const [lightboxImg, setLightboxImg] = useState(null);
+  const [imgUploading, setImgUploading] = useState(false);
+  const handleImageUpload = async (e) => {
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
+    setImgUploading(true);
+    const newImages = [];
+    for (const file of files) {
+      const ext = file.name.split(".").pop();
+      const path = `receipts/${form.site_code || "misc"}/${selDate}_${Date.now()}.${ext}`;
+      const { error } = await supabase.storage.from("daily-report-images").upload(path, file);
+      if (!error) {
+        const { data: urlData } = supabase.storage.from("daily-report-images").getPublicUrl(path);
+        newImages.push({ url: urlData.publicUrl, name: file.name, path, uploaded_at: new Date().toISOString() });
+      }
+    }
+    if (newImages.length > 0) setForm(f => ({ ...f, images: [...(f.images || []), ...newImages] }));
+    setImgUploading(false);
+    e.target.value = "";
+  };
+  const removeImage = async (idx) => {
+    const img = form.images[idx];
+    if (img?.path) await supabase.storage.from("daily-report-images").remove([img.path]);
+    setForm(f => ({ ...f, images: f.images.filter((_, i) => i !== idx) }));
+  };
+
+  const emptyForm = { valet_count: 0, valet_amount: 0, memo: "", staffList: [], payList: PAYMENT_TYPES.map(p => ({ payment_type: p.key, count: 0, amount: 0, memo: "" })), extraList: [], images: [] };
   const [form, setForm] = useState(emptyForm);
 
   // ── 데이터 로딩 ──
@@ -5883,7 +5910,7 @@ function DailyReportPage({ employees }) {
       valet_count: 0, valet_amount: 0, memo: "",
       staffList: siteEmps.map(e => ({ employee_id: e.id, name_raw: e.name, staff_type: "regular", work_hours: 8 })),
       payList: PAYMENT_TYPES.map(p => ({ payment_type: p.key, count: 0, amount: 0, memo: "" })),
-      extraList: [],
+      extraList: [], images: [],
     });
     setEditMode(true);
   };
@@ -5924,6 +5951,7 @@ function DailyReportPage({ employees }) {
     setForm({
       id: report.id, site_code: report.site_code,
       valet_count: report.valet_count || 0, valet_amount: report.valet_amount || 0, memo: report.memo || "",
+      images: report.images || [],
       staffList: stf.length > 0 ? stf.map(s => ({ id: s.id, employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0 }))
         : employees.filter(e => e.site_code === report.site_code && e.status === "재직").map(e => ({ employee_id: e.id, name_raw: e.name, staff_type: "regular", work_hours: 8 })),
       payList: PAYMENT_TYPES.map(pt => {
@@ -5954,6 +5982,7 @@ function DailyReportPage({ employees }) {
         valet_count: toNum(form.valet_count),
         valet_amount: toNum(form.valet_amount),
         memo: form.memo?.trim() || null,
+        images: form.images || [],
         reporter_id: null,
         status: "submitted",
       };
@@ -6266,7 +6295,19 @@ function DailyReportPage({ employees }) {
             })}
           </div>
         )}
-        {report.memo && <div style={{ fontSize: 11, color: C.gray, background: C.bg, borderRadius: 6, padding: "6px 10px" }}>📝 {report.memo}</div>}
+        {report.memo && <div style={{ fontSize: 11, color: C.gray, background: C.bg, borderRadius: 6, padding: "6px 10px", marginBottom: 10 }}>📝 {report.memo}</div>}
+        {/* 첨부 이미지 */}
+        {(report.images || []).length > 0 && (
+          <div>
+            <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 6 }}>📸 첨부 사진 ({report.images.length}장)</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(80px, 1fr))", gap: 6 }}>
+              {report.images.map((img, i) => (
+                <img key={i} src={img.url} alt={img.name || "사진"} onClick={() => setLightboxImg(img.url)}
+                  style={{ width: "100%", height: 80, objectFit: "cover", borderRadius: 6, cursor: "pointer", border: `1px solid ${C.border}` }} />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -6402,9 +6443,35 @@ function DailyReportPage({ employees }) {
         </div>
 
         {/* 메모 */}
-        <div>
+        <div style={{ marginBottom: 14 }}>
           <label style={labelSt}>📝 메모</label>
           <textarea value={form.memo} onChange={e => setForm(f => ({ ...f, memo: e.target.value }))} style={{ ...fieldSt, height: 60, resize: "vertical" }} placeholder="특이사항, 주차장 상태 등" />
+        </div>
+
+        {/* 📸 영수증/사진 첨부 */}
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>📸 영수증 · 사진 첨부</span>
+            <label style={{ ...miniBtn, background: "#E8F5E9", color: C.success, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 4 }}>
+              {imgUploading ? "업로드 중..." : "📷 추가"}
+              <input type="file" accept="image/*" multiple onChange={handleImageUpload} style={{ display: "none" }} disabled={imgUploading} />
+            </label>
+          </div>
+          {(form.images || []).length > 0 ? (
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(90px, 1fr))", gap: 8 }}>
+              {form.images.map((img, i) => (
+                <div key={i} style={{ position: "relative", borderRadius: 8, overflow: "hidden", border: `1px solid ${C.border}`, background: "#f5f5f5" }}>
+                  <img src={img.url} alt={img.name || "영수증"} onClick={() => setLightboxImg(img.url)}
+                    style={{ width: "100%", height: 90, objectFit: "cover", cursor: "pointer", display: "block" }} />
+                  <button onClick={() => removeImage(i)}
+                    style={{ position: "absolute", top: 2, right: 2, width: 20, height: 20, borderRadius: "50%", border: "none", background: "rgba(0,0,0,0.55)", color: "#fff", fontSize: 11, fontWeight: 900, cursor: "pointer", lineHeight: "20px", padding: 0, textAlign: "center" }}>✕</button>
+                  <div style={{ fontSize: 9, color: C.gray, padding: "2px 4px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{img.name || "사진"}</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: "12px 0", background: C.bg, borderRadius: 8, border: `1px dashed ${C.border}` }}>카드영수증, 현장사진 등을 첨부하세요</div>
+          )}
         </div>
       </div>
     );
@@ -6549,6 +6616,15 @@ function DailyReportPage({ employees }) {
               </>
             )}
           </div>
+        </div>
+      )}
+
+      {/* 이미지 라이트박스 */}
+      {lightboxImg && (
+        <div onClick={() => setLightboxImg(null)} style={{ position: "fixed", inset: 0, zIndex: 9999, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-out" }}>
+          <img src={lightboxImg} alt="확대 보기" style={{ maxWidth: "92vw", maxHeight: "92vh", borderRadius: 8, objectFit: "contain" }} />
+          <button onClick={(e) => { e.stopPropagation(); setLightboxImg(null); }}
+            style={{ position: "absolute", top: 16, right: 16, width: 36, height: 36, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.2)", color: "#fff", fontSize: 18, fontWeight: 900, cursor: "pointer" }}>✕</button>
         </div>
       )}
     </div>

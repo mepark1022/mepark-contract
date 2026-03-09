@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS daily_reports (
   confirmed_at TIMESTAMPTZ,
   submitted_at TIMESTAMPTZ DEFAULT NOW(),
   memo TEXT,
+  images JSONB DEFAULT '[]'::jsonb,
   UNIQUE(report_date, site_code)
 );
 
@@ -52,6 +53,7 @@ CREATE TABLE IF NOT EXISTS daily_report_extra (
 );
 
 -- 5. 기존 테이블 컬럼 추가 (IF NOT EXISTS로 안전)
+ALTER TABLE daily_reports ADD COLUMN IF NOT EXISTS images JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE site_revenue ADD COLUMN IF NOT EXISTS valet_fee INTEGER DEFAULT 0;
 ALTER TABLE site_details ADD COLUMN IF NOT EXISTS valet_rate INTEGER DEFAULT 0;
 ALTER TABLE profiles ADD COLUMN IF NOT EXISTS site_code TEXT;
