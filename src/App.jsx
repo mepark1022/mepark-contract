@@ -5784,14 +5784,14 @@ function DailyReportPage({ employees }) {
   const [selSite, setSelSite] = useState("ALL");
   const [selDate, setSelDate] = useState(todayStr);
   const [reports, setReports] = useState([]);
-  const [staffMap, setStaffMap] = useState({});   // reportId → staff[]
-  const [payMap, setPayMap] = useState({});       // reportId → payment[]
-  const [extraMap, setExtraMap] = useState({});   // reportId → extra[]
+  const [staffMap, setStaffMap] = useState({});
+  const [payMap, setPayMap] = useState({});
+  const [extraMap, setExtraMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
+  const [viewMode, setViewMode] = useState("calendar"); // "calendar" | "table"
 
-  // ── 편집 폼 state ──
   const emptyForm = { valet_count: 0, valet_amount: 0, memo: "", staffList: [], payList: PAYMENT_TYPES.map(p => ({ payment_type: p.key, count: 0, amount: 0, memo: "" })), extraList: [] };
   const [form, setForm] = useState(emptyForm);
 
@@ -5837,9 +5837,10 @@ function DailyReportPage({ employees }) {
     for (let d = 1; d <= daysInMonth; d++) {
       const dateStr = `${selMonth}-${String(d).padStart(2, "0")}`;
       const dayReports = reports.filter(r => r.report_date === dateStr && (selSite === "ALL" || r.site_code === selSite));
+      const totalAmt = dayReports.reduce((s, r) => s + toNum(r.valet_amount), 0);
       const hasConfirmed = dayReports.some(r => r.status === "confirmed");
       const hasSubmitted = dayReports.some(r => r.status === "submitted");
-      week.push({ day: d, dateStr, count: dayReports.length, hasConfirmed, hasSubmitted });
+      week.push({ day: d, dateStr, count: dayReports.length, totalAmt, hasConfirmed, hasSubmitted });
       if (week.length === 7) { weeks.push(week); week = []; }
     }
     if (week.length > 0) { while (week.length < 7) week.push(null); weeks.push(week); }
@@ -5850,9 +5851,15 @@ function DailyReportPage({ employees }) {
   const prevMonth = () => { const [y, m] = selMonth.split("-").map(Number); setSelMonth(m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`); };
   const nextMonth = () => { const [y, m] = selMonth.split("-").map(Number); setSelMonth(m === 12 ? `${y + 1}-01` : `${y}-${String(m + 1).padStart(2, "0")}`); };
 
-  // ── 새 일보 작성 시작 ──
+  // ── 새 일보 작성 시작 (중복 방지) ──
   const startNew = (siteCode) => {
     const site = siteCode || (selSite !== "ALL" ? selSite : FIELD_SITES[0]?.code);
+    // 중복 체크: 같은 날짜 + 같은 사업장에 이미 일보가 있는지
+    const existing = reports.find(r => r.report_date === selDate && r.site_code === site);
+    if (existing) {
+      alert(`${selDate} ${getSiteName(site)} 일보가 이미 존재합니다.\n기존 일보를 수정해주세요.`);
+      return;
+    }
     const siteEmps = employees.filter(e => e.site_code === site && e.status === "재직");
     setForm({
       site_code: site,
@@ -5862,6 +5869,34 @@ function DailyReportPage({ employees }) {
       extraList: [],
     });
     setEditMode(true);
+  };
+
+  // ── 전일 복사 ──
+  const copyFromPrevDay = () => {
+    const site = form.site_code;
+    if (!site) return;
+    // selDate 기준 이전 날짜의 동일 사업장 일보 찾기
+    const prevReports = reports
+      .filter(r => r.site_code === site && r.report_date < selDate)
+      .sort((a, b) => b.report_date.localeCompare(a.report_date));
+    if (prevReports.length === 0) { alert("이전 일보가 없습니다."); return; }
+    const prev = prevReports[0];
+    const stf = staffMap[prev.id] || [];
+    const pay = payMap[prev.id] || [];
+    const ext = extraMap[prev.id] || [];
+    setForm(f => ({
+      ...f,
+      valet_count: prev.valet_count || 0,
+      valet_amount: prev.valet_amount || 0,
+      staffList: stf.length > 0
+        ? stf.map(s => ({ employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0 }))
+        : f.staffList,
+      payList: PAYMENT_TYPES.map(pt => {
+        const existing = pay.find(p => p.payment_type === pt.key);
+        return existing ? { payment_type: pt.key, count: existing.count || 0, amount: existing.amount || 0, memo: "" } : { payment_type: pt.key, count: 0, amount: 0, memo: "" };
+      }),
+      extraList: ext.map(e => ({ employee_id: e.employee_id, extra_type: e.extra_type, extra_hours: e.extra_hours || 0, extra_amount: e.extra_amount || 0, memo: "" })),
+    }));
   };
 
   // ── 기존 일보 편집 ──
@@ -5886,6 +5921,13 @@ function DailyReportPage({ employees }) {
   // ── 저장 ──
   const handleSave = async () => {
     if (!form.site_code) return alert("사업장을 선택하세요");
+    // 결제수단 합계 검증
+    const payTotal = form.payList.reduce((s, p) => s + toNum(p.amount), 0);
+    const valetAmt = toNum(form.valet_amount);
+    if (payTotal > 0 && valetAmt > 0 && Math.abs(payTotal - valetAmt) > 100) {
+      const ok = window.confirm(`결제수단 합계(${fmt(payTotal)}원)와 발렛비(${fmt(valetAmt)}원)가 일치하지 않습니다.\n그래도 저장하시겠습니까?`);
+      if (!ok) return;
+    }
     setSaving(true);
     try {
       let reportId = form.id;
@@ -5906,44 +5948,48 @@ function DailyReportPage({ employees }) {
         if (error) throw error;
         reportId = data.id;
       }
-      // staff: delete & re-insert
       await supabase.from("daily_report_staff").delete().eq("report_id", reportId);
       const staffRows = form.staffList.filter(s => s.employee_id || s.name_raw).map(s => ({
         report_id: reportId, employee_id: s.employee_id || null, name_raw: s.name_raw || null, staff_type: s.staff_type, work_hours: toNum(s.work_hours),
       }));
       if (staffRows.length > 0) await supabase.from("daily_report_staff").insert(staffRows);
-      // payment: delete & re-insert
       await supabase.from("daily_report_payment").delete().eq("report_id", reportId);
       const payRows = form.payList.filter(p => toNum(p.count) > 0 || toNum(p.amount) > 0).map(p => ({
         report_id: reportId, payment_type: p.payment_type, count: toNum(p.count), amount: toNum(p.amount), memo: p.memo || null,
       }));
       if (payRows.length > 0) await supabase.from("daily_report_payment").insert(payRows);
-      // extra: delete & re-insert
       await supabase.from("daily_report_extra").delete().eq("report_id", reportId);
       const extRows = form.extraList.filter(e => toNum(e.extra_amount) > 0 || toNum(e.extra_hours) > 0).map(e => ({
         report_id: reportId, employee_id: e.employee_id || null, extra_type: e.extra_type, extra_hours: toNum(e.extra_hours), extra_amount: toNum(e.extra_amount), memo: e.memo || null,
       }));
       if (extRows.length > 0) await supabase.from("daily_report_extra").insert(extRows);
-
       setEditMode(false);
       await loadReports();
     } catch (e) { alert("저장 실패: " + (e.message || e)); }
     setSaving(false);
   };
 
-  // ── 확정/해제 ──
+  // ── 확정/해제 (BUG FIX: form.valet_amount 대신 report.valet_amount 직접 사용) ──
   const toggleConfirm = async (report) => {
     const newStatus = report.status === "confirmed" ? "submitted" : "confirmed";
-    const update = newStatus === "confirmed" ? { status: "confirmed", confirmed_by: profile?.id || null, confirmed_at: new Date().toISOString() } : { status: "submitted", confirmed_by: null, confirmed_at: null };
+    const update = newStatus === "confirmed"
+      ? { status: "confirmed", confirmed_by: profile?.id || null, confirmed_at: new Date().toISOString() }
+      : { status: "submitted", confirmed_by: null, confirmed_at: null };
     const { error } = await supabase.from("daily_reports").update(update).eq("id", report.id);
     if (error) { alert("상태 변경 실패: " + error.message); return; }
-    // 확정 시 site_revenue.valet_fee 업데이트
-    if (newStatus === "confirmed") {
-      const monthStr = report.report_date.slice(0, 7);
-      const monthReports = reports.filter(r => r.site_code === report.site_code && r.report_date.startsWith(monthStr) && (r.id === report.id ? true : r.status === "confirmed"));
-      const totalValet = monthReports.reduce((s, r) => s + (r.id === report.id ? toNum(form.valet_amount || report.valet_amount) : toNum(r.valet_amount)), 0);
-      await supabase.from("site_revenue").upsert({ site_code: report.site_code, month: monthStr, valet_fee: totalValet }, { onConflict: "site_code,month" });
-    }
+    // 확정/해제 시 site_revenue.valet_fee 재계산
+    const monthStr = report.report_date.slice(0, 7);
+    // 현재 report의 새 상태 반영하여 해당 월+사업장의 확정 일보 합산
+    const confirmedReports = reports.filter(r =>
+      r.site_code === report.site_code &&
+      r.report_date.startsWith(monthStr) &&
+      (r.id === report.id ? newStatus === "confirmed" : r.status === "confirmed")
+    );
+    const totalValet = confirmedReports.reduce((s, r) => s + toNum(r.valet_amount), 0);
+    await supabase.from("site_revenue").upsert(
+      { site_code: report.site_code, month: monthStr, valet_fee: totalValet },
+      { onConflict: "site_code,month" }
+    );
     await loadReports();
   };
 
@@ -5958,97 +6004,150 @@ function DailyReportPage({ employees }) {
   // ── 월간 통계 ──
   const monthStats = useMemo(() => {
     const filtered = selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite);
+    const confirmedFiltered = filtered.filter(r => r.status === "confirmed");
     return {
       totalDays: filtered.length,
-      confirmedDays: filtered.filter(r => r.status === "confirmed").length,
+      confirmedDays: confirmedFiltered.length,
       totalValet: filtered.reduce((s, r) => s + toNum(r.valet_count), 0),
       totalAmount: filtered.reduce((s, r) => s + toNum(r.valet_amount), 0),
+      confirmedAmount: confirmedFiltered.reduce((s, r) => s + toNum(r.valet_amount), 0),
     };
   }, [reports, selSite]);
+
+  // ── 사업장별 월 요약 (테이블뷰용) ──
+  const siteMonthSummary = useMemo(() => {
+    const map = {};
+    FIELD_SITES.forEach(s => { map[s.code] = { code: s.code, name: s.name, days: 0, confirmed: 0, valetCount: 0, valetAmount: 0, staffCount: 0 }; });
+    reports.forEach(r => {
+      if (!map[r.site_code]) return;
+      map[r.site_code].days++;
+      if (r.status === "confirmed") map[r.site_code].confirmed++;
+      map[r.site_code].valetCount += toNum(r.valet_count);
+      map[r.site_code].valetAmount += toNum(r.valet_amount);
+      map[r.site_code].staffCount += (staffMap[r.id] || []).length;
+    });
+    return Object.values(map).filter(s => s.days > 0).sort((a, b) => b.valetAmount - a.valetAmount);
+  }, [reports, staffMap]);
 
   // ── 스타일 ──
   const fieldSt = { ...inputStyle, fontSize: 12, padding: "7px 10px" };
   const labelSt = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4, display: "block" };
   const miniBtn = { ...btnSmall, padding: "4px 10px", fontSize: 11, borderRadius: 6 };
 
-  // ── 직원 검색 (사업장 기준) ──
+  // ── 숫자 입력 헬퍼 (type="number" 대신 inputMode="decimal") ──
+  const numFieldSt = { ...fieldSt, textAlign: "right", fontFamily: FONT };
+  function renderNumField(value, onChange, opts = {}) {
+    const { placeholder, style: st, step } = opts;
+    return (
+      <input inputMode="decimal" placeholder={placeholder} style={{ ...numFieldSt, ...st }}
+        value={value === 0 || value === "0" ? "" : value}
+        onChange={e => {
+          const raw = e.target.value.replace(/[^0-9.]/g, "");
+          onChange(raw === "" ? 0 : raw);
+        }}
+        onBlur={e => {
+          const n = Number(String(e.target.value).replace(/[^0-9.]/g, ""));
+          onChange(isNaN(n) ? 0 : (step === 0.5 ? Math.round(n * 2) / 2 : Math.round(n)));
+        }}
+      />
+    );
+  }
+
+  // ── 직원 검색 ──
   const siteEmployees = useMemo(() => {
     const code = editMode ? form.site_code : selSite;
     if (!code || code === "ALL") return employees.filter(e => e.status === "재직");
     return employees.filter(e => e.site_code === code && e.status === "재직");
   }, [employees, selSite, editMode, form.site_code]);
 
+  // ── 결제수단 합계 vs 발렛비 불일치 체크 ──
+  const paymentMismatch = useMemo(() => {
+    if (!editMode) return null;
+    const payTotal = form.payList.reduce((s, p) => s + toNum(p.amount), 0);
+    const valetAmt = toNum(form.valet_amount);
+    if (payTotal > 0 && valetAmt > 0 && Math.abs(payTotal - valetAmt) > 100) {
+      return { payTotal, valetAmt, diff: payTotal - valetAmt };
+    }
+    return null;
+  }, [editMode, form.payList, form.valet_amount]);
+
   // ── 렌더: 통계 카드 ──
-  const renderStats = () => (
-    <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
-      {[
-        { icon: "📅", label: "작성일수", value: `${monthStats.totalDays}일`, sub: `확정 ${monthStats.confirmedDays}일` },
-        { icon: "🚗", label: "총 발렛건수", value: `${fmt(monthStats.totalValet)}건` },
-        { icon: "💰", label: "총 발렛비", value: `${fmt(monthStats.totalAmount)}원` },
-        { icon: "📊", label: "일평균 발렛비", value: `${fmt(monthStats.totalDays > 0 ? monthStats.totalAmount / monthStats.totalDays : 0)}원` },
-      ].map((s, i) => (
-        <div key={i} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.border}`, padding: "12px 14px", textAlign: "center" }}>
-          <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
-          <div style={{ fontSize: 16, fontWeight: 900, color: C.navy }}>{s.value}</div>
-          <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{s.label}</div>
-          {s.sub && <div style={{ fontSize: 10, color: C.success, marginTop: 2 }}>{s.sub}</div>}
-        </div>
-      ))}
-    </div>
-  );
+  function renderStats() {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 16 }}>
+        {[
+          { icon: "📅", label: "작성일수", value: `${monthStats.totalDays}일`, sub: `확정 ${monthStats.confirmedDays}일`, subColor: C.success },
+          { icon: "🚗", label: "총 발렛건수", value: `${fmt(monthStats.totalValet)}건` },
+          { icon: "💰", label: "총 발렛비", value: `${fmt(monthStats.totalAmount)}원` },
+          { icon: "✅", label: "확정 발렛비", value: `${fmt(monthStats.confirmedAmount)}원`, sub: monthStats.totalAmount > 0 ? `${Math.round(monthStats.confirmedAmount / monthStats.totalAmount * 100)}% 확정` : "", subColor: C.success },
+          { icon: "📊", label: "일평균", value: `${fmt(monthStats.totalDays > 0 ? monthStats.totalAmount / monthStats.totalDays : 0)}원` },
+        ].map((s, i) => (
+          <div key={i} style={{ background: C.white, borderRadius: 10, border: `1px solid ${C.border}`, padding: "12px 14px", textAlign: "center" }}>
+            <div style={{ fontSize: 20, marginBottom: 4 }}>{s.icon}</div>
+            <div style={{ fontSize: 15, fontWeight: 900, color: C.navy }}>{s.value}</div>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{s.label}</div>
+            {s.sub && <div style={{ fontSize: 10, color: s.subColor || C.success, marginTop: 2, fontWeight: 700 }}>{s.sub}</div>}
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   // ── 렌더: 달력 ──
-  const renderCalendar = () => (
-    <div style={{ ...cardStyle, padding: 16 }}>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <button onClick={prevMonth} style={{ ...miniBtn, background: C.lightGray, color: C.dark }}>◀</button>
-        <span style={{ fontSize: 15, fontWeight: 900, color: C.navy }}>{selMonth.replace("-", "년 ")}월</span>
-        <button onClick={nextMonth} style={{ ...miniBtn, background: C.lightGray, color: C.dark }}>▶</button>
+  function renderCalendar() {
+    return (
+      <div style={{ ...cardStyle, padding: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+          <button onClick={prevMonth} style={{ ...miniBtn, background: C.lightGray, color: C.dark }}>◀</button>
+          <span style={{ fontSize: 15, fontWeight: 900, color: C.navy }}>{selMonth.replace("-", "년 ")}월</span>
+          <button onClick={nextMonth} style={{ ...miniBtn, background: C.lightGray, color: C.dark }}>▶</button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
+          {["일", "월", "화", "수", "목", "금", "토"].map((d, i) => (
+            <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: i === 0 ? C.error : i === 6 ? "#2196F3" : C.gray, padding: "4px 0" }}>{d}</div>
+          ))}
+          {calendarData.weeks.flat().map((cell, i) => {
+            if (!cell) return <div key={`e${i}`} />;
+            const isToday = cell.dateStr === todayStr;
+            const isSel = cell.dateStr === selDate;
+            return (
+              <button key={cell.dateStr} onClick={() => { setSelDate(cell.dateStr); setEditMode(false); }}
+                style={{
+                  padding: "5px 2px", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: FONT, fontSize: 12, fontWeight: isSel ? 900 : 600, textAlign: "center",
+                  background: isSel ? C.navy : isToday ? "#E3F2FD" : "transparent",
+                  color: isSel ? C.white : C.dark,
+                  outline: isToday && !isSel ? `2px solid ${C.navy}` : "none",
+                  minHeight: 38,
+                }}>
+                {cell.day}
+                {cell.count > 0 && (
+                  <div style={{ display: "flex", justifyContent: "center", gap: 2, marginTop: 1 }}>
+                    {cell.hasConfirmed && <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.success, display: "inline-block" }} />}
+                    {cell.hasSubmitted && <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.gold, display: "inline-block" }} />}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 12, marginTop: 10, justifyContent: "center" }}>
+          <span style={{ fontSize: 10, color: C.gray, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: C.success, display: "inline-block" }} /> 확정</span>
+          <span style={{ fontSize: 10, color: C.gray, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: C.gold, display: "inline-block" }} /> 미확정</span>
+        </div>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2 }}>
-        {["일", "월", "화", "수", "목", "금", "토"].map((d, i) => (
-          <div key={d} style={{ textAlign: "center", fontSize: 11, fontWeight: 700, color: i === 0 ? C.error : i === 6 ? "#2196F3" : C.gray, padding: "4px 0" }}>{d}</div>
-        ))}
-        {calendarData.weeks.flat().map((cell, i) => {
-          if (!cell) return <div key={`e${i}`} />;
-          const isToday = cell.dateStr === todayStr;
-          const isSel = cell.dateStr === selDate;
-          return (
-            <button key={cell.dateStr} onClick={() => { setSelDate(cell.dateStr); setEditMode(false); }}
-              style={{
-                padding: "6px 2px", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: FONT, fontSize: 12, fontWeight: isSel ? 900 : 600, textAlign: "center",
-                background: isSel ? C.navy : isToday ? "#E3F2FD" : "transparent",
-                color: isSel ? C.white : C.dark,
-                outline: isToday && !isSel ? `2px solid ${C.navy}` : "none",
-              }}>
-              {cell.day}
-              {cell.count > 0 && (
-                <div style={{ display: "flex", justifyContent: "center", gap: 2, marginTop: 2 }}>
-                  {cell.hasConfirmed && <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.success, display: "inline-block" }} />}
-                  {cell.hasSubmitted && <span style={{ width: 5, height: 5, borderRadius: "50%", background: C.gold, display: "inline-block" }} />}
-                </div>
-              )}
-            </button>
-          );
-        })}
-      </div>
-      <div style={{ display: "flex", gap: 12, marginTop: 10, justifyContent: "center" }}>
-        <span style={{ fontSize: 10, color: C.gray, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: C.success, display: "inline-block" }} /> 확정</span>
-        <span style={{ fontSize: 10, color: C.gray, display: "flex", alignItems: "center", gap: 4 }}><span style={{ width: 6, height: 6, borderRadius: "50%", background: C.gold, display: "inline-block" }} /> 미확정</span>
-      </div>
-    </div>
-  );
+    );
+  }
 
   // ── 렌더: 일보 뷰 (읽기 전용) ──
-  const renderReportView = (report) => {
+  function renderReportView(report) {
     const staff = staffMap[report.id] || [];
     const pay = payMap[report.id] || [];
     const extra = extraMap[report.id] || [];
     const siteName = getSiteName(report.site_code);
     const isConfirmed = report.status === "confirmed";
     return (
-      <div key={report.id} style={{ ...cardStyle, borderLeft: `4px solid ${isConfirmed ? C.success : C.gold}` }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+      <div key={report.id} style={{ ...cardStyle, borderLeft: `4px solid ${isConfirmed ? C.success : C.gold}`, marginBottom: 12 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
           <div>
             <span style={{ fontSize: 14, fontWeight: 900, color: C.navy }}>{siteName}</span>
             <span style={{ fontSize: 11, color: C.gray, marginLeft: 8 }}>{report.site_code}</span>
@@ -6082,9 +6181,11 @@ function DailyReportPage({ employees }) {
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {staff.map((s, i) => {
                 const emp = s.employee_id ? employees.find(e => e.id === s.employee_id) : null;
+                const typeBg = s.staff_type === "regular" ? "#E3F2FD" : s.staff_type === "substitute" ? "#FFF3E0" : "#F3E5F5";
+                const typeLabel = s.staff_type === "regular" ? "" : s.staff_type === "substitute" ? " 대근" : " 추가";
                 return (
-                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: s.staff_type === "regular" ? "#E3F2FD" : s.staff_type === "substitute" ? "#FFF3E0" : "#F3E5F5", color: C.dark, fontWeight: 600 }}>
-                    {emp?.name || s.name_raw || "?"} · {s.work_hours}h
+                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: typeBg, color: C.dark, fontWeight: 600 }}>
+                    {emp?.name || s.name_raw || "?"}{typeLabel} · {s.work_hours}h
                   </span>
                 );
               })}
@@ -6095,7 +6196,7 @@ function DailyReportPage({ employees }) {
         {pay.length > 0 && (
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 6 }}>💳 결제수단</div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 6 }}>
+            <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(pay.length, 4)}, 1fr)`, gap: 6 }}>
               {pay.map((p, i) => (
                 <div key={i} style={{ background: C.bg, borderRadius: 6, padding: "6px 8px", textAlign: "center" }}>
                   <div style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>{fmt(p.amount)}원</div>
@@ -6110,7 +6211,7 @@ function DailyReportPage({ employees }) {
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 6 }}>💵 추가수당</div>
             {extra.map((e, i) => {
-              const emp = e.employee_id ? employees.find(emp => emp.id === e.employee_id) : null;
+              const emp = e.employee_id ? employees.find(emp2 => emp2.id === e.employee_id) : null;
               return (
                 <div key={i} style={{ fontSize: 11, display: "flex", justifyContent: "space-between", padding: "3px 0", borderBottom: `1px solid ${C.lightGray}` }}>
                   <span>{emp?.name || "?"} · {EXTRA_TYPES.find(t => t.key === e.extra_type)?.label || e.extra_type} {e.extra_hours}h</span>
@@ -6123,107 +6224,209 @@ function DailyReportPage({ employees }) {
         {report.memo && <div style={{ fontSize: 11, color: C.gray, background: C.bg, borderRadius: 6, padding: "6px 10px" }}>📝 {report.memo}</div>}
       </div>
     );
-  };
+  }
 
   // ── 렌더: 편집 폼 ──
-  const renderEditForm = () => (
-    <div style={{ ...cardStyle, borderLeft: `4px solid ${C.gold}` }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-        <span style={{ fontSize: 15, fontWeight: 900, color: C.navy }}>{form.id ? "📝 일보 수정" : "📝 새 일보 작성"}</span>
-        <div style={{ display: "flex", gap: 6 }}>
-          <button onClick={() => setEditMode(false)} style={{ ...miniBtn, background: C.lightGray, color: C.dark }}>취소</button>
-          <button onClick={handleSave} disabled={saving} style={{ ...miniBtn, background: C.navy, color: C.white }}>{saving ? "저장 중..." : "💾 저장"}</button>
-        </div>
-      </div>
-
-      {/* 사업장 선택 */}
-      <div style={{ marginBottom: 14 }}>
-        <label style={labelSt}>사업장</label>
-        <select value={form.site_code} onChange={e => { const code = e.target.value; setForm(f => ({ ...f, site_code: code, staffList: employees.filter(emp => emp.site_code === code && emp.status === "재직").map(emp => ({ employee_id: emp.id, name_raw: emp.name, staff_type: "regular", work_hours: 8 })) })); }} style={fieldSt} disabled={!!form.id}>
-          {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
-        </select>
-      </div>
-
-      {/* 발렛 현황 */}
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
-        <div><label style={labelSt}>🚗 발렛 건수</label><input type="number" value={form.valet_count} onChange={e => setForm(f => ({ ...f, valet_count: e.target.value }))} style={fieldSt} min={0} /></div>
-        <div><label style={labelSt}>💰 발렛비 (원)</label><input type="number" value={form.valet_amount} onChange={e => setForm(f => ({ ...f, valet_amount: e.target.value }))} style={fieldSt} min={0} step={1000} /></div>
-      </div>
-
-      {/* 근무자 배치 */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>👥 근무자 ({form.staffList.length}명)</span>
-          <button onClick={() => setForm(f => ({ ...f, staffList: [...f.staffList, { employee_id: "", name_raw: "", staff_type: "substitute", work_hours: 8 }] }))} style={{ ...miniBtn, background: "#E3F2FD", color: C.navy }}>+ 추가</button>
-        </div>
-        {form.staffList.map((s, i) => (
-          <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-            <select value={s.employee_id || ""} onChange={e => { const empId = e.target.value; const emp = employees.find(emp => emp.id === empId); setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, employee_id: empId, name_raw: emp?.name || ss.name_raw } : ss) })); }} style={{ ...fieldSt, flex: 2 }}>
-              <option value="">직접입력</option>
-              {siteEmployees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.emp_no})</option>)}
-            </select>
-            {!s.employee_id && <input placeholder="이름" value={s.name_raw} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, name_raw: e.target.value } : ss) }))} style={{ ...fieldSt, flex: 1 }} />}
-            <select value={s.staff_type} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, staff_type: e.target.value } : ss) }))} style={{ ...fieldSt, width: 72, flex: "none" }}>
-              <option value="regular">정규</option><option value="substitute">대근</option><option value="extra">추가</option>
-            </select>
-            <input type="number" value={s.work_hours} min={0} max={24} step={0.5} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, work_hours: e.target.value } : ss) }))} style={{ ...fieldSt, width: 56, flex: "none", textAlign: "center" }} />
-            <span style={{ fontSize: 10, color: C.gray, flexShrink: 0 }}>h</span>
-            <button onClick={() => setForm(f => ({ ...f, staffList: f.staffList.filter((_, j) => j !== i) }))} style={{ ...miniBtn, background: "#FFEBEE", color: C.error, padding: "4px 8px" }}>✕</button>
+  function renderEditForm() {
+    return (
+      <div style={{ ...cardStyle, borderLeft: `4px solid ${C.gold}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+          <span style={{ fontSize: 15, fontWeight: 900, color: C.navy }}>{form.id ? "📝 일보 수정" : "📝 새 일보 작성"} — {selDate}</span>
+          <div style={{ display: "flex", gap: 6 }}>
+            {!form.id && <button onClick={copyFromPrevDay} style={{ ...miniBtn, background: "#E3F2FD", color: C.navy }}>📋 전일복사</button>}
+            <button onClick={() => setEditMode(false)} style={{ ...miniBtn, background: C.lightGray, color: C.dark }}>취소</button>
+            <button onClick={handleSave} disabled={saving} style={{ ...miniBtn, background: C.navy, color: C.white }}>{saving ? "저장 중..." : "💾 저장"}</button>
           </div>
-        ))}
-      </div>
+        </div>
 
-      {/* 결제수단 */}
-      <div style={{ marginBottom: 14 }}>
-        <span style={{ fontSize: 12, fontWeight: 800, color: C.navy, display: "block", marginBottom: 8 }}>💳 결제수단별 매출</span>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-          {form.payList.map((p, i) => (
-            <div key={p.payment_type} style={{ background: C.bg, borderRadius: 8, padding: "8px 10px" }}>
-              <label style={{ ...labelSt, marginBottom: 6 }}>{PAYMENT_TYPES.find(pt => pt.key === p.payment_type)?.label}</label>
-              <div style={{ display: "flex", gap: 6 }}>
-                <input type="number" placeholder="건수" value={p.count || ""} min={0} onChange={e => setForm(f => ({ ...f, payList: f.payList.map((pp, j) => j === i ? { ...pp, count: e.target.value } : pp) }))} style={{ ...fieldSt, flex: 1 }} />
-                <input type="number" placeholder="금액" value={p.amount || ""} min={0} step={1000} onChange={e => setForm(f => ({ ...f, payList: f.payList.map((pp, j) => j === i ? { ...pp, amount: e.target.value } : pp) }))} style={{ ...fieldSt, flex: 2 }} />
-              </div>
+        {/* 사업장 선택 */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={labelSt}>사업장</label>
+          <select value={form.site_code} onChange={e => { const code = e.target.value; setForm(f => ({ ...f, site_code: code, staffList: employees.filter(emp => emp.site_code === code && emp.status === "재직").map(emp => ({ employee_id: emp.id, name_raw: emp.name, staff_type: "regular", work_hours: 8 })) })); }} style={fieldSt} disabled={!!form.id}>
+            {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+          </select>
+        </div>
+
+        {/* 발렛 현황 */}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 14 }}>
+          <div>
+            <label style={labelSt}>🚗 발렛 건수</label>
+            {renderNumField(form.valet_count, v => setForm(f => ({ ...f, valet_count: v })), { placeholder: "건수", style: { ...fieldSt } })}
+          </div>
+          <div>
+            <label style={labelSt}>💰 발렛비 (원)</label>
+            {renderNumField(form.valet_amount, v => setForm(f => ({ ...f, valet_amount: v })), { placeholder: "금액", style: { ...fieldSt } })}
+          </div>
+        </div>
+
+        {/* 근무자 배치 */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>👥 근무자 ({form.staffList.length}명)</span>
+            <button onClick={() => setForm(f => ({ ...f, staffList: [...f.staffList, { employee_id: "", name_raw: "", staff_type: "substitute", work_hours: 8 }] }))} style={{ ...miniBtn, background: "#E3F2FD", color: C.navy }}>+ 추가</button>
+          </div>
+          {form.staffList.map((s, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+              <select value={s.employee_id || ""} onChange={e => { const empId = e.target.value; const emp = employees.find(emp2 => emp2.id === empId); setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, employee_id: empId, name_raw: emp?.name || ss.name_raw } : ss) })); }} style={{ ...fieldSt, flex: 2, minWidth: 120 }}>
+                <option value="">직접입력</option>
+                {siteEmployees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.emp_no})</option>)}
+              </select>
+              {!s.employee_id && <input placeholder="이름" value={s.name_raw} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, name_raw: e.target.value } : ss) }))} style={{ ...fieldSt, flex: 1, minWidth: 60 }} />}
+              <select value={s.staff_type} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, staff_type: e.target.value } : ss) }))} style={{ ...fieldSt, width: 72, flex: "none" }}>
+                <option value="regular">정규</option><option value="substitute">대근</option><option value="extra">추가</option>
+              </select>
+              {renderNumField(s.work_hours, v => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, work_hours: v } : ss) })), { placeholder: "h", style: { ...fieldSt, width: 52, flex: "none", textAlign: "center" }, step: 0.5 })}
+              <span style={{ fontSize: 10, color: C.gray, flexShrink: 0 }}>h</span>
+              <button onClick={() => setForm(f => ({ ...f, staffList: f.staffList.filter((_, j) => j !== i) }))} style={{ ...miniBtn, background: "#FFEBEE", color: C.error, padding: "4px 8px" }}>✕</button>
             </div>
           ))}
         </div>
-      </div>
 
-      {/* 추가수당 */}
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-          <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>💵 추가수당</span>
-          <button onClick={() => setForm(f => ({ ...f, extraList: [...f.extraList, { employee_id: "", extra_type: "overtime", extra_hours: 0, extra_amount: 0, memo: "" }] }))} style={{ ...miniBtn, background: "#FFF3E0", color: C.orange }}>+ 추가</button>
-        </div>
-        {form.extraList.map((e, i) => (
-          <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6 }}>
-            <select value={e.employee_id || ""} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, employee_id: ev.target.value } : ee) }))} style={{ ...fieldSt, flex: 2 }}>
-              <option value="">직원선택</option>
-              {siteEmployees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
-            </select>
-            <select value={e.extra_type} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, extra_type: ev.target.value } : ee) }))} style={{ ...fieldSt, width: 80, flex: "none" }}>
-              {EXTRA_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
-            </select>
-            <input type="number" placeholder="h" value={e.extra_hours || ""} min={0} step={0.5} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, extra_hours: ev.target.value } : ee) }))} style={{ ...fieldSt, width: 48, flex: "none", textAlign: "center" }} />
-            <input type="number" placeholder="금액" value={e.extra_amount || ""} min={0} step={1000} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, extra_amount: ev.target.value } : ee) }))} style={{ ...fieldSt, width: 80, flex: "none" }} />
-            <button onClick={() => setForm(f => ({ ...f, extraList: f.extraList.filter((_, j) => j !== i) }))} style={{ ...miniBtn, background: "#FFEBEE", color: C.error, padding: "4px 8px" }}>✕</button>
+        {/* 결제수단 */}
+        <div style={{ marginBottom: 14 }}>
+          <span style={{ fontSize: 12, fontWeight: 800, color: C.navy, display: "block", marginBottom: 8 }}>💳 결제수단별 매출</span>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
+            {form.payList.map((p, i) => (
+              <div key={p.payment_type} style={{ background: C.bg, borderRadius: 8, padding: "8px 10px" }}>
+                <label style={{ ...labelSt, marginBottom: 6 }}>{PAYMENT_TYPES.find(pt => pt.key === p.payment_type)?.label}</label>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {renderNumField(p.count, v => setForm(f => ({ ...f, payList: f.payList.map((pp, j) => j === i ? { ...pp, count: v } : pp) })), { placeholder: "건수", style: { ...fieldSt, flex: 1 } })}
+                  {renderNumField(p.amount, v => setForm(f => ({ ...f, payList: f.payList.map((pp, j) => j === i ? { ...pp, amount: v } : pp) })), { placeholder: "금액", style: { ...fieldSt, flex: 2 } })}
+                </div>
+              </div>
+            ))}
           </div>
-        ))}
-        {form.extraList.length === 0 && <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: 8 }}>추가수당 없음</div>}
-      </div>
+          {/* 결제수단 합계 표시 + 불일치 경고 */}
+          {(() => {
+            const payTotal = form.payList.reduce((s, p) => s + toNum(p.amount), 0);
+            return payTotal > 0 ? (
+              <div style={{ marginTop: 6, display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11, padding: "6px 10px", borderRadius: 6, background: paymentMismatch ? "#FFF3E0" : "#E8F5E9" }}>
+                <span style={{ fontWeight: 700, color: C.gray }}>결제수단 합계</span>
+                <span style={{ fontWeight: 900, color: paymentMismatch ? C.orange : C.success }}>{fmt(payTotal)}원
+                  {paymentMismatch && <span style={{ color: C.error, marginLeft: 8 }}>⚠️ 발렛비와 {fmt(Math.abs(paymentMismatch.diff))}원 차이</span>}
+                </span>
+              </div>
+            ) : null;
+          })()}
+        </div>
 
-      {/* 메모 */}
-      <div>
-        <label style={labelSt}>📝 메모</label>
-        <textarea value={form.memo} onChange={e => setForm(f => ({ ...f, memo: e.target.value }))} style={{ ...fieldSt, height: 60, resize: "vertical" }} placeholder="특이사항, 주차장 상태 등" />
+        {/* 추가수당 */}
+        <div style={{ marginBottom: 14 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>💵 추가수당</span>
+            <button onClick={() => setForm(f => ({ ...f, extraList: [...f.extraList, { employee_id: "", extra_type: "overtime", extra_hours: 0, extra_amount: 0, memo: "" }] }))} style={{ ...miniBtn, background: "#FFF3E0", color: C.orange }}>+ 추가</button>
+          </div>
+          {form.extraList.map((e, i) => (
+            <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+              <select value={e.employee_id || ""} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, employee_id: ev.target.value } : ee) }))} style={{ ...fieldSt, flex: 2, minWidth: 100 }}>
+                <option value="">직원선택</option>
+                {siteEmployees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+              </select>
+              <select value={e.extra_type} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, extra_type: ev.target.value } : ee) }))} style={{ ...fieldSt, width: 80, flex: "none" }}>
+                {EXTRA_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+              </select>
+              {renderNumField(e.extra_hours, v => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, extra_hours: v } : ee) })), { placeholder: "h", style: { ...fieldSt, width: 48, flex: "none", textAlign: "center" }, step: 0.5 })}
+              {renderNumField(e.extra_amount, v => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, extra_amount: v } : ee) })), { placeholder: "금액", style: { ...fieldSt, width: 80, flex: "none" } })}
+              <button onClick={() => setForm(f => ({ ...f, extraList: f.extraList.filter((_, j) => j !== i) }))} style={{ ...miniBtn, background: "#FFEBEE", color: C.error, padding: "4px 8px" }}>✕</button>
+            </div>
+          ))}
+          {form.extraList.length === 0 && <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: 8 }}>추가수당 없음</div>}
+        </div>
+
+        {/* 메모 */}
+        <div>
+          <label style={labelSt}>📝 메모</label>
+          <textarea value={form.memo} onChange={e => setForm(f => ({ ...f, memo: e.target.value }))} style={{ ...fieldSt, height: 60, resize: "vertical" }} placeholder="특이사항, 주차장 상태 등" />
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
+
+  // ── 렌더: 월간 테이블 뷰 ──
+  function renderTableView() {
+    const filtered = selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite);
+    const sorted = [...filtered].sort((a, b) => a.report_date.localeCompare(b.report_date));
+    if (sorted.length === 0) return <div style={{ ...cardStyle, textAlign: "center", color: C.gray, padding: 30 }}>📋 이번 달 작성된 일보가 없습니다.</div>;
+
+    return (
+      <div style={{ ...cardStyle, padding: 0, overflow: "hidden" }}>
+        {/* 사업장별 요약 */}
+        {selSite === "ALL" && siteMonthSummary.length > 0 && (
+          <div style={{ padding: 16, borderBottom: `2px solid ${C.lightGray}` }}>
+            <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 10 }}>📊 사업장별 월 요약</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
+              {siteMonthSummary.map(s => (
+                <div key={s.code} style={{ background: C.bg, borderRadius: 8, padding: "10px 12px", cursor: "pointer" }} onClick={() => setSelSite(s.code)}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: C.navy, marginBottom: 4 }}>{s.name} <span style={{ color: C.gray, fontWeight: 500 }}>{s.code}</span></div>
+                  <div style={{ fontSize: 15, fontWeight: 900, color: C.gold }}>{fmt(s.valetAmount)}원</div>
+                  <div style={{ fontSize: 10, color: C.gray }}>{s.days}일 · 발렛 {fmt(s.valetCount)}건 · {s.confirmed}일 확정</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+        {/* 일자별 테이블 */}
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: C.navy }}>
+                {["날짜", "사업장", "발렛건수", "발렛비", "근무자", "상태", ""].map((h, i) => (
+                  <th key={i} style={{ padding: "10px 12px", color: C.white, fontWeight: 800, textAlign: i >= 2 && i <= 4 ? "right" : "left", whiteSpace: "nowrap", fontSize: 11 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r, idx) => {
+                const staff = staffMap[r.id] || [];
+                const isConfirmed = r.status === "confirmed";
+                return (
+                  <tr key={r.id} style={{ background: idx % 2 === 0 ? C.white : C.bg, borderBottom: `1px solid ${C.lightGray}` }}
+                    onClick={() => { setSelDate(r.report_date); setViewMode("calendar"); setEditMode(false); }}
+                    onMouseEnter={e => e.currentTarget.style.background = "#F0F4FF"}
+                    onMouseLeave={e => e.currentTarget.style.background = idx % 2 === 0 ? C.white : C.bg}>
+                    <td style={{ padding: "8px 12px", fontWeight: 700, whiteSpace: "nowrap" }}>{r.report_date.slice(5)}</td>
+                    <td style={{ padding: "8px 12px", fontWeight: 600 }}>{getSiteName(r.site_code)}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 700 }}>{fmt(r.valet_count)}</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", fontWeight: 800, color: C.navy }}>{fmt(r.valet_amount)}원</td>
+                    <td style={{ padding: "8px 12px", textAlign: "right", color: C.gray }}>{staff.length}명</td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 8, background: isConfirmed ? "#E8F5E9" : "#FFF8E1", color: isConfirmed ? C.success : "#F57F17" }}>
+                        {isConfirmed ? "확정" : "미확정"}
+                      </span>
+                    </td>
+                    <td style={{ padding: "8px 12px" }}>
+                      <button onClick={ev => { ev.stopPropagation(); startEdit(r); setViewMode("calendar"); }} style={{ ...miniBtn, background: C.white, color: C.navy, border: `1px solid ${C.border}` }}>수정</button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* 합계행 */}
+              <tr style={{ background: C.navy }}>
+                <td style={{ padding: "10px 12px", color: C.white, fontWeight: 900 }} colSpan={2}>합계 ({sorted.length}일)</td>
+                <td style={{ padding: "10px 12px", color: C.white, fontWeight: 900, textAlign: "right" }}>{fmt(sorted.reduce((s, r) => s + toNum(r.valet_count), 0))}</td>
+                <td style={{ padding: "10px 12px", color: C.gold, fontWeight: 900, textAlign: "right" }}>{fmt(sorted.reduce((s, r) => s + toNum(r.valet_amount), 0))}원</td>
+                <td style={{ padding: "10px 12px", color: C.white, fontWeight: 700, textAlign: "right" }}>{sorted.reduce((s, r) => s + (staffMap[r.id] || []).length, 0)}명</td>
+                <td colSpan={2} style={{ padding: "10px 12px", color: "#81C784", fontWeight: 700, fontSize: 11 }}>확정 {sorted.filter(r => r.status === "confirmed").length}일</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  }
 
   // ── 메인 렌더 ──
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 16px" }}>📋 현장 일보 관리</h2>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
+        <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>📋 현장 일보 관리</h2>
+        {/* 뷰 모드 토글 */}
+        <div style={{ display: "flex", gap: 4, background: C.lightGray, borderRadius: 8, padding: 3 }}>
+          {[["calendar", "📅 달력"], ["table", "📊 목록"]].map(([k, v]) => (
+            <button key={k} onClick={() => setViewMode(k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, background: viewMode === k ? C.white : "transparent", color: viewMode === k ? C.navy : C.gray, boxShadow: viewMode === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}>{v}</button>
+          ))}
+        </div>
+      </div>
 
       {/* 사업장 필터 탭 */}
       <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16 }}>
@@ -6236,44 +6439,50 @@ function DailyReportPage({ employees }) {
       {/* 통계 */}
       {renderStats()}
 
-      {/* 2컬럼: 달력 + 상세 */}
-      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "start" }}>
-        {/* 좌: 달력 */}
-        <div>
-          {renderCalendar()}
-          {/* 선택 날짜 표시 */}
-          <div style={{ marginTop: 10, textAlign: "center", fontSize: 13, fontWeight: 800, color: C.navy }}>
-            📅 {selDate}
+      {viewMode === "table" ? (
+        renderTableView()
+      ) : (
+        /* 2컬럼: 달력 + 상세 (반응형) */
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 280px) 1fr", gap: 16, alignItems: "start" }}>
+          {/* 좌: 달력 */}
+          <div>
+            {renderCalendar()}
+            <div style={{ marginTop: 10, textAlign: "center", fontSize: 13, fontWeight: 800, color: C.navy }}>📅 {selDate}</div>
+            {/* 오늘 버튼 */}
+            {selDate !== todayStr && (
+              <div style={{ textAlign: "center", marginTop: 6 }}>
+                <button onClick={() => { setSelDate(todayStr); setSelMonth(todayStr.slice(0, 7)); }} style={{ ...miniBtn, background: "#E3F2FD", color: C.navy }}>📅 오늘로 이동</button>
+              </div>
+            )}
+          </div>
+
+          {/* 우: 일보 상세 */}
+          <div>
+            {loading ? (
+              <div style={{ ...cardStyle, textAlign: "center", color: C.gray }}>로딩 중...</div>
+            ) : editMode ? (
+              renderEditForm()
+            ) : (
+              <>
+                {currentReport.length > 0 ? (
+                  currentReport.map(r => renderReportView(r))
+                ) : (
+                  <div style={{ ...cardStyle, textAlign: "center", padding: 40 }}>
+                    <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: C.gray, marginBottom: 16 }}>{selDate} 일보가 없습니다</div>
+                    <button onClick={() => startNew()} style={btnPrimary}>+ 새 일보 작성</button>
+                  </div>
+                )}
+                {currentReport.length > 0 && selSite === "ALL" && (
+                  <div style={{ textAlign: "center", marginTop: 8 }}>
+                    <button onClick={() => startNew()} style={{ ...btnSmall, background: C.white, color: C.navy, border: `1.5px solid ${C.navy}` }}>+ 다른 사업장 일보 추가</button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
-
-        {/* 우: 일보 상세 */}
-        <div>
-          {loading ? (
-            <div style={{ ...cardStyle, textAlign: "center", color: C.gray }}>로딩 중...</div>
-          ) : editMode ? (
-            renderEditForm()
-          ) : (
-            <>
-              {currentReport.length > 0 ? (
-                currentReport.map(r => renderReportView(r))
-              ) : (
-                <div style={{ ...cardStyle, textAlign: "center", padding: 40 }}>
-                  <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: C.gray, marginBottom: 16 }}>{selDate} 일보가 없습니다</div>
-                  <button onClick={() => startNew()} style={btnPrimary}>+ 새 일보 작성</button>
-                </div>
-              )}
-              {/* 일보가 있는 날에도 다른 사업장 추가 가능 */}
-              {currentReport.length > 0 && selSite === "ALL" && (
-                <div style={{ textAlign: "center", marginTop: 8 }}>
-                  <button onClick={() => startNew()} style={{ ...btnSmall, background: C.white, color: C.navy, border: `1.5px solid ${C.navy}` }}>+ 다른 사업장 일보 추가</button>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
