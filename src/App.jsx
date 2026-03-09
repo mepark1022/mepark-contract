@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment } from "react";
-import { supabase, supabaseUrl, supabaseAnonKey } from "./supabaseClient";
+import { supabase, supabaseUrl, supabaseAnonKey, supabaseAdmin } from "./supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
 import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
@@ -303,18 +303,23 @@ function AuthProvider({ children }) {
     setUser(null); setProfiles([]); setInvitations([]);
   };
 
-  // ── 계정 직접 생성 (슈퍼관리자 전용) — RPC 방식 ──
+  // ── 계정 직접 생성 (슈퍼관리자 전용 — Admin API) ──
   const createAccount = async (name, email, password, role) => {
     try {
       const existingProfile = profiles.find(p => p.email === email);
       if (existingProfile) return { error: "이미 등록된 관리자입니다." };
 
-      // DB에서 직접 유저 생성 (signUp 우회 — 이메일 확인/SMTP 불필요)
-      const { data: userId, error: rpcErr } = await supabase.rpc("admin_create_user", {
-        user_email: email, user_password: password, user_name: name
+      // Admin API로 유저 생성 (이메일 확인 자동 완료, SMTP 불필요)
+      const { data, error } = await supabaseAdmin.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+        user_metadata: { name }
       });
-      if (rpcErr) return { error: "계정 생성 실패: " + rpcErr.message };
-      if (!userId) return { error: "계정 생성 실패: ID를 반환받지 못했습니다." };
+
+      if (error) return { error: "계정 생성 실패: " + error.message };
+      const userId = data?.user?.id;
+      if (!userId) return { error: "계정 생성 실패: ID를 받지 못했습니다." };
 
       // 프로필 생성
       const { error: profErr } = await supabase.from("profiles").upsert({
