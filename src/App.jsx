@@ -8623,6 +8623,7 @@ function PayrollPage({ employees, profitState }) {
 function MainApp() {
   const { profile, signOut, can } = useAuth();
   const [page, setPage] = useState("main_dashboard");
+  const [openSections, setOpenSections] = useState({ hr: true, site: false, profit: false, calc: false });
   const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
   const [contractEdit, setContractEdit] = useState(null);
@@ -8834,6 +8835,18 @@ function MainApp() {
     { key: "salary_calc", icon: "📋", label: "인건비 견적" },
   ];
 
+  // 아코디언: 페이지 변경 시 해당 섹션 자동 펼침
+  const sectionKeyMap = { hr: hrNavItems, site: siteNavItems, profit: profitNavItems, calc: calcNavItems };
+  React.useEffect(() => {
+    for (const [sec, items] of Object.entries(sectionKeyMap)) {
+      if (items.some(i => i.key === page)) {
+        setOpenSections(prev => prev[sec] ? prev : { ...prev, [sec]: true });
+        break;
+      }
+    }
+  }, [page]);
+  const toggleSection = (sec) => setOpenSections(prev => ({ ...prev, [sec]: !prev[sec] }));
+
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: FONT, background: C.bg }}>
       {/* 사이드바 */}
@@ -8864,11 +8877,12 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "6px 8px 10px" }} />
 
           {/* HR & 계약관리 영역 */}
-          <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
+          <div onClick={() => toggleSection("hr")} style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>HR & 계약관리</span>
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1, flex: 1 }}>HR & 계약관리</span>
+            <span style={{ fontSize: 10, color: C.gold, transition: "transform 0.2s", transform: openSections.hr ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
           </div>
-          {hrNavItems.map(item => (
+          {openSections.hr && hrNavItems.map(item => (
             <button key={item.key} onClick={() => { setPage(item.key); if (item.key !== "contract") { setContractEmp(null); setContractEdit(null); } }}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
@@ -8885,11 +8899,12 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
 
           {/* 사업장 현황 영역 */}
-          <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
+          <div onClick={() => toggleSection("site")} style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>사업장 현황</span>
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1, flex: 1 }}>사업장 현황</span>
+            <span style={{ fontSize: 10, color: C.gold, transition: "transform 0.2s", transform: openSections.site ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
           </div>
-          {siteNavItems.map(item => (
+          {openSections.site && siteNavItems.map(item => (
             <button key={item.key} onClick={() => setPage(item.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
@@ -8906,11 +8921,12 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
 
           {/* 수익성 분석 영역 */}
-          <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
+          <div onClick={() => toggleSection("profit")} style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>수익성 분석</span>
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1, flex: 1 }}>수익성 분석</span>
+            <span style={{ fontSize: 10, color: C.gold, transition: "transform 0.2s", transform: openSections.profit ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
           </div>
-          {profitNavItems.map(item => (
+          {openSections.profit && profitNavItems.map(item => (
             <button key={item.key} onClick={() => setPage(item.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
@@ -8927,11 +8943,12 @@ function MainApp() {
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
 
           {/* 견적 계산기 영역 */}
-          <div style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7 }}>
+          <div onClick={() => toggleSection("calc")} style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
-            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1 }}>견적 계산기</span>
+            <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1, flex: 1 }}>견적 계산기</span>
+            <span style={{ fontSize: 10, color: C.gold, transition: "transform 0.2s", transform: openSections.calc ? "rotate(180deg)" : "rotate(0deg)" }}>▼</span>
           </div>
-          {calcNavItems.map(item => (
+          {openSections.calc && calcNavItems.map(item => (
             <button key={item.key} onClick={() => setPage(item.key)}
               style={{
                 display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "10px 12px",
