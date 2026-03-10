@@ -8837,7 +8837,7 @@ function MainApp() {
 
   // 아코디언: 페이지 변경 시 해당 섹션 자동 펼침
   const sectionKeyMap = { hr: hrNavItems, site: siteNavItems, profit: profitNavItems, calc: calcNavItems };
-  React.useEffect(() => {
+  useEffect(() => {
     for (const [sec, items] of Object.entries(sectionKeyMap)) {
       if (items.some(i => i.key === page)) {
         setOpenSections(prev => prev[sec] ? prev : { ...prev, [sec]: true });
