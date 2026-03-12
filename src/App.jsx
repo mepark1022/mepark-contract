@@ -5341,9 +5341,8 @@ function SiteManagementPage({ employees }) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newSiteName, setNewSiteName] = useState("");
   const [addError, setAddError] = useState("");
-  const [customSites, setCustomSites] = useState([]); // DB에서 추가된 사업장
+  const [customSites, setCustomSites] = useState([]);
 
-  // DB 로드
   useEffect(() => {
     (async () => {
       const { data: details } = await supabase.from("site_details").select("*");
@@ -5352,7 +5351,6 @@ function SiteManagementPage({ employees }) {
         const extras = [];
         details.forEach(d => {
           map[d.site_code] = d;
-          // SITES 상수에 없는 사업장 = 추가된 사업장
           if (!SITES.find(s => s.code === d.site_code) && d.site_name) {
             extras.push({ code: d.site_code, name: d.site_name });
           }
@@ -5372,13 +5370,11 @@ function SiteManagementPage({ employees }) {
     })();
   }, []);
 
-  // 기존 SITES(V000 제외) + DB 추가 사업장 병합
   const allSites = useMemo(() => {
     const base = SITES.filter(s => s.code !== "V000");
     return [...base, ...customSites.filter(cs => !base.find(b => b.code === cs.code))];
   }, [customSites]);
 
-  // 다음 사업장 코드 자동 계산
   const nextSiteCode = useMemo(() => {
     const codes = allSites.map(s => s.code).filter(c => /^V\d+$/.test(c));
     const nums = codes.map(c => parseInt(c.slice(1)));
@@ -5393,7 +5389,8 @@ function SiteManagementPage({ employees }) {
     return map;
   }, [employees, allSites]);
 
-  // 사업장 추가
+  const isCustomSite = (code) => customSites.some(s => s.code === code);
+
   const handleAddSite = async () => {
     const code = nextSiteCode;
     const name = newSiteName.trim();
@@ -5405,7 +5402,7 @@ function SiteManagementPage({ employees }) {
         .insert({ site_code: code, site_name: name, updated_at: new Date().toISOString() })
         .select();
       if (error) { setAddError("등록 실패: " + error.message); setSaving(false); return; }
-      if (!data || data.length === 0) { setAddError("등록 실패: 데이터가 저장되지 않았습니다. RLS 정책을 확인하세요."); setSaving(false); return; }
+      if (!data || data.length === 0) { setAddError("등록 실패: RLS 정책을 확인하세요."); setSaving(false); return; }
       setCustomSites(p => [...p, { code, name }]);
       setSiteDetails(p => ({ ...p, [code]: data[0] }));
       setNewSiteName(""); setShowAddForm(false);
@@ -5414,15 +5411,13 @@ function SiteManagementPage({ employees }) {
     setSaving(false);
   };
 
-  // 사업장 삭제 (커스텀만)
   const handleDeleteSite = async (code) => {
     const siteName = allSites.find(s => s.code === code)?.name || code;
-    if (!(await confirm(`"${code} ${siteName}" 사업장을 삭제하시겠습니까?`, "⚠️ 해당 사업장의 계약정보, 외부주차장 데이터가 모두 삭제됩니다.\n이 작업은 되돌릴 수 없습니다."))) return;
+    if (!(await confirm(`"${code} ${siteName}" 사업장을 삭제하시겠습니까?`, "⚠️ 계약정보, 외부주차장 데이터가 모두 삭제됩니다."))) return;
     setSaving(true);
     try {
-      const { error: e1 } = await supabase.from("site_parking").delete().eq("site_code", code);
-      const { error: e2 } = await supabase.from("site_details").delete().eq("site_code", code);
-      if (e1 || e2) { alert("삭제 중 오류: " + (e1?.message || e2?.message)); setSaving(false); return; }
+      await supabase.from("site_parking").delete().eq("site_code", code);
+      await supabase.from("site_details").delete().eq("site_code", code);
       setCustomSites(p => p.filter(s => s.code !== code));
       setSiteDetails(p => { const n = { ...p }; delete n[code]; return n; });
       setSiteParking(p => { const n = { ...p }; delete n[code]; return n; });
@@ -5431,17 +5426,13 @@ function SiteManagementPage({ employees }) {
     setSaving(false);
   };
 
-  // ★ 디바운스 타이머 ref (키스트로크마다 DB 호출 방지)
   const detailSaveTimers = useRef({});
   const updateDetail = (code, field, value) => {
-    // 1) 즉시 state 업데이트 (UI 반영)
     setSiteDetails(p => ({ ...p, [code]: { ...p[code], site_code: code, [field]: value } }));
-    // 사업장명 변경 시 목록도 동기화
     if (field === "site_name" && isCustomSite(code)) {
       setCustomSites(p => p.map(s => s.code === code ? { ...s, name: value } : s));
       setSelectedSite(p => p && p.code === code ? { ...p, name: value } : p);
     }
-    // 2) DB 저장은 디바운스 (800ms)
     const timerKey = `${code}_${field}`;
     if (detailSaveTimers.current[timerKey]) clearTimeout(detailSaveTimers.current[timerKey]);
     detailSaveTimers.current[timerKey] = setTimeout(async () => {
@@ -5454,23 +5445,30 @@ function SiteManagementPage({ employees }) {
     }, 800);
   };
 
+  const handleSaveAll = async (code) => {
+    setSaving(true);
+    const d = siteDetails[code] || {};
+    const siteName = d.site_name || allSites.find(s => s.code === code)?.name || code;
+    const payload = { site_code: code, site_name: siteName, updated_at: new Date().toISOString() };
+    ["start_date","contract_end_date","monthly_contract","address","latitude","longitude","memo","contract_file_name","contract_file_url","valet_rate"].forEach(k => { if (d[k] !== undefined) payload[k] = d[k]; });
+    await supabase.from("site_details").upsert(payload, { onConflict: "site_code" });
+    setSaving(false);
+    alert("✅ 저장 완료");
+  };
+
   const addParking = async (code) => {
     const newP = { site_code: code, parking_name: "", address: "", amount: 0, manager_name: "", phone: "" };
     const { data } = await supabase.from("site_parking").insert(newP).select().single();
     if (data) setSiteParking(p => ({ ...p, [code]: [...(p[code] || []), data] }));
   };
-
   const updateParking = async (id, field, value) => {
     setSiteParking(p => {
       const updated = {};
-      Object.entries(p).forEach(([code, list]) => {
-        updated[code] = list.map(pk => pk.id === id ? { ...pk, [field]: value } : pk);
-      });
+      Object.entries(p).forEach(([code, list]) => { updated[code] = list.map(pk => pk.id === id ? { ...pk, [field]: value } : pk); });
       return updated;
     });
     await supabase.from("site_parking").update({ [field]: value }).eq("id", id);
   };
-
   const deleteParking = async (id, code) => {
     await supabase.from("site_parking").delete().eq("id", id);
     setSiteParking(p => ({ ...p, [code]: (p[code] || []).filter(pk => pk.id !== id) }));
@@ -5479,234 +5477,296 @@ function SiteManagementPage({ employees }) {
   const sel = selectedSite;
   const detail = sel ? (siteDetails[sel.code] || {}) : {};
   const parkings = sel ? (siteParking[sel.code] || []) : [];
-  const isCustomSite = (code) => customSites.some(s => s.code === code);
 
-  const fieldStyle = { ...inputStyle, fontSize: 12, padding: "7px 10px" };
-  const labelStyle = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4, display: "block" };
+  const fld = { width: "100%", padding: "11px 14px", border: `2px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontWeight: 600, color: C.dark, background: "#fff", outline: "none", fontFamily: FONT, transition: "border-color 0.2s" };
+  const lbl = { fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 6 };
 
   return (
-    <div>
-      <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 16px" }}>🏢 사업장 현황 관리</h2>
-      <div style={{ display: "grid", gridTemplateColumns: "280px 1fr", gap: 16, alignItems: "start" }}>
-
-        {/* 좌: 사업장 목록 */}
-        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-          <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>사업장 목록 ({allSites.length}개)</span>
-            <button onClick={() => setShowAddForm(!showAddForm)} style={{ background: C.gold, border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 800, color: C.navy, cursor: "pointer" }}>+ 추가</button>
+    <div style={{ display: "flex", gap: 0, minHeight: "calc(100vh - 120px)" }}>
+      {/* ─── 좌: 카드 그리드 ─── */}
+      <div style={{ flex: 1, padding: "0 16px 24px 0", overflowY: "auto" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <div>
+            <h2 style={{ fontSize: 20, fontWeight: 900, color: C.dark, margin: 0 }}>🏢 사업장 관리</h2>
+            <p style={{ fontSize: 13, color: C.gray, margin: "4px 0 0" }}>전체 {allSites.length}개 사업장 · 클릭하여 상세 관리</p>
           </div>
-          {/* 사업장 추가 폼 */}
-          {showAddForm && (
-            <div style={{ padding: 12, background: "#FFFDE7", borderBottom: `1px solid ${C.border}` }}>
-              <div style={{ display: "flex", gap: 6, marginBottom: 6, alignItems: "center" }}>
-                <span style={{ flex: "0 0 60px", fontSize: 12, fontWeight: 800, color: C.navy, textAlign: "center", padding: "5px 0", background: "#fff", borderRadius: 6, border: `1.5px solid ${C.navy}` }}>{nextSiteCode}</span>
-                <input value={newSiteName} onChange={e => { setNewSiteName(e.target.value); setAddError(""); }} placeholder="사업장명 입력" autoFocus
-                  style={{ ...inputStyle, flex: 1, fontSize: 12, padding: "6px 10px" }}
-                  onKeyDown={e => e.key === "Enter" && handleAddSite()} />
-              </div>
-              {addError && <div style={{ fontSize: 11, color: C.error, fontWeight: 700, marginBottom: 6, padding: "4px 8px", background: "#FFF0F0", borderRadius: 4 }}>⚠️ {addError}</div>}
-              <div style={{ display: "flex", gap: 4 }}>
-                <button onClick={handleAddSite} disabled={saving} style={{ flex: 1, padding: "6px 0", borderRadius: 6, border: "none", background: saving ? C.gray : C.navy, color: "#fff", fontSize: 11, fontWeight: 700, cursor: saving ? "default" : "pointer" }}>{saving ? "등록 중..." : "등록"}</button>
-                <button onClick={() => { setShowAddForm(false); setNewSiteName(""); setAddError(""); }} style={{ padding: "6px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", color: C.gray }}>취소</button>
-              </div>
-            </div>
-          )}
-          <div style={{ maxHeight: 600, overflowY: "auto" }}>
-            {allSites.map(site => {
-              const d = siteDetails[site.code] || {};
-              const isSel = sel?.code === site.code;
-              const dVal = d.contract_end_date ? dDay(d.contract_end_date) : null;
-              return (
-                <div key={site.code} onClick={() => setSelectedSite(site)}
-                  style={{ padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid #f0f0f0`, background: isSel ? "#EFF3FF" : "#fff", transition: "all 0.1s" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, flex: 1, minWidth: 0 }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: C.navy }}>{site.code}</span>
-                      <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{site.name}</span>
-                      {isCustomSite(site.code) && <span style={{ fontSize: 8, background: C.gold, color: C.navy, padding: "1px 5px", borderRadius: 4, fontWeight: 800, flexShrink: 0 }}>추가</span>}
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-                      <span style={{ fontSize: 10, color: C.gray }}>{activeSiteEmps[site.code] || 0}명</span>
-                      {isCustomSite(site.code) && (
-                        <button onClick={e => { e.stopPropagation(); handleDeleteSite(site.code); }}
-                          style={{ background: "none", border: "none", padding: "2px 4px", cursor: "pointer", fontSize: 12, color: "#ccc", lineHeight: 1 }}
-                          title="사업장 삭제"
-                          onMouseEnter={e => e.currentTarget.style.color = C.error}
-                          onMouseLeave={e => e.currentTarget.style.color = "#ccc"}>✕</button>
-                      )}
-                    </div>
-                  </div>
-                  {d.monthly_contract > 0 && (
-                    <div style={{ fontSize: 10, color: C.gray, marginTop: 3 }}>
-                      월 {pFmt(d.monthly_contract)} {dVal !== null && <span style={{ color: dVal <= 30 ? C.error : C.success, fontWeight: 700, marginLeft: 6 }}>만기 D{dVal > 0 ? "-" + dVal : "+" + Math.abs(dVal)}</span>}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          <button onClick={() => setShowAddForm(!showAddForm)} style={{
+            background: C.navy, color: "#fff", border: "none", borderRadius: 12,
+            padding: "11px 22px", fontSize: 14, fontWeight: 800, cursor: "pointer",
+            boxShadow: `0 4px 16px ${C.navy}30`, fontFamily: FONT,
+          }}>+ 사업장 추가</button>
         </div>
 
-        {/* 우: 사업장 상세 */}
-        {sel ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-            {/* 기본정보 */}
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{sel.code} {sel.name}</span>
-                <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {saving && <span style={{ fontSize: 10, color: C.gold }}>💾 저장 중...</span>}
-                </div>
-              </div>
-              <div style={{ padding: 16 }}>
-                {/* 사업장명 수정 (커스텀 사업장) */}
-                {isCustomSite(sel.code) && (
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={labelStyle}>사업장명 수정</label>
-                    <input value={detail.site_name || sel.name} onChange={e => updateDetail(sel.code, "site_name", e.target.value)}
-                      style={fieldStyle} placeholder="사업장명" />
-                  </div>
-                )}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
-                  <div>
-                    <label style={labelStyle}>서비스 시작일</label>
-                    <MeParkDatePicker value={detail.start_date || ""} onChange={v => updateDetail(sel.code, "start_date", v)} style={fieldStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>계약 만기일</label>
-                    <MeParkDatePicker value={detail.contract_end_date || ""} onChange={v => updateDetail(sel.code, "contract_end_date", v)} style={fieldStyle} />
-                  </div>
-                  <div>
-                    <label style={labelStyle}>월 계약금액</label>
-                    <BlurSaveNum value={toNum(detail.monthly_contract)} onSave={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fieldStyle, textAlign: "right" }} />
-                  </div>
-                </div>
-                <KakaoAddressMap
-                  address={detail.address || ""}
-                  latitude={detail.latitude ? Number(detail.latitude) : null}
-                  longitude={detail.longitude ? Number(detail.longitude) : null}
-                  onAddressChange={(addr, lat, lng) => {
-                    updateDetail(sel.code, "address", addr);
-                    if (lat) updateDetail(sel.code, "latitude", lat);
-                    if (lng) updateDetail(sel.code, "longitude", lng);
-                  }}
-                />
-                <div>
-                  <label style={labelStyle}>메모</label>
-                  <textarea value={detail.memo || ""} onChange={e => updateDetail(sel.code, "memo", e.target.value)}
-                    style={{ ...fieldStyle, height: 60, resize: "vertical" }} />
-                </div>
-                {/* 저장 + 삭제 버튼 */}
-                <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
-                  <button onClick={async () => {
-                    setSaving(true);
-                    const siteName = detail.site_name || allSites.find(s => s.code === sel.code)?.name || sel.code;
-                    const payload = { site_code: sel.code, site_name: siteName, updated_at: new Date().toISOString() };
-                    ["start_date","contract_end_date","monthly_contract","address","latitude","longitude","memo","contract_file_name","contract_file_url","valet_rate"].forEach(k => { if (detail[k] !== undefined) payload[k] = detail[k]; });
-                    await supabase.from("site_details").upsert(payload, { onConflict: "site_code" });
-                    setSaving(false);
-                    alert("✅ 저장 완료");
-                  }} disabled={saving}
-                    style={{ padding: "10px 28px", borderRadius: 8, border: "none", background: saving ? C.gray : C.navy, color: "#fff", fontSize: 13, fontWeight: 800, cursor: saving ? "default" : "pointer" }}>
-                    {saving ? "💾 저장 중..." : "💾 저장"}
-                  </button>
-                  {isCustomSite(sel.code) && (
-                    <button onClick={() => handleDeleteSite(sel.code)}
-                      style={{ padding: "10px 20px", borderRadius: 8, border: `1.5px solid ${C.error}`, background: "#fff", color: C.error, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
-                      🗑 사업장 삭제
-                    </button>
-                  )}
-                </div>
-              </div>
+        {/* 사업장 추가 폼 */}
+        {showAddForm && (
+          <div style={{ background: "#FFFDE7", borderRadius: 16, padding: 20, marginBottom: 16, border: `1.5px solid ${C.gold}` }}>
+            <div style={{ fontSize: 14, fontWeight: 800, color: C.navy, marginBottom: 12 }}>새 사업장 등록</div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 13, fontWeight: 900, color: C.navy, background: "#EFF3FF", padding: "8px 14px", borderRadius: 10, flexShrink: 0 }}>{nextSiteCode}</span>
+              <input value={newSiteName} onChange={e => { setNewSiteName(e.target.value); setAddError(""); }} placeholder="사업장명 입력"
+                style={{ ...fld, flex: 1 }} onKeyDown={e => e.key === "Enter" && handleAddSite()} autoFocus />
+              <button onClick={handleAddSite} disabled={saving} style={{
+                padding: "11px 24px", borderRadius: 12, border: "none",
+                background: saving ? C.gray : C.navy, color: "#fff",
+                fontSize: 14, fontWeight: 800, cursor: saving ? "default" : "pointer", flexShrink: 0, fontFamily: FONT,
+              }}>{saving ? "등록 중..." : "등록"}</button>
+              <button onClick={() => { setShowAddForm(false); setNewSiteName(""); setAddError(""); }} style={{
+                padding: "11px 16px", borderRadius: 12, border: `1.5px solid ${C.border}`,
+                background: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", color: C.gray, fontFamily: FONT,
+              }}>취소</button>
             </div>
-
-            {/* 계약서 파일 */}
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800 }}>📎 계약서 관리</div>
-              <div style={{ padding: 16 }}>
-                {detail.contract_file_name ? (
-                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: C.navy }}>📄 {detail.contract_file_name}</span>
-                    <button onClick={() => { if (detail.contract_file_url) window.open(detail.contract_file_url, "_blank"); }}
-                      style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.navy}`, background: "#fff", fontSize: 10, fontWeight: 700, color: C.navy, cursor: "pointer" }}>보기</button>
-                    <button onClick={() => { updateDetail(sel.code, "contract_file_name", null); updateDetail(sel.code, "contract_file_url", null); }}
-                      style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.error}`, background: "#fff", fontSize: 10, fontWeight: 700, color: C.error, cursor: "pointer" }}>삭제</button>
-                  </div>
-                ) : (
-                  <div>
-                    <input type="file" accept=".pdf,.doc,.docx,.hwp" onChange={async (e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      setSaving(true);
-                      const path = `contracts/${sel.code}_${Date.now()}_${file.name}`;
-                      const { error } = await supabase.storage.from("site-contracts").upload(path, file);
-                      if (!error) {
-                        const { data: urlData } = supabase.storage.from("site-contracts").getPublicUrl(path);
-                        await updateDetail(sel.code, "contract_file_name", file.name);
-                        await updateDetail(sel.code, "contract_file_url", urlData.publicUrl);
-                      }
-                      setSaving(false);
-                    }} style={{ fontSize: 12 }} />
-                    <div style={{ fontSize: 10, color: C.gray, marginTop: 4 }}>PDF, DOC, HWP 파일 업로드</div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* 외부주차장 현황 */}
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-              <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between" }}>
-                <span>🅿️ 외부주차장 사용 현황</span>
-                <button onClick={() => addParking(sel.code)} style={{ background: C.gold, border: "none", borderRadius: 6, padding: "3px 10px", fontSize: 10, fontWeight: 800, color: C.navy, cursor: "pointer" }}>+ 추가</button>
-              </div>
-              <div style={{ padding: parkings.length > 0 ? 12 : 16 }}>
-                {parkings.length === 0 ? (
-                  <div style={{ fontSize: 12, color: C.gray, textAlign: "center" }}>등록된 외부주차장이 없습니다</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                    {parkings.map((pk) => (
-                      <div key={pk.id} style={{ background: C.bg, borderRadius: 10, padding: 12, border: `1px solid ${C.border}` }}>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
-                          <div>
-                            <label style={labelStyle}>주차장명</label>
-                            <input value={pk.parking_name || ""} onChange={e => updateParking(pk.id, "parking_name", e.target.value)} style={fieldStyle} placeholder="명칭" />
-                          </div>
-                          <div>
-                            <label style={labelStyle}>월 금액</label>
-                            <NumInput value={toNum(pk.amount)} onChange={v => updateParking(pk.id, "amount", v)} style={{ ...fieldStyle, textAlign: "right" }} />
-                          </div>
-                        </div>
-                        <div style={{ marginBottom: 8 }}>
-                          <label style={labelStyle}>주소</label>
-                          <input value={pk.address || ""} onChange={e => updateParking(pk.id, "address", e.target.value)} style={fieldStyle} placeholder="주소" />
-                        </div>
-                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "end" }}>
-                          <div>
-                            <label style={labelStyle}>관리자</label>
-                            <input value={pk.manager_name || ""} onChange={e => updateParking(pk.id, "manager_name", e.target.value)} style={fieldStyle} placeholder="이름" />
-                          </div>
-                          <div>
-                            <label style={labelStyle}>연락처</label>
-                            <input value={pk.phone || ""} onChange={e => updateParking(pk.id, "phone", e.target.value)} style={fieldStyle} placeholder="010-0000-0000" />
-                          </div>
-                          <button onClick={() => deleteParking(pk.id, sel.code)}
-                            style={{ padding: "7px 10px", borderRadius: 6, border: `1px solid ${C.error}`, background: "#fff", fontSize: 10, fontWeight: 700, color: C.error, cursor: "pointer" }}>삭제</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: 40, textAlign: "center" }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🏢</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: C.gray }}>좌측에서 사업장을 선택하세요</div>
-            <div style={{ fontSize: 12, color: C.gray, marginTop: 6 }}>계약정보, 외부주차장 등 상세 관리</div>
+            {addError && <div style={{ fontSize: 12, color: C.error, fontWeight: 700, padding: "6px 10px", background: "#FFF0F0", borderRadius: 8 }}>⚠️ {addError}</div>}
           </div>
         )}
+
+        {/* 카드 그리드 */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
+          {allSites.map(site => {
+            const d = siteDetails[site.code] || {};
+            const isSel = sel?.code === site.code;
+            const empCount = activeSiteEmps[site.code] || 0;
+            const hasContract = toNum(d.monthly_contract) > 0;
+            const dVal = d.contract_end_date ? dDay(d.contract_end_date) : null;
+            const isUrgent = dVal !== null && dVal <= 30;
+            return (
+              <div key={site.code} onClick={() => setSelectedSite(site)}
+                style={{
+                  background: "#fff", borderRadius: 16, padding: "18px 20px",
+                  border: isSel ? `2.5px solid ${C.navy}` : `1.5px solid ${C.border}`,
+                  cursor: "pointer", transition: "all 0.15s",
+                  boxShadow: isSel ? `0 4px 20px ${C.navy}18` : "0 1px 6px rgba(0,0,0,0.04)",
+                }}>
+                {/* 헤더 */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.navy, padding: "3px 8px", borderRadius: 6, flexShrink: 0 }}>{site.code}</span>
+                    <span style={{ fontSize: 15, fontWeight: 900, color: C.dark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{site.name}</span>
+                    {isCustomSite(site.code) && <span style={{ fontSize: 9, background: C.gold, color: C.navy, padding: "2px 6px", borderRadius: 4, fontWeight: 800, flexShrink: 0 }}>추가</span>}
+                  </div>
+                  <div style={{
+                    minWidth: 38, height: 38, borderRadius: 10,
+                    background: empCount > 0 ? "#E8F5E9" : C.lightGray,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 13, fontWeight: 900, color: empCount > 0 ? C.success : "#bbb", flexShrink: 0,
+                  }}>{empCount}명</div>
+                </div>
+                {/* KPI 2칸 */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                  <div style={{ background: hasContract ? "#F0F4FF" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>월 계약금</div>
+                    <div style={{ fontSize: 15, fontWeight: 900, color: hasContract ? C.navy : "#ccc" }}>
+                      {hasContract ? pFmt(d.monthly_contract) : "-"}
+                    </div>
+                  </div>
+                  <div style={{
+                    background: isUrgent ? "#FFF3E0" : dVal !== null ? "#F0FFF0" : C.lightGray,
+                    borderRadius: 10, padding: "10px 12px",
+                  }}>
+                    <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>만기</div>
+                    <div style={{
+                      fontSize: 15, fontWeight: 900,
+                      color: isUrgent ? C.error : dVal !== null ? C.success : "#ccc",
+                    }}>
+                      {dVal !== null ? `D${dVal > 0 ? "-" + dVal : "+" + Math.abs(dVal)}` : "-"}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
+
+      {/* ─── 우: 슬라이드 상세 패널 ─── */}
+      {sel ? (
+        <div style={{
+          width: 400, background: "#fff", borderLeft: `1px solid ${C.border}`,
+          overflowY: "auto", flexShrink: 0, boxShadow: "-4px 0 24px rgba(0,0,0,0.06)",
+          display: "flex", flexDirection: "column",
+        }}>
+          {/* 패널 헤더 */}
+          <div style={{ background: C.navy, padding: "20px 24px", color: "#fff", flexShrink: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <div>
+                <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 4 }}>{sel.code}</div>
+                <div style={{ fontSize: 20, fontWeight: 900 }}>{sel.name}</div>
+              </div>
+              <button onClick={() => setSelectedSite(null)} style={{
+                background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 10,
+                color: "#fff", padding: "8px 14px", fontSize: 15, cursor: "pointer", fontFamily: FONT,
+              }}>✕</button>
+            </div>
+            {/* KPI strip */}
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              {[
+                { label: "인원", value: `${activeSiteEmps[sel.code] || 0}명` },
+                { label: "월 계약", value: toNum(detail.monthly_contract) > 0 ? pFmt(detail.monthly_contract) : "-" },
+                { label: "만기", value: detail.contract_end_date ? (() => { const d = dDay(detail.contract_end_date); return `D${d > 0 ? "-" + d : "+" + Math.abs(d)}`; })() : "-" },
+              ].map(k => (
+                <div key={k.label} style={{ flex: 1, background: "rgba(255,255,255,0.12)", borderRadius: 12, padding: "12px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 18, fontWeight: 900 }}>{k.value}</div>
+                  <div style={{ fontSize: 10, opacity: 0.6, marginTop: 2 }}>{k.label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* 폼 필드 */}
+          <div style={{ padding: 24, flex: 1, overflowY: "auto" }}>
+            {/* 사업장명 수정 (커스텀) */}
+            {isCustomSite(sel.code) && (
+              <div style={{ marginBottom: 18 }}>
+                <label style={lbl}>사업장명</label>
+                <input value={detail.site_name || sel.name} onChange={e => updateDetail(sel.code, "site_name", e.target.value)} style={fld} />
+              </div>
+            )}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+              <div>
+                <label style={lbl}>서비스 시작일</label>
+                <MeParkDatePicker value={detail.start_date || ""} onChange={v => updateDetail(sel.code, "start_date", v)} style={fld} />
+              </div>
+              <div>
+                <label style={lbl}>계약 만기일</label>
+                <MeParkDatePicker value={detail.contract_end_date || ""} onChange={v => updateDetail(sel.code, "contract_end_date", v)} style={fld} />
+              </div>
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <label style={lbl}>월 계약금액</label>
+              <BlurSaveNum value={toNum(detail.monthly_contract)} onSave={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fld, textAlign: "right" }} />
+            </div>
+            {/* 주소 */}
+            <div style={{ marginBottom: 18 }}>
+              <KakaoAddressMap
+                address={detail.address || ""}
+                latitude={detail.latitude ? Number(detail.latitude) : null}
+                longitude={detail.longitude ? Number(detail.longitude) : null}
+                onAddressChange={(addr, lat, lng) => {
+                  updateDetail(sel.code, "address", addr);
+                  if (lat) updateDetail(sel.code, "latitude", lat);
+                  if (lng) updateDetail(sel.code, "longitude", lng);
+                }}
+              />
+            </div>
+            <div style={{ marginBottom: 18 }}>
+              <label style={lbl}>메모</label>
+              <textarea value={detail.memo || ""} onChange={e => updateDetail(sel.code, "memo", e.target.value)}
+                style={{ ...fld, height: 70, resize: "vertical", lineHeight: 1.5 }} placeholder="메모를 입력하세요" />
+            </div>
+
+            {/* 계약서 */}
+            <div style={{ background: C.lightGray, borderRadius: 14, padding: 16, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10 }}>📎 계약서</div>
+              {detail.contract_file_name ? (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: C.navy, flex: 1 }}>📄 {detail.contract_file_name}</span>
+                  <button onClick={() => { if (detail.contract_file_url) window.open(detail.contract_file_url, "_blank"); }}
+                    style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "#fff", fontSize: 12, fontWeight: 700, color: C.navy, cursor: "pointer", fontFamily: FONT }}>보기</button>
+                  <button onClick={() => { updateDetail(sel.code, "contract_file_name", null); updateDetail(sel.code, "contract_file_url", null); }}
+                    style={{ padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.error}`, background: "#fff", fontSize: 12, fontWeight: 700, color: C.error, cursor: "pointer", fontFamily: FONT }}>삭제</button>
+                </div>
+              ) : (
+                <div>
+                  <input type="file" accept=".pdf,.doc,.docx,.hwp" id="site-contract-upload" style={{ display: "none" }} onChange={async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    setSaving(true);
+                    const path = `contracts/${sel.code}_${Date.now()}_${file.name}`;
+                    const { error } = await supabase.storage.from("site-contracts").upload(path, file);
+                    if (!error) {
+                      const { data: urlData } = supabase.storage.from("site-contracts").getPublicUrl(path);
+                      await updateDetail(sel.code, "contract_file_name", file.name);
+                      await updateDetail(sel.code, "contract_file_url", urlData.publicUrl);
+                    }
+                    setSaving(false);
+                  }} />
+                  <button onClick={() => document.getElementById("site-contract-upload").click()}
+                    style={{ width: "100%", padding: "12px", borderRadius: 10, border: `2px dashed ${C.border}`, background: "#fff", fontSize: 13, fontWeight: 700, color: C.gray, cursor: "pointer", fontFamily: FONT }}>
+                    📄 파일 업로드 (PDF, DOC, HWP)
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 외부주차장 */}
+            <div style={{ background: C.lightGray, borderRadius: 14, padding: 16, marginBottom: 24 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                <span style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>🅿️ 외부주차장 ({parkings.length})</span>
+                <button onClick={() => addParking(sel.code)} style={{
+                  background: C.gold, border: "none", borderRadius: 8, padding: "6px 14px",
+                  fontSize: 12, fontWeight: 800, color: C.navy, cursor: "pointer", fontFamily: FONT,
+                }}>+ 추가</button>
+              </div>
+              {parkings.length === 0 ? (
+                <div style={{ fontSize: 13, color: C.gray, textAlign: "center", padding: "14px 0" }}>등록된 외부주차장 없음</div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {parkings.map(pk => (
+                    <div key={pk.id} style={{ background: "#fff", borderRadius: 12, padding: 14, border: `1px solid ${C.border}` }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: 8 }}>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 11 }}>주차장명</label>
+                          <input value={pk.parking_name || ""} onChange={e => updateParking(pk.id, "parking_name", e.target.value)} style={{ ...fld, fontSize: 13, padding: "8px 12px" }} placeholder="명칭" />
+                        </div>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 11 }}>월 금액</label>
+                          <NumInput value={toNum(pk.amount)} onChange={v => updateParking(pk.id, "amount", v)} style={{ ...fld, fontSize: 13, padding: "8px 12px", textAlign: "right" }} />
+                        </div>
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        <label style={{ ...lbl, fontSize: 11 }}>주소</label>
+                        <input value={pk.address || ""} onChange={e => updateParking(pk.id, "address", e.target.value)} style={{ ...fld, fontSize: 13, padding: "8px 12px" }} placeholder="주소" />
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr auto", gap: 8, alignItems: "end" }}>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 11 }}>관리자</label>
+                          <input value={pk.manager_name || ""} onChange={e => updateParking(pk.id, "manager_name", e.target.value)} style={{ ...fld, fontSize: 13, padding: "8px 12px" }} placeholder="이름" />
+                        </div>
+                        <div>
+                          <label style={{ ...lbl, fontSize: 11 }}>연락처</label>
+                          <input value={pk.phone || ""} onChange={e => updateParking(pk.id, "phone", e.target.value)} style={{ ...fld, fontSize: 13, padding: "8px 12px" }} placeholder="010-0000-0000" />
+                        </div>
+                        <button onClick={() => deleteParking(pk.id, sel.code)}
+                          style={{ padding: "8px 12px", borderRadius: 8, border: `1.5px solid ${C.error}`, background: "#fff", fontSize: 12, fontWeight: 700, color: C.error, cursor: "pointer", fontFamily: FONT }}>삭제</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* 저장 + 삭제 버튼 */}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => handleSaveAll(sel.code)} disabled={saving}
+                style={{
+                  flex: 1, padding: "14px", borderRadius: 14, border: "none",
+                  background: saving ? C.gray : C.navy, color: "#fff",
+                  fontSize: 15, fontWeight: 900, cursor: saving ? "default" : "pointer",
+                  boxShadow: `0 4px 16px ${C.navy}30`, fontFamily: FONT,
+                }}>
+                {saving ? "💾 저장 중..." : "💾 저장"}
+              </button>
+              {isCustomSite(sel.code) && (
+                <button onClick={() => handleDeleteSite(sel.code)}
+                  style={{
+                    padding: "14px 20px", borderRadius: 14, border: `2px solid ${C.error}`,
+                    background: "#fff", color: C.error, fontSize: 15, fontWeight: 900,
+                    cursor: "pointer", fontFamily: FONT,
+                  }}>🗑</button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div style={{
+          width: 400, background: "#fff", borderLeft: `1px solid ${C.border}`,
+          display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column",
+          flexShrink: 0, padding: 40,
+        }}>
+          <div style={{ fontSize: 48, marginBottom: 16 }}>🏢</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.gray }}>사업장을 선택하세요</div>
+          <div style={{ fontSize: 13, color: C.gray, marginTop: 6 }}>카드를 클릭하면 상세 관리 패널이 열립니다</div>
+        </div>
+      )}
     </div>
   );
 }
