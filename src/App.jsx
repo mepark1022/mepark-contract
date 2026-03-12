@@ -5450,7 +5450,7 @@ function SiteManagementPage({ employees }) {
     const d = siteDetails[code] || {};
     const siteName = d.site_name || allSites.find(s => s.code === code)?.name || code;
     const payload = { site_code: code, site_name: siteName, updated_at: new Date().toISOString() };
-    ["start_date","contract_end_date","monthly_contract","address","latitude","longitude","memo","contract_file_name","contract_file_url","valet_rate"].forEach(k => { if (d[k] !== undefined) payload[k] = d[k]; });
+    ["start_date","contract_end_date","monthly_contract","address","latitude","longitude","memo","contract_file_name","contract_file_url","valet_rate","weekday_staff","weekend_staff"].forEach(k => { if (d[k] !== undefined) payload[k] = d[k]; });
     await supabase.from("site_details").upsert(payload, { onConflict: "site_code" });
     setSaving(false);
     alert("✅ 저장 완료");
@@ -5526,8 +5526,8 @@ function SiteManagementPage({ employees }) {
             const isSel = sel?.code === site.code;
             const empCount = activeSiteEmps[site.code] || 0;
             const hasContract = toNum(d.monthly_contract) > 0;
-            const dVal = d.contract_end_date ? dDay(d.contract_end_date) : null;
-            const isUrgent = dVal !== null && dVal <= 30;
+            const weekdayStaff = toNum(d.weekday_staff);
+            const weekendStaff = toNum(d.weekend_staff);
             return (
               <div key={site.code} onClick={() => setSelectedSite(site)}
                 style={{
@@ -5543,31 +5543,25 @@ function SiteManagementPage({ employees }) {
                     <span style={{ fontSize: 15, fontWeight: 900, color: C.dark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{site.name}</span>
                     {isCustomSite(site.code) && <span style={{ fontSize: 9, background: C.gold, color: C.navy, padding: "2px 6px", borderRadius: 4, fontWeight: 800, flexShrink: 0 }}>추가</span>}
                   </div>
-                  <div style={{
-                    minWidth: 38, height: 38, borderRadius: 10,
-                    background: empCount > 0 ? "#E8F5E9" : C.lightGray,
-                    display: "flex", alignItems: "center", justifyContent: "center",
-                    fontSize: 13, fontWeight: 900, color: empCount > 0 ? C.success : "#bbb", flexShrink: 0,
-                  }}>{empCount}명</div>
                 </div>
-                {/* KPI 2칸 */}
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                {/* KPI 3칸: 월계약금 + 평일 + 주말 */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                   <div style={{ background: hasContract ? "#F0F4FF" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
                     <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>월 계약금</div>
                     <div style={{ fontSize: 15, fontWeight: 900, color: hasContract ? C.navy : "#ccc" }}>
                       {hasContract ? pFmt(d.monthly_contract) : "-"}
                     </div>
                   </div>
-                  <div style={{
-                    background: isUrgent ? "#FFF3E0" : dVal !== null ? "#F0FFF0" : C.lightGray,
-                    borderRadius: 10, padding: "10px 12px",
-                  }}>
-                    <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>만기</div>
-                    <div style={{
-                      fontSize: 15, fontWeight: 900,
-                      color: isUrgent ? C.error : dVal !== null ? C.success : "#ccc",
-                    }}>
-                      {dVal !== null ? `D${dVal > 0 ? "-" + dVal : "+" + Math.abs(dVal)}` : "-"}
+                  <div style={{ background: weekdayStaff > 0 ? "#E8F5E9" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>평일</div>
+                    <div style={{ fontSize: 15, fontWeight: 900, color: weekdayStaff > 0 ? C.success : "#ccc" }}>
+                      {weekdayStaff > 0 ? `${weekdayStaff}명` : "-"}
+                    </div>
+                  </div>
+                  <div style={{ background: weekendStaff > 0 ? "#FFF3E0" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
+                    <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>주말</div>
+                    <div style={{ fontSize: 15, fontWeight: 900, color: weekendStaff > 0 ? C.orange : "#ccc" }}>
+                      {weekendStaff > 0 ? `${weekendStaff}명` : "-"}
                     </div>
                   </div>
                 </div>
@@ -5599,9 +5593,9 @@ function SiteManagementPage({ employees }) {
             {/* KPI strip */}
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               {[
-                { label: "인원", value: `${activeSiteEmps[sel.code] || 0}명` },
                 { label: "월 계약", value: toNum(detail.monthly_contract) > 0 ? pFmt(detail.monthly_contract) : "-" },
-                { label: "만기", value: detail.contract_end_date ? (() => { const d = dDay(detail.contract_end_date); return `D${d > 0 ? "-" + d : "+" + Math.abs(d)}`; })() : "-" },
+                { label: "평일", value: toNum(detail.weekday_staff) > 0 ? `${detail.weekday_staff}명` : "-" },
+                { label: "주말", value: toNum(detail.weekend_staff) > 0 ? `${detail.weekend_staff}명` : "-" },
               ].map(k => (
                 <div key={k.label} style={{ flex: 1, background: "rgba(255,255,255,0.12)", borderRadius: 12, padding: "12px 8px", textAlign: "center" }}>
                   <div style={{ fontSize: 18, fontWeight: 900 }}>{k.value}</div>
@@ -5620,6 +5614,17 @@ function SiteManagementPage({ employees }) {
                 <input value={detail.site_name || sel.name} onChange={e => updateDetail(sel.code, "site_name", e.target.value)} style={fld} />
               </div>
             )}
+            {/* 근무인원 */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
+              <div>
+                <label style={lbl}>👤 평일 근무인원</label>
+                <BlurSaveNum value={toNum(detail.weekday_staff)} onSave={v => updateDetail(sel.code, "weekday_staff", v)} style={{ ...fld, textAlign: "center", fontSize: 18, fontWeight: 900 }} placeholder="0" />
+              </div>
+              <div>
+                <label style={lbl}>👤 주말 근무인원</label>
+                <BlurSaveNum value={toNum(detail.weekend_staff)} onSave={v => updateDetail(sel.code, "weekend_staff", v)} style={{ ...fld, textAlign: "center", fontSize: 18, fontWeight: 900 }} placeholder="0" />
+              </div>
+            </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
               <div>
                 <label style={lbl}>서비스 시작일</label>
