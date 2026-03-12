@@ -6528,6 +6528,7 @@ function DailyReportPage({ employees, onDataChange }) {
     const extra = extraMap[report.id] || [];
     const siteName = getSiteName(report.site_code);
     const isConfirmed = report.status === "confirmed";
+    const reporterName = report.reporter_id ? (employees.find(e => e.id === report.reporter_id)?.name || "현장앱") : null;
     return (
       <div key={report.id} style={{ ...cardStyle, borderLeft: `4px solid ${isConfirmed ? C.success : C.gold}`, marginBottom: 12 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 8 }}>
@@ -6537,6 +6538,11 @@ function DailyReportPage({ employees, onDataChange }) {
             <span style={{ marginLeft: 10, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: isConfirmed ? "#E8F5E9" : "#FFF8E1", color: isConfirmed ? C.success : "#F57F17" }}>
               {isConfirmed ? "✅ 확정" : "📝 미확정"}
             </span>
+            {reporterName && (
+              <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: "#EDE7F6", color: "#5E35B1" }}>
+                📱 {reporterName}
+              </span>
+            )}
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <button onClick={() => startEdit(report)} style={{ ...miniBtn, background: C.white, color: C.navy, border: `1px solid ${C.border}` }}>수정</button>
