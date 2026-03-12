@@ -5436,12 +5436,17 @@ function SiteManagementPage({ employees }) {
   const updateDetail = (code, field, value) => {
     // 1) 즉시 state 업데이트 (UI 반영)
     setSiteDetails(p => ({ ...p, [code]: { ...p[code], site_code: code, [field]: value } }));
+    // 사업장명 변경 시 목록도 동기화
+    if (field === "site_name" && isCustomSite(code)) {
+      setCustomSites(p => p.map(s => s.code === code ? { ...s, name: value } : s));
+      setSelectedSite(p => p && p.code === code ? { ...p, name: value } : p);
+    }
     // 2) DB 저장은 디바운스 (800ms)
     const timerKey = `${code}_${field}`;
     if (detailSaveTimers.current[timerKey]) clearTimeout(detailSaveTimers.current[timerKey]);
     detailSaveTimers.current[timerKey] = setTimeout(async () => {
       setSaving(true);
-      const siteName = allSites.find(s => s.code === code)?.name || code;
+      const siteName = field === "site_name" ? value : (allSites.find(s => s.code === code)?.name || code);
       const { error } = await supabase.from("site_details")
         .upsert({ site_code: code, site_name: siteName, [field]: value, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
       if (error) console.error("site_details save error:", error);
@@ -5548,15 +5553,20 @@ function SiteManagementPage({ employees }) {
             {/* 기본정보 */}
             <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
               <div style={{ background: C.navy, color: "#fff", padding: "10px 14px", fontSize: 12, fontWeight: 800, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>{sel.code} {sel.name} {isCustomSite(sel.code) && <span style={{ fontSize: 9, background: C.gold, color: C.navy, padding: "1px 6px", borderRadius: 4, marginLeft: 6 }}>추가</span>}</span>
+                <span>{sel.code} {sel.name}</span>
                 <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
-                  {saving && <span style={{ fontSize: 10, color: C.gold }}>저장 중...</span>}
-                  {isCustomSite(sel.code) && (
-                    <button onClick={() => handleDeleteSite(sel.code)} style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 4, padding: "2px 8px", fontSize: 10, fontWeight: 700, color: "#ff9999", cursor: "pointer" }}>삭제</button>
-                  )}
+                  {saving && <span style={{ fontSize: 10, color: C.gold }}>💾 저장 중...</span>}
                 </div>
               </div>
               <div style={{ padding: 16 }}>
+                {/* 사업장명 수정 (커스텀 사업장) */}
+                {isCustomSite(sel.code) && (
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={labelStyle}>사업장명 수정</label>
+                    <input value={detail.site_name || sel.name} onChange={e => updateDetail(sel.code, "site_name", e.target.value)}
+                      style={fieldStyle} placeholder="사업장명" />
+                  </div>
+                )}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12, marginBottom: 12 }}>
                   <div>
                     <label style={labelStyle}>서비스 시작일</label>
@@ -5585,6 +5595,27 @@ function SiteManagementPage({ employees }) {
                   <label style={labelStyle}>메모</label>
                   <textarea value={detail.memo || ""} onChange={e => updateDetail(sel.code, "memo", e.target.value)}
                     style={{ ...fieldStyle, height: 60, resize: "vertical" }} />
+                </div>
+                {/* 저장 + 삭제 버튼 */}
+                <div style={{ display: "flex", gap: 8, marginTop: 16, justifyContent: "flex-end" }}>
+                  <button onClick={async () => {
+                    setSaving(true);
+                    const siteName = detail.site_name || allSites.find(s => s.code === sel.code)?.name || sel.code;
+                    const payload = { site_code: sel.code, site_name: siteName, updated_at: new Date().toISOString() };
+                    ["start_date","contract_end_date","monthly_contract","address","latitude","longitude","memo","contract_file_name","contract_file_url","valet_rate"].forEach(k => { if (detail[k] !== undefined) payload[k] = detail[k]; });
+                    await supabase.from("site_details").upsert(payload, { onConflict: "site_code" });
+                    setSaving(false);
+                    alert("✅ 저장 완료");
+                  }} disabled={saving}
+                    style={{ padding: "10px 28px", borderRadius: 8, border: "none", background: saving ? C.gray : C.navy, color: "#fff", fontSize: 13, fontWeight: 800, cursor: saving ? "default" : "pointer" }}>
+                    {saving ? "💾 저장 중..." : "💾 저장"}
+                  </button>
+                  {isCustomSite(sel.code) && (
+                    <button onClick={() => handleDeleteSite(sel.code)}
+                      style={{ padding: "10px 20px", borderRadius: 8, border: `1.5px solid ${C.error}`, background: "#fff", color: C.error, fontSize: 13, fontWeight: 800, cursor: "pointer" }}>
+                      🗑 사업장 삭제
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
