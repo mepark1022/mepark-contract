@@ -2248,8 +2248,8 @@ function ExcelImportModal({ onClose, onImport, existingEmpNos }) {
           skipped++;
         }
       } else {
-        // status는 직접 설정
-        data.status = emp.resign_date ? "퇴사" : "재직";
+        // status는 직접 설정 (DB: active/inactive)
+        data.status = emp.resign_date ? "inactive" : "active";
         const { error } = await supabase.from("employees").insert(data);
         if (!error) imported++; else skipped++;
       }
@@ -8776,7 +8776,7 @@ function MainApp() {
   // Supabase에서 직원 데이터 로드
   const loadEmployees = async () => {
     const { data, error } = await supabase.from("employees").select("*").order("emp_no");
-    if (data) setEmployees(data);
+    if (data) setEmployees(data.map(e => ({ ...e, status: e.status === "active" ? "재직" : e.status === "inactive" ? "퇴사" : e.status })));
     setEmpLoading(false);
   };
 
@@ -8785,6 +8785,9 @@ function MainApp() {
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
     const { id, created_at, updated_at, ...rest } = emp;
+    // status 역매핑: 재직→active, 퇴사→inactive
+    if (rest.status === "재직") rest.status = "active";
+    else if (rest.status === "퇴사") rest.status = "inactive";
     if (id) {
       await supabase.from("employees").update({ ...rest, updated_at: new Date().toISOString() }).eq("id", id);
     } else {
