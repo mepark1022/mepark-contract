@@ -1858,205 +1858,248 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
         <div style={{ textAlign: "right", padding: "8px 0", fontSize: 12, color: C.gray }}>총 {filtered.length}명</div>
       </div>
 
-      {/* 직원 등록/수정 모달 */}
+      {/* 직원 등록/수정 모달 — 와이드 레이아웃 */}
       {showForm && editEmp && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
           onClick={() => setShowForm(false)}>
-          <div style={{ background: C.white, borderRadius: 16, padding: 28, width: 520, maxWidth: "90vw", maxHeight: "85vh", overflowY: "auto" }}
+          <div style={{ background: "#F5F6FA", borderRadius: 20, width: 960, maxWidth: "95vw", maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}
             onClick={e => e.stopPropagation()}>
-            <h3 style={{ fontSize: 16, fontWeight: 900, color: C.navy, margin: "0 0 20px" }}>{editEmp.id ? "✏️ 직원 수정" : "➕ 직원 등록"}</h3>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              {/* 사번 (자동생성 포함) */}
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>사번</label>
-                <div style={{ display: "flex", gap: 4 }}>
-                  <input value={editEmp.emp_no || ""} onChange={e => setEditEmp(p => ({ ...p, emp_no: e.target.value }))}
-                    placeholder="자동생성 또는 직접입력" style={{ ...inputStyle, flex: 1 }} />
-                  <button onClick={() => {
-                    const auto = generateEmpNo(employees, {
-                      siteCode: editEmp.site_code_1,
-                      workCode: editEmp.work_code,
-                      hireDate: editEmp.hire_date,
-                    });
-                    setEditEmp(p => ({ ...p, emp_no: auto }));
-                  }} title="사번 자동생성" style={{
-                    padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.navy}`,
-                    background: C.navy, color: C.gold, fontSize: 11, fontWeight: 800,
-                    cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT,
-                  }}>⚡ 자동</button>
+            {/* 헤더 */}
+            <div style={{ background: C.navy, padding: "16px 28px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <h3 style={{ fontSize: 17, fontWeight: 900, color: C.white, margin: 0 }}>{editEmp.id ? "✏️ 직원 수정" : "➕ 직원 등록"}</h3>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button onClick={() => setShowForm(false)} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", fontSize: 13, fontWeight: 700, padding: "7px 16px", borderRadius: 8, cursor: "pointer", fontFamily: FONT }}>✕ 닫기</button>
+              </div>
+            </div>
+
+            {/* 스크롤 영역 */}
+            <div style={{ overflowY: "auto", padding: "20px 28px 24px", flex: 1 }}>
+              {/* ── 1. 기본 인적사항 ── */}
+              <div style={{ background: C.white, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1.5px solid ${C.lightGray}` }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ background: C.navy, color: C.gold, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 4 }}>01</span>
+                  👤 기본 인적사항
                 </div>
-                {editEmp.emp_no && (
-                  <div style={{ fontSize: 10, marginTop: 3, color: C.gray }}>
-                    {/^MPA\d+$/.test(editEmp.emp_no) ? "알바 사번" :
-                     /^MP\d{5,}$/.test(editEmp.emp_no) ?
-                       (parseInt(editEmp.emp_no.slice(4)) <= 100 ? "운영팀(본사) 사번" : "현장 근무자 사번") : "사번"}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "12px 16px" }}>
+                  {/* 사번 */}
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>사번</label>
+                    <div style={{ display: "flex", gap: 4 }}>
+                      <input value={editEmp.emp_no || ""} onChange={e => setEditEmp(p => ({ ...p, emp_no: e.target.value }))}
+                        placeholder="자동생성 또는 직접입력" style={{ ...inputStyle, flex: 1 }} />
+                      <button onClick={() => {
+                        const auto = generateEmpNo(employees, {
+                          siteCode: editEmp.site_code_1,
+                          workCode: editEmp.work_code,
+                          hireDate: editEmp.hire_date,
+                        });
+                        setEditEmp(p => ({ ...p, emp_no: auto }));
+                      }} title="사번 자동생성" style={{
+                        padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.navy}`,
+                        background: C.navy, color: C.gold, fontSize: 11, fontWeight: 800,
+                        cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT,
+                      }}>⚡ 자동</button>
+                    </div>
+                    {editEmp.emp_no && (
+                      <div style={{ fontSize: 10, marginTop: 3, color: C.gray }}>
+                        {/^MPA\d+$/.test(editEmp.emp_no) ? "알바 사번" :
+                         /^MP\d{5,}$/.test(editEmp.emp_no) ?
+                           (parseInt(editEmp.emp_no.slice(4)) <= 100 ? "운영팀(본사) 사번" : "현장 근무자 사번") : "사번"}
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-              {[
-                ["이름", "name", "text"], ["연락처", "phone", "text"],
-              ].map(([label, key, type]) => (
-                <div key={key}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>{label}</label>
-                  <input value={editEmp[key] || ""} onChange={e => setEditEmp(p => ({ ...p, [key]: e.target.value }))} style={inputStyle} />
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>이름</label>
+                    <input value={editEmp.name || ""} onChange={e => setEditEmp(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>연락처</label>
+                    <input value={editEmp.phone || ""} onChange={e => setEditEmp(p => ({ ...p, phone: e.target.value }))} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>직위</label>
+                    <select value={editEmp.position} onChange={e => setEditEmp(p => ({ ...p, position: e.target.value }))} style={inputStyle}>
+                      {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>사업장</label>
+                    <select value={editEmp.site_code_1} onChange={e => setEditEmp(p => ({ ...p, site_code_1: e.target.value }))} style={inputStyle}>
+                      <option value="">선택</option>
+                      {SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>근무형태</label>
+                    <select value={editEmp.work_code} onChange={e => setEditEmp(p => ({ ...p, work_code: e.target.value }))} style={inputStyle}>
+                      {WORK_CODES.map(w => <option key={w.code} value={w.code}>{w.code} — {w.label}</option>)}
+                    </select>
+                  </div>
                 </div>
-              ))}
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>직위</label>
-                <select value={editEmp.position} onChange={e => setEditEmp(p => ({ ...p, position: e.target.value }))} style={inputStyle}>
-                  {POSITIONS.map(p => <option key={p} value={p}>{p}</option>)}
-                </select>
               </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>사업장</label>
-                <select value={editEmp.site_code_1} onChange={e => setEditEmp(p => ({ ...p, site_code_1: e.target.value }))} style={inputStyle}>
-                  <option value="">선택</option>
-                  {SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
-                </select>
+
+              {/* ── 2. 근무조건 ── */}
+              <div style={{ background: C.white, borderRadius: 14, padding: "18px 20px", marginBottom: 14, border: `1.5px solid ${C.lightGray}` }}>
+                <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{ background: C.navy, color: C.gold, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 4 }}>02</span>
+                  📋 근무조건 및 급여기본
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: "12px 16px" }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>입사일</label>
+                    <input type="date" value={editEmp.hire_date || ""} onChange={e => setEditEmp(p => ({ ...p, hire_date: e.target.value }))} style={inputStyle} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>근무조건</label>
+                    <select value={editEmp.employment_type} onChange={e => setEditEmp(p => ({ ...p, employment_type: e.target.value }))} style={inputStyle}>
+                      {["정규직", "계약직", "알바"].map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>신고유형</label>
+                    <select value={editEmp.tax_type} onChange={e => setEditEmp(p => ({ ...p, tax_type: e.target.value }))} style={inputStyle}>
+                      {TAX_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>수습기간</label>
+                    <select value={editEmp.probation_months || 0} onChange={e => setEditEmp(p => ({ ...p, probation_months: parseInt(e.target.value) }))} style={inputStyle}>
+                      <option value={0}>없음</option>
+                      <option value={3}>3개월</option>
+                      <option value={4}>4개월</option>
+                      <option value={6}>6개월</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기본급(월급)</label>
+                    <NumInput value={editEmp.base_salary} onChange={v => setEditEmp(p => ({ ...p, base_salary: v }))} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>주말일당</label>
+                    <NumInput value={editEmp.weekend_daily} onChange={v => setEditEmp(p => ({ ...p, weekend_daily: v }))} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>식대</label>
+                    <NumInput value={editEmp.meal_allow} onChange={v => setEditEmp(p => ({ ...p, meal_allow: v }))} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>팀장수당</label>
+                    <NumInput value={editEmp.leader_allow} onChange={v => setEditEmp(p => ({ ...p, leader_allow: v }))} />
+                  </div>
+                </div>
               </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>근무형태</label>
-                <select value={editEmp.work_code} onChange={e => setEditEmp(p => ({ ...p, work_code: e.target.value }))} style={inputStyle}>
-                  {WORK_CODES.map(w => <option key={w.code} value={w.code}>{w.code} — {w.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>입사일</label>
-                <input type="date" value={editEmp.hire_date || ""} onChange={e => setEditEmp(p => ({ ...p, hire_date: e.target.value }))} style={inputStyle} />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>근무조건</label>
-                <select value={editEmp.employment_type} onChange={e => setEditEmp(p => ({ ...p, employment_type: e.target.value }))} style={inputStyle}>
-                  {["정규직", "계약직", "알바"].map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>신고유형</label>
-                <select value={editEmp.tax_type} onChange={e => setEditEmp(p => ({ ...p, tax_type: e.target.value }))} style={inputStyle}>
-                  {TAX_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>수습기간(월)</label>
-                <select value={editEmp.probation_months || 0} onChange={e => setEditEmp(p => ({ ...p, probation_months: parseInt(e.target.value) }))} style={inputStyle}>
-                  <option value={0}>없음</option>
-                  <option value={3}>3개월</option>
-                  <option value={4}>4개월</option>
-                  <option value={6}>6개월</option>
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>기본급(월급)</label>
-                <NumInput value={editEmp.base_salary} onChange={v => setEditEmp(p => ({ ...p, base_salary: v }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>주말일당</label>
-                <NumInput value={editEmp.weekend_daily} onChange={v => setEditEmp(p => ({ ...p, weekend_daily: v }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>식대</label>
-                <NumInput value={editEmp.meal_allow} onChange={v => setEditEmp(p => ({ ...p, meal_allow: v }))} />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>팀장수당</label>
-                <NumInput value={editEmp.leader_allow} onChange={v => setEditEmp(p => ({ ...p, leader_allow: v }))} />
+
+              {/* ── 3+4: 급여조건 & 계좌정보 (2컬럼 배치) ── */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+                {/* 급여조건 */}
+                <div style={{ background: C.white, borderRadius: 14, padding: "18px 20px", border: `1.5px solid ${C.lightGray}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ background: C.navy, color: C.gold, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 4 }}>03</span>
+                    💰 급여조건 <span style={{ fontSize: 10, color: C.gray, fontWeight: 500 }}>(급여대장 연동)</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" }}>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>평일수당(월급)</label>
+                      <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>주말수당(일당)</label>
+                      <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>명절상여</label>
+                      <NumInput value={editEmp.holiday_bonus} onChange={v => setEditEmp(p => ({ ...p, holiday_bonus: v }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>보육수당</label>
+                      <NumInput value={editEmp.childcare} onChange={v => setEditEmp(p => ({ ...p, childcare: v }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>자가운전보조</label>
+                      <NumInput value={editEmp.car_allowance} onChange={v => setEditEmp(p => ({ ...p, car_allowance: v }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>인센티브</label>
+                      <NumInput value={editEmp.incentive} onChange={v => setEditEmp(p => ({ ...p, incentive: v }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>급여식대</label>
+                      <NumInput value={editEmp.meal} onChange={v => setEditEmp(p => ({ ...p, meal: v }))} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기타수당</label>
+                      <NumInput value={editEmp.extra1} onChange={v => setEditEmp(p => ({ ...p, extra1: v }))} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* 계좌정보 + 세금/보험 */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  {/* 계좌정보 */}
+                  <div style={{ background: C.white, borderRadius: 14, padding: "18px 20px", border: `1.5px solid ${C.lightGray}`, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ background: C.navy, color: C.gold, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 4 }}>04</span>
+                      🏦 계좌정보 <span style={{ fontSize: 10, color: C.gray, fontWeight: 500 }}>(은행이체 연동)</span>
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" }}>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>예금주</label>
+                        <input value={editEmp.account_holder || ""} onChange={e => setEditEmp(p => ({ ...p, account_holder: e.target.value }))} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>은행명</label>
+                        <select value={editEmp.bank_name || ""} onChange={e => setEditEmp(p => ({ ...p, bank_name: e.target.value }))} style={inputStyle}>
+                          <option value="">선택</option>
+                          {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
+                        </select>
+                      </div>
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>계좌번호</label>
+                        <input value={editEmp.account_number || ""} onChange={e => setEditEmp(p => ({ ...p, account_number: e.target.value }))} placeholder="숫자만 입력" style={inputStyle} />
+                      </div>
+                      <div style={{ gridColumn: "1 / -1" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.gray, cursor: "pointer" }}>
+                          <input type="checkbox" checked={editEmp.is_third_party_payment || false}
+                            onChange={e => setEditEmp(p => ({ ...p, is_third_party_payment: e.target.checked }))} />
+                          타인 입금 (예금주 ≠ 본인)
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* 세금/보험 */}
+                  <div style={{ background: C.white, borderRadius: 14, padding: "18px 20px", border: `1.5px solid ${C.lightGray}`, flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 14, display: "flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ background: C.navy, color: C.gold, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 4 }}>05</span>
+                      📋 세금/보험 정보
+                    </div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" }}>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>보험 취득일</label>
+                        <input type="date" value={editEmp.insurance_enroll_date || ""} onChange={e => setEditEmp(p => ({ ...p, insurance_enroll_date: e.target.value }))} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>보험 상실일</label>
+                        <input type="date" value={editEmp.insurance_loss_date || ""} onChange={e => setEditEmp(p => ({ ...p, insurance_loss_date: e.target.value }))} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>신고자명 (타인신고용)</label>
+                        <input value={editEmp.reporter_name || ""} onChange={e => setEditEmp(p => ({ ...p, reporter_name: e.target.value }))} style={inputStyle} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>신고자 주민번호</label>
+                        <input value={editEmp.reporter_rrn || ""} onChange={e => setEditEmp(p => ({ ...p, reporter_rrn: e.target.value }))} placeholder="000000-0000000" style={inputStyle} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 
-            {/* ── 급여조건 확장 (v8.2) ── */}
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `2px solid ${C.lightGray}` }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10 }}>💰 급여조건 (급여대장 연동)</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>평일수당(월급)</label>
-                  <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>주말수당(일당)</label>
-                  <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>명절상여</label>
-                  <NumInput value={editEmp.holiday_bonus} onChange={v => setEditEmp(p => ({ ...p, holiday_bonus: v }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>보육수당</label>
-                  <NumInput value={editEmp.childcare} onChange={v => setEditEmp(p => ({ ...p, childcare: v }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>자가운전보조</label>
-                  <NumInput value={editEmp.car_allowance} onChange={v => setEditEmp(p => ({ ...p, car_allowance: v }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>인센티브</label>
-                  <NumInput value={editEmp.incentive} onChange={v => setEditEmp(p => ({ ...p, incentive: v }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>급여식대</label>
-                  <NumInput value={editEmp.meal} onChange={v => setEditEmp(p => ({ ...p, meal: v }))} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>기타수당</label>
-                  <NumInput value={editEmp.extra1} onChange={v => setEditEmp(p => ({ ...p, extra1: v }))} />
-                </div>
-              </div>
-            </div>
-
-            {/* ── 계좌정보 (v8.2) ── */}
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `2px solid ${C.lightGray}` }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10 }}>🏦 계좌정보 (은행이체 연동)</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>예금주</label>
-                  <input value={editEmp.account_holder || ""} onChange={e => setEditEmp(p => ({ ...p, account_holder: e.target.value }))} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>은행명</label>
-                  <select value={editEmp.bank_name || ""} onChange={e => setEditEmp(p => ({ ...p, bank_name: e.target.value }))} style={inputStyle}>
-                    <option value="">선택</option>
-                    {BANKS.map(b => <option key={b} value={b}>{b}</option>)}
-                  </select>
-                </div>
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>계좌번호</label>
-                  <input value={editEmp.account_number || ""} onChange={e => setEditEmp(p => ({ ...p, account_number: e.target.value }))} placeholder="숫자만 입력" style={inputStyle} />
-                </div>
-                <div style={{ gridColumn: "1 / -1" }}>
-                  <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 700, color: C.gray, cursor: "pointer" }}>
-                    <input type="checkbox" checked={editEmp.is_third_party_payment || false}
-                      onChange={e => setEditEmp(p => ({ ...p, is_third_party_payment: e.target.checked }))} />
-                    타인 입금 (예금주 ≠ 본인)
-                  </label>
-                </div>
-              </div>
-            </div>
-
-            {/* ── 세금/보험 정보 (v8.2) ── */}
-            <div style={{ marginTop: 18, paddingTop: 14, borderTop: `2px solid ${C.lightGray}` }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10 }}>📋 세금/보험 정보</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>보험 취득일</label>
-                  <input type="date" value={editEmp.insurance_enroll_date || ""} onChange={e => setEditEmp(p => ({ ...p, insurance_enroll_date: e.target.value }))} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>보험 상실일</label>
-                  <input type="date" value={editEmp.insurance_loss_date || ""} onChange={e => setEditEmp(p => ({ ...p, insurance_loss_date: e.target.value }))} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>신고자명 (타인신고용)</label>
-                  <input value={editEmp.reporter_name || ""} onChange={e => setEditEmp(p => ({ ...p, reporter_name: e.target.value }))} style={inputStyle} />
-                </div>
-                <div>
-                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>신고자 주민번호</label>
-                  <input value={editEmp.reporter_rrn || ""} onChange={e => setEditEmp(p => ({ ...p, reporter_rrn: e.target.value }))} placeholder="000000-0000000" style={inputStyle} />
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 20 }}>
-              <button onClick={() => setShowForm(false)} style={btnOutline}>취소</button>
-              <button onClick={() => saveEmp(editEmp)} disabled={saving} style={{ ...btnPrimary, opacity: saving ? 0.6 : 1 }}>{saving ? "저장 중..." : "저장"}</button>
+            {/* 하단 버튼 (고정) */}
+            <div style={{ padding: "14px 28px", borderTop: `1.5px solid ${C.lightGray}`, background: C.white, display: "flex", gap: 10, justifyContent: "flex-end", flexShrink: 0 }}>
+              <button onClick={() => setShowForm(false)} style={{ ...btnOutline, padding: "10px 28px", fontSize: 13 }}>취소</button>
+              <button onClick={() => saveEmp(editEmp)} disabled={saving} style={{ ...btnPrimary, padding: "10px 28px", fontSize: 13, opacity: saving ? 0.6 : 1 }}>{saving ? "💾 저장 중..." : "💾 저장"}</button>
             </div>
           </div>
         </div>
