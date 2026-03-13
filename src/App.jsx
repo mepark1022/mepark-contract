@@ -3612,7 +3612,7 @@ function AdminInvitePanel() {
        { key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만" }]
     : [{ key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만" }];
 
-  const canChangeRole = (p) => isSuperAdmin && p.id !== user?.id && p.role !== "super_admin";
+  const canChangeRole = (p) => isSuperAdmin && p.id !== user?.id;
   const canDelete     = (p) => {
     if (p.id === user?.id || p.role === "super_admin") return false;
     if (isSuperAdmin) return true;
@@ -3912,8 +3912,18 @@ function AdminInvitePanel() {
           </select>
         )}
         {canChangeRole(p) && (
-          <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
+          <select value={p.role} onChange={async e => {
+            const newRole = e.target.value;
+            if (newRole === "super_admin") {
+              if (!window.confirm(`⚠️ ${p.name}님을 슈퍼어드민으로 승격하시겠습니까?\n\n슈퍼어드민은 전체 시스템 권한을 갖습니다.`)) { e.target.value = p.role; return; }
+            }
+            if (p.role === "super_admin" && newRole !== "super_admin") {
+              if (!window.confirm(`⚠️ ${p.name}님의 슈퍼어드민 권한을 해제하시겠습니까?`)) { e.target.value = p.role; return; }
+            }
+            updateRole(p.id, newRole);
+          }}
             style={{ fontSize: 11, padding: "3px 6px", border: `1px solid ${C.border}`, borderRadius: 6, background: C.white, cursor: "pointer" }}>
+            <option value="super_admin">슈퍼어드민</option>
             <option value="admin">어드민</option>
             <option value="crew">크루</option>
           </select>
