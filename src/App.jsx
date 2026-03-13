@@ -6459,7 +6459,9 @@ function DailyReportPage({ employees, onDataChange }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [viewMode, setViewMode] = useState("calendar"); // "calendar" | "table"
+  const [viewMode, setViewMode] = useState("grid"); // "grid" | "table"
+  const [panelSiteCode, setPanelSiteCode] = useState(null); // 우측 슬라이드 패널
+  const [statusFilter, setStatusFilter] = useState("all"); // "all"|"confirmed"|"submitted"|"pending"
 
   // ── 사업장별 발렛비 단가 (site_details.valet_rate) ──
   const [valetRates, setValetRates] = useState({}); // { V001: 5000, V002: 6000, ... }
@@ -6546,6 +6548,27 @@ function DailyReportPage({ employees, onDataChange }) {
     if (selSite === "ALL") return reports.filter(r => r.report_date === selDate);
     return reports.filter(r => r.report_date === selDate && r.site_code === selSite);
   }, [reports, selDate, selSite]);
+
+  // ── 날짜별 사업장 상태 맵 (그리드뷰용) ──
+  const siteStatusMap = useMemo(() => {
+    const map = {};
+    FIELD_SITES.forEach(s => { map[s.code] = { status: "pending", report: null }; });
+    reports.filter(r => r.report_date === selDate).forEach(r => {
+      if (map[r.site_code]) map[r.site_code] = { status: r.status, report: r };
+    });
+    return map;
+  }, [reports, selDate]);
+
+  // ── KPI (그리드뷰용) ──
+  const kpiStats = useMemo(() => {
+    const dateReports = reports.filter(r => r.report_date === selDate);
+    const confirmed = dateReports.filter(r => r.status === "confirmed").length;
+    const submitted = dateReports.filter(r => r.status === "submitted").length;
+    const pending = Math.max(0, FIELD_SITES.length - dateReports.length);
+    const totalValet = dateReports.reduce((s, r) => s + toNum(r.valet_amount), 0);
+    const confirmedValet = dateReports.filter(r => r.status === "confirmed").reduce((s, r) => s + toNum(r.valet_amount), 0);
+    return { confirmed, submitted, pending, totalValet, confirmedValet };
+  }, [reports, selDate]);
 
   // ── 달력 데이터 ──
   const calendarData = useMemo(() => {
@@ -6904,6 +6927,47 @@ function DailyReportPage({ employees, onDataChange }) {
     return Object.values(map).filter(s => s.days > 0).sort((a, b) => b.valetAmount - a.valetAmount);
   }, [reports, staffMap]);
 
+  // ── 패널 열기 ──
+  const openPanel = (siteCode) => {
+    const { report } = siteStatusMap[siteCode] || {};
+    setSelSite(siteCode);
+    setPanelSiteCode(siteCode);
+    if (report) {
+      setEditMode(false);
+    } else {
+      // 새 일보 작성 모드
+      const existing = reports.find(r => r.report_date === selDate && r.site_code === siteCode);
+      if (existing) { setEditMode(false); }
+      else {
+        const siteEmps = employees.filter(e => e.site_code_1 === siteCode && e.status === "재직");
+        setForm({
+          site_code: siteCode,
+          valet_count: 0, valet_amount: 0, memo: "",
+          staffList: siteEmps.map(e => ({ employee_id: e.id, name_raw: e.name, staff_type: "regular", work_hours: 8 })),
+          payList: PAYMENT_TYPES.map(p => ({ payment_type: p.key, count: 0, amount: 0, memo: "" })),
+          extraList: [], images: [],
+        });
+        setEditMode(true);
+      }
+    }
+  };
+  const closePanel = () => { setPanelSiteCode(null); setSelSite("ALL"); setEditMode(false); };
+
+  // ── 날짜 앞뒤 이동 ──
+  const prevDay = () => {
+    const d = new Date(selDate + "T00:00:00"); d.setDate(d.getDate() - 1);
+    const s = d.toISOString().slice(0, 10);
+    setSelDate(s); setSelMonth(s.slice(0, 7));
+  };
+  const nextDay = () => {
+    const d = new Date(selDate + "T00:00:00"); d.setDate(d.getDate() + 1);
+    const s = d.toISOString().slice(0, 10);
+    setSelDate(s); setSelMonth(s.slice(0, 7));
+  };
+
+  // ── 패널 내 일보 (panelSiteCode 기준) ──
+  const panelReport = panelSiteCode ? reports.find(r => r.report_date === selDate && r.site_code === panelSiteCode) : null;
+
   // ── 스타일 ──
   const fieldSt = { ...inputStyle, fontSize: 12, padding: "7px 10px" };
   const labelSt = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 4, display: "block" };
@@ -6945,6 +7009,187 @@ function DailyReportPage({ employees, onDataChange }) {
     }
     return null;
   }, [editMode, form.payList, form.valet_amount]);
+
+  // ── 렌더: 그리드 뷰 ──
+  function renderGridView() {
+    const filteredSites = FIELD_SITES.filter(s => {
+      if (statusFilter === "all") return true;
+      const { status } = siteStatusMap[s.code] || {};
+      if (statusFilter === "confirmed") return status === "confirmed";
+      if (statusFilter === "submitted") return status === "submitted";
+      if (statusFilter === "pending") return !status || status === "pending";
+      return true;
+    });
+
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(220px, 1fr))", gap: 10 }}>
+        {filteredSites.map(site => {
+          const { status, report } = siteStatusMap[site.code] || {};
+          const staff = report ? (staffMap[report.id] || []) : [];
+          const pay = report ? (payMap[report.id] || []) : [];
+          const hasMemo = report?.memo?.trim();
+
+          const isConfirmed = status === "confirmed";
+          const isSubmitted = status === "submitted";
+          const isPending = !status || status === "pending";
+
+          const borderColor = isConfirmed ? "#1D9E75" : isSubmitted ? "#3B8BD4" : "#D8B84E";
+          const badgeBg = isConfirmed ? "#E8F5E9" : isSubmitted ? "#E3F2FD" : "#FFF8E1";
+          const badgeColor = isConfirmed ? "#2E7D32" : isSubmitted ? "#1565C0" : "#9A6700";
+          const badgeLabel = isConfirmed ? "✅ 확정" : isSubmitted ? "📝 미확정" : "⏳ 미제출";
+
+          // 결제수단: 현금, 카드만 표시
+          const cash = pay.find(p => p.payment_type === "cash");
+          const card = pay.find(p => p.payment_type === "card");
+
+          // 근무인원 구성 (duty별)
+          const siteStaff = staff.filter(s => s.staff_type !== "substitute");
+          const extraStaff = staff.filter(s => s.staff_type === "substitute");
+
+          return (
+            <div
+              key={site.code}
+              onClick={() => openPanel(site.code)}
+              style={{
+                background: "#fff", borderRadius: 12,
+                border: `0.5px solid #E0E4EF`,
+                borderLeft: `3px solid ${borderColor}`,
+                padding: "13px 14px",
+                cursor: "pointer",
+                transition: "box-shadow 0.15s, transform 0.1s",
+                position: "relative",
+              }}
+              onMouseEnter={e => { e.currentTarget.style.boxShadow = "0 2px 12px rgba(0,0,0,0.09)"; e.currentTarget.style.transform = "translateY(-1px)"; }}
+              onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; e.currentTarget.style.transform = "none"; }}
+            >
+              {/* 헤더 */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, marginBottom: 1 }}>{site.name}</div>
+                  <div style={{ fontSize: 10, color: C.gray }}>{site.code}</div>
+                </div>
+                <span style={{ fontSize: 10, padding: "2px 8px", borderRadius: 20, fontWeight: 700, background: badgeBg, color: badgeColor, whiteSpace: "nowrap" }}>
+                  {badgeLabel}
+                </span>
+              </div>
+
+              {isPending ? (
+                <div style={{ padding: "14px 0", textAlign: "center", color: C.gray, fontSize: 12 }}>
+                  마감 보고 없음
+                  <div style={{ fontSize: 10, marginTop: 4, color: "#B0B0B0" }}>클릭하여 새 일보 작성</div>
+                </div>
+              ) : (
+                <>
+                  {/* 발렛 건수 + 발렛비 */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, marginBottom: 8 }}>
+                    <div style={{ background: "#F0F4FF", borderRadius: 8, padding: "7px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.gray, marginBottom: 2 }}>발렛 건수</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: C.navy }}>{fmt(report?.valet_count)}건</div>
+                    </div>
+                    <div style={{ background: "#FFF8E1", borderRadius: 8, padding: "7px 10px" }}>
+                      <div style={{ fontSize: 10, color: C.gray, marginBottom: 2 }}>발렛비</div>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: "#9A6700" }}>{fmt(report?.valet_amount)}원</div>
+                    </div>
+                  </div>
+
+                  {/* 결제수단 (현금/카드만) */}
+                  {(cash || card) && (
+                    <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+                      {cash && cash.amount > 0 && (
+                        <div style={{ flex: 1, background: "#F1F8E9", borderRadius: 6, padding: "5px 8px" }}>
+                          <div style={{ fontSize: 9, color: C.gray }}>현금</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#2E7D32" }}>{fmt(cash.amount)}원</div>
+                        </div>
+                      )}
+                      {card && card.amount > 0 && (
+                        <div style={{ flex: 1, background: "#E8EAF6", borderRadius: 6, padding: "5px 8px" }}>
+                          <div style={{ fontSize: 9, color: C.gray }}>카드</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#3949AB" }}>{fmt(card.amount)}원</div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* 근무인원 + 메모 */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                    {staff.length > 0 && (
+                      <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#EEF0FF", color: C.navy, fontWeight: 700 }}>
+                        👥 {staff.length}명
+                      </span>
+                    )}
+                    {staff.filter(s => s.staff_type === "substitute").length > 0 && (
+                      <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#FFF4EC", color: "#E97132", fontWeight: 700 }}>
+                        추가 {staff.filter(s => s.staff_type === "substitute").length}명
+                      </span>
+                    )}
+                    {hasMemo && (
+                      <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#F3F0FF", color: "#7B3FBE", fontWeight: 700 }}>📝</span>
+                    )}
+                    {isSubmitted && (
+                      <button
+                        onClick={e => { e.stopPropagation(); toggleConfirm(report); }}
+                        style={{ marginLeft: "auto", fontSize: 10, padding: "3px 10px", borderRadius: 6, border: `1px solid ${C.success}`, background: "#E8F5E9", color: C.success, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}
+                      >
+                        확정하기
+                      </button>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // ── 렌더: 슬라이드 패널 ──
+  function renderSlidePanel() {
+    if (!panelSiteCode) return null;
+    const siteName = getSiteName(panelSiteCode);
+    return (
+      <>
+        {/* 딤 배경 */}
+        <div
+          onClick={closePanel}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 1000 }}
+        />
+        {/* 패널 */}
+        <div style={{
+          position: "fixed", top: 0, right: 0, bottom: 0,
+          width: "min(520px, 100vw)",
+          background: "#fff",
+          zIndex: 1001,
+          boxShadow: "-4px 0 24px rgba(0,0,0,0.12)",
+          display: "flex", flexDirection: "column",
+          overflowY: "auto",
+        }}>
+          {/* 패널 헤더 */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.border}`, background: C.navy, flexShrink: 0 }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 900, color: C.white }}>{siteName}</div>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 2 }}>{panelSiteCode} · {selDate}</div>
+            </div>
+            <button onClick={closePanel} style={{ width: 32, height: 32, borderRadius: "50%", border: "none", background: "rgba(255,255,255,0.15)", color: C.white, fontSize: 18, fontWeight: 900, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT }}>✕</button>
+          </div>
+          {/* 패널 내용 */}
+          <div style={{ flex: 1, padding: "16px 20px", overflowY: "auto" }}>
+            {editMode ? (
+              renderEditForm()
+            ) : panelReport ? (
+              renderReportView(panelReport)
+            ) : (
+              <div style={{ textAlign: "center", padding: "40px 0" }}>
+                <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
+                <div style={{ fontSize: 14, color: C.gray, marginBottom: 20 }}>아직 일보가 없습니다</div>
+                <button onClick={() => { openPanel(panelSiteCode); }} style={btnPrimary}>+ 새 일보 작성</button>
+              </div>
+            )}
+          </div>
+        </div>
+      </>
+    );
+  }
 
   // ── 렌더: 통계 카드 ──
   function renderStats() {
@@ -7373,20 +7618,17 @@ function DailyReportPage({ employees, onDataChange }) {
   // ── 메인 렌더 ──
   return (
     <div>
+      {/* ── 헤더 ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 8 }}>
         <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>📋 현장 일보 관리</h2>
         <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           {/* 일괄확정 */}
-          {(() => {
-            const unconfirmed = (selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite)).filter(r => r.status === "submitted").length;
-            return unconfirmed > 0 ? (
-              <button onClick={handleBatchConfirm} disabled={saving}
-                style={{ ...btnSmall, padding: "6px 14px", fontSize: 11, borderRadius: 8, background: C.success, color: C.white, fontWeight: 800, fontFamily: FONT, border: "none", cursor: "pointer" }}>
-                ✅ 일괄확정 ({unconfirmed})
-              </button>
-            ) : null;
-          })()}
-          {/* 엑셀 Export */}
+          {kpiStats.submitted > 0 && (
+            <button onClick={handleBatchConfirm} disabled={saving}
+              style={{ ...btnSmall, padding: "6px 14px", fontSize: 11, borderRadius: 8, background: C.success, color: C.white, fontWeight: 800, fontFamily: FONT, border: "none", cursor: "pointer" }}>
+              ✅ 일괄확정 ({kpiStats.submitted})
+            </button>
+          )}
           {reports.length > 0 && (
             <button onClick={handleExportExcel}
               style={{ ...btnSmall, padding: "6px 14px", fontSize: 11, borderRadius: 8, background: "#E8F5E9", color: "#2E7D32", fontWeight: 800, fontFamily: FONT, border: "1px solid #A5D6A7", cursor: "pointer" }}>
@@ -7395,68 +7637,77 @@ function DailyReportPage({ employees, onDataChange }) {
           )}
           {/* 뷰 모드 토글 */}
           <div style={{ display: "flex", gap: 4, background: C.lightGray, borderRadius: 8, padding: 3 }}>
-          {[["calendar", "📅 달력"], ["table", "📊 목록"]].map(([k, v]) => (
-            <button key={k} onClick={() => setViewMode(k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, background: viewMode === k ? C.white : "transparent", color: viewMode === k ? C.navy : C.gray, boxShadow: viewMode === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}>{v}</button>
-          ))}
+            {[["grid", "🃏 그리드"], ["table", "📊 목록"]].map(([k, v]) => (
+              <button key={k} onClick={() => setViewMode(k)} style={{ padding: "5px 14px", borderRadius: 6, border: "none", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, background: viewMode === k ? C.white : "transparent", color: viewMode === k ? C.navy : C.gray, boxShadow: viewMode === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none" }}>{v}</button>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* 사업장 필터 탭 */}
-      <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16 }}>
-        <button onClick={() => setSelSite("ALL")} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${selSite === "ALL" ? C.navy : C.border}`, background: selSite === "ALL" ? C.navy : C.white, color: selSite === "ALL" ? C.white : C.gray, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>전체</button>
-        {FIELD_SITES.map(s => (
-          <button key={s.code} onClick={() => setSelSite(s.code)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${selSite === s.code ? C.navy : C.border}`, background: selSite === s.code ? C.navy : C.white, color: selSite === s.code ? C.white : C.gray, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{s.name}</button>
-        ))}
-      </div>
-
-      {/* 통계 */}
-      {renderStats()}
-
-      {viewMode === "table" ? (
-        renderTableView()
-      ) : (
-        /* 2컬럼: 달력 + 상세 (반응형) */
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(260px, 280px) 1fr", gap: 16, alignItems: "start" }}>
-          {/* 좌: 달력 */}
-          <div>
-            {renderCalendar()}
-            <div style={{ marginTop: 10, textAlign: "center", fontSize: 13, fontWeight: 800, color: C.navy }}>📅 {selDate}</div>
-            {/* 오늘 버튼 */}
+      {viewMode === "grid" ? (
+        <>
+          {/* ── 날짜 네비게이션 ── */}
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: "10px 16px" }}>
+            <button onClick={() => { setSelMonth(selMonth < "9999-12" ? (() => { const [y,m] = selMonth.split("-").map(Number); return m===1 ? `${y-1}-12` : `${y}-${String(m-1).padStart(2,"0")}`; })() : selMonth); }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>◀ 월</button>
+            <button onClick={prevDay} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>◀ 일</button>
+            <input type="date" value={selDate} onChange={e => { setSelDate(e.target.value); setSelMonth(e.target.value.slice(0,7)); }}
+              style={{ ...inputStyle, width: 140, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center", padding: "6px 10px" }} />
+            <button onClick={nextDay} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>일 ▶</button>
+            <button onClick={() => { const [y,m] = selMonth.split("-").map(Number); const nm = m===12?1:m+1; const ny=m===12?y+1:y; setSelMonth(`${ny}-${String(nm).padStart(2,"0")}`); }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>월 ▶</button>
             {selDate !== todayStr && (
-              <div style={{ textAlign: "center", marginTop: 6 }}>
-                <button onClick={() => { setSelDate(todayStr); setSelMonth(todayStr.slice(0, 7)); }} style={{ ...miniBtn, background: "#E3F2FD", color: C.navy }}>📅 오늘로 이동</button>
-              </div>
+              <button onClick={() => { setSelDate(todayStr); setSelMonth(todayStr.slice(0,7)); }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: "#E3F2FD", color: C.navy }}>오늘</button>
             )}
           </div>
 
-          {/* 우: 일보 상세 */}
-          <div>
-            {loading ? (
-              <div style={{ ...cardStyle, textAlign: "center", color: C.gray }}>로딩 중...</div>
-            ) : editMode ? (
-              renderEditForm()
-            ) : (
-              <>
-                {currentReport.length > 0 ? (
-                  currentReport.map(r => renderReportView(r))
-                ) : (
-                  <div style={{ ...cardStyle, textAlign: "center", padding: 40 }}>
-                    <div style={{ fontSize: 36, marginBottom: 12 }}>📋</div>
-                    <div style={{ fontSize: 14, fontWeight: 700, color: C.gray, marginBottom: 16 }}>{selDate} 일보가 없습니다</div>
-                    <button onClick={() => startNew()} style={btnPrimary}>+ 새 일보 작성</button>
-                  </div>
-                )}
-                {currentReport.length > 0 && selSite === "ALL" && (
-                  <div style={{ textAlign: "center", marginTop: 8 }}>
-                    <button onClick={() => startNew()} style={{ ...btnSmall, background: C.white, color: C.navy, border: `1.5px solid ${C.navy}` }}>+ 다른 사업장 일보 추가</button>
-                  </div>
-                )}
-              </>
-            )}
+          {/* ── KPI 스트립 ── */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8, marginBottom: 14 }}>
+            {[
+              { label: "전체 사업장", value: FIELD_SITES.length, sub: "운영 중", color: C.dark, click: "all" },
+              { label: "확정 완료", value: kpiStats.confirmed, sub: "오늘 기준", color: C.success, click: "confirmed" },
+              { label: "제출 미확정", value: kpiStats.submitted, sub: "확정 대기", color: "#1565C0", click: "submitted" },
+              { label: "미제출", value: kpiStats.pending, sub: "보고 없음", color: "#9A6700", click: "pending" },
+              { label: "오늘 총 발렛비", value: `${pFmt(kpiStats.totalValet)}원`, sub: `확정 ${pFmt(kpiStats.confirmedValet)}원`, color: C.navy, click: null },
+            ].map((k, i) => (
+              <div key={i} onClick={() => k.click && setStatusFilter(statusFilter === k.click ? "all" : k.click)}
+                style={{ background: "#fff", borderRadius: 10, border: `1px solid ${k.click && statusFilter === k.click ? k.color : C.border}`, padding: "11px 14px", textAlign: "center", cursor: k.click ? "pointer" : "default", transition: "border-color 0.15s", outline: k.click && statusFilter === k.click ? `2px solid ${k.color}20` : "none" }}>
+                <div style={{ fontSize: 20, fontWeight: 900, color: k.color }}>{k.value}</div>
+                <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{k.label}</div>
+                <div style={{ fontSize: 10, color: k.color, marginTop: 2, fontWeight: 700 }}>{k.sub}</div>
+              </div>
+            ))}
           </div>
-        </div>
+
+          {/* ── 상태 필터 ── */}
+          <div style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 12, flexWrap: "wrap" }}>
+            {[["all", `전체 (${FIELD_SITES.length})`], ["confirmed", `확정 (${kpiStats.confirmed})`], ["submitted", `미확정 (${kpiStats.submitted})`], ["pending", `미제출 (${kpiStats.pending})`]].map(([k, v]) => (
+              <button key={k} onClick={() => setStatusFilter(k)}
+                style={{ padding: "5px 14px", borderRadius: 20, border: `1.5px solid ${statusFilter === k ? C.navy : C.border}`, background: statusFilter === k ? C.navy : "#fff", color: statusFilter === k ? "#fff" : C.gray, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                {v}
+              </button>
+            ))}
+            {loading && <span style={{ fontSize: 11, color: C.gray, marginLeft: 6 }}>로딩 중...</span>}
+          </div>
+
+          {/* ── 카드 그리드 ── */}
+          {renderGridView()}
+        </>
+      ) : (
+        /* ── 테이블/달력 뷰 (기존 로직 유지) ── */
+        <>
+          {/* 사업장 필터 탭 */}
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16 }}>
+            <button onClick={() => setSelSite("ALL")} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${selSite === "ALL" ? C.navy : C.border}`, background: selSite === "ALL" ? C.navy : "#fff", color: selSite === "ALL" ? "#fff" : C.gray, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>전체</button>
+            {FIELD_SITES.map(s => (
+              <button key={s.code} onClick={() => setSelSite(s.code)} style={{ padding: "6px 14px", borderRadius: 20, border: `1.5px solid ${selSite === s.code ? C.navy : C.border}`, background: selSite === s.code ? C.navy : "#fff", color: selSite === s.code ? "#fff" : C.gray, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>{s.name}</button>
+            ))}
+          </div>
+          {renderStats()}
+          {renderTableView()}
+        </>
       )}
+
+      {/* ── 슬라이드 패널 ── */}
+      {renderSlidePanel()}
 
       {/* 이미지 라이트박스 */}
       {lightboxImg && (
