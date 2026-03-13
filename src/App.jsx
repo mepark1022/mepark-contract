@@ -3523,43 +3523,166 @@ function AdminInvitePanel() {
   const isSuperAdmin = myProfile?.role === "super_admin";
   const isAdmin      = myProfile?.role === "admin";
 
+  // ── 단일 생성 ──
   const [showCreateForm, setShowCreateForm] = useState(false);
-  const [showPwChange, setShowPwChange] = useState(false);
-  const [newName, setNewName] = useState("");
-  const [newEmail, setNewEmail] = useState("");
-  const [newPw, setNewPw] = useState("");
-  // 슈퍼어드민: admin+crew 생성 가능 / 어드민: crew만 생성 가능
-  const [newRole, setNewRole] = useState(isSuperAdmin ? "admin" : "crew");
-  const [newSiteCode, setNewSiteCode] = useState("V001"); // crew 전용 소속 사업장
-  const [msg, setMsg] = useState("");
-  const [creating, setCreating] = useState(false);
+  const [newName, setNewName]       = useState("");
+  const [newEmpNo, setNewEmpNo]     = useState("");   // 사번 → email
+  const [newPhone, setNewPhone]     = useState("");   // 전화번호 → pw(뒷4자리)
+  const [newRole, setNewRole]       = useState(isSuperAdmin ? "admin" : "crew");
+  const [newSiteCode, setNewSiteCode] = useState("V001");
+  const [creating, setCreating]     = useState(false);
+  const [msg, setMsg]               = useState("");
   const [createdInfo, setCreatedInfo] = useState(null);
 
-  // 역할별 생성 가능 목록
-  const creatableRoles = isSuperAdmin
-    ? [{ key: "admin", label: "어드민", desc: "크루 계정 생성 + 전 사업장 일보" },
-       { key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만 가능" }]
-    : [{ key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만 가능" }];
+  // ── 엑셀 일괄 생성 ──
+  const [showBulk, setShowBulk]       = useState(false);
+  const [bulkRows, setBulkRows]       = useState([]);   // 파싱된 행
+  const [bulkCreating, setBulkCreating] = useState(false);
+  const [bulkResults, setBulkResults]   = useState([]);  // {name, empNo, ok, error}
+  const [bulkDone, setBulkDone]         = useState(false);
+  const [bulkMsg, setBulkMsg]           = useState("");
 
-  // 비밀번호 변경 state
-  const [changePw, setChangePw] = useState("");
+  // ── 비밀번호 변경 ──
+  const [showPwChange, setShowPwChange] = useState(false);
+  const [changePw, setChangePw]   = useState("");
   const [changePw2, setChangePw2] = useState("");
-  const [pwMsg, setPwMsg] = useState("");
+  const [pwMsg, setPwMsg]         = useState("");
 
-  const handleCreate = async () => {
-    if (!newName.trim()) { setMsg("이름을 입력하세요."); return; }
-    if (!newEmail.includes("@")) { setMsg("유효한 이메일을 입력하세요."); return; }
-    if (newPw.length < 6) { setMsg("비밀번호는 6자 이상이어야 합니다."); return; }
-    if (newRole === "crew" && !newSiteCode) { setMsg("소속 사업장을 선택하세요."); return; }
-    setCreating(true); setMsg("");
-    const opts = newRole === "crew" ? { site_code: newSiteCode } : {};
-    const { error } = await createAccount(newName, newEmail, newPw, newRole, opts);
-    setCreating(false);
-    if (error) { setMsg(error); return; }
-    setCreatedInfo({ name: newName, email: newEmail, password: newPw, role: newRole, site_code: newRole === "crew" ? newSiteCode : null });
-    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole(isSuperAdmin ? "admin" : "crew"); setNewSiteCode("V001");
+  // ── 헬퍼 ──
+  const empNoToEmail  = (no) => `${no.trim().toLowerCase()}@mepark.internal`;
+  const phoneToPass   = (ph) => ph.replace(/\D/g, "").slice(-4);
+  const getSiteLbl    = (code) => {
+    const s = SITES.find(x => x.code === code);
+    return s ? `${s.code} ${s.name}` : code || "—";
   };
 
+  const creatableRoles = isSuperAdmin
+    ? [{ key: "admin", label: "어드민", desc: "크루 계정 생성 + 전 사업장 일보" },
+       { key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만" }]
+    : [{ key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만" }];
+
+  const canChangeRole = (p) => isSuperAdmin && p.id !== user?.id && p.role !== "super_admin";
+  const canDelete     = (p) => {
+    if (p.id === user?.id || p.role === "super_admin") return false;
+    if (isSuperAdmin) return true;
+    if (isAdmin) return p.role === "crew";
+    return false;
+  };
+
+  // ── 프로필 그룹 ──
+  const superAdmins = profiles.filter(p => p.role === "super_admin");
+  const admins      = profiles.filter(p => p.role === "admin");
+  const crews       = profiles.filter(p => p.role === "crew");
+  const crewsBySite = SITES.filter(s => s.code !== "V000").reduce((acc, s) => {
+    const list = crews.filter(c => c.site_code === s.code);
+    if (list.length) acc[s.code] = { site: s, list };
+    return acc;
+  }, {});
+  const unassigned  = crews.filter(c => !c.site_code || !SITES.find(s => s.code === c.site_code));
+
+  // ── 단일 생성 ──
+  const handleCreate = async () => {
+    if (!newName.trim()) { setMsg("이름을 입력하세요."); return; }
+    if (!newEmpNo.trim()) { setMsg("사번을 입력하세요."); return; }
+    const pw = phoneToPass(newPhone);
+    if (pw.length < 4) { setMsg("전화번호를 입력하세요 (뒷 4자리 사용)."); return; }
+    if (newRole === "crew" && !newSiteCode) { setMsg("소속 사업장을 선택하세요."); return; }
+    const email = empNoToEmail(newEmpNo);
+    setCreating(true); setMsg("");
+    const opts = { emp_no: newEmpNo.trim(), ...(newRole === "crew" ? { site_code: newSiteCode } : {}) };
+    const { error } = await createAccount(newName.trim(), email, pw, newRole, opts);
+    setCreating(false);
+    if (error) { setMsg(error); return; }
+    setCreatedInfo({ name: newName.trim(), empNo: newEmpNo.trim(), email, password: pw, role: newRole, site_code: newRole === "crew" ? newSiteCode : null });
+    setNewName(""); setNewEmpNo(""); setNewPhone(""); setNewRole(isSuperAdmin ? "admin" : "crew"); setNewSiteCode("V001");
+  };
+
+  const closeCreate = () => { setShowCreateForm(false); setCreatedInfo(null); setMsg(""); setNewName(""); setNewEmpNo(""); setNewPhone(""); setNewRole(isSuperAdmin ? "admin" : "crew"); };
+
+  // ── 엑셀 템플릿 다운로드 ──
+  const downloadTemplate = () => {
+    const wb = XLSX.utils.book_new();
+    // 안내 시트
+    const guide = [
+      ["ME.PARK ERP 계정 일괄생성 양식"],
+      [""],
+      ["◆ 작성 규칙"],
+      ["· 아이디(이메일) = 사번@mepark.internal  (자동 생성)"],
+      ["· 비밀번호 = 전화번호 뒷 4자리  (자동 추출)"],
+      ["· 역할: admin (어드민) 또는 crew (크루)"],
+      ["· 소속사업장코드: crew인 경우만 필수 (V001~V016)"],
+      [""],
+      ["◆ 사업장 코드 목록"],
+      ...SITES.filter(s => s.code !== "V000").map(s => [s.code, s.name]),
+    ];
+    const wsGuide = XLSX.utils.aoa_to_sheet(guide);
+    wsGuide["!cols"] = [{ wch: 30 }, { wch: 24 }];
+    XLSX.utils.book_append_sheet(wb, wsGuide, "작성안내");
+
+    // 입력 시트 (헤더 + 샘플 3행)
+    const header = ["이름", "사번", "전화번호", "역할(admin/crew)", "소속사업장코드(crew만)"];
+    const sample = [
+      ["홍길동", "MP24101", "010-1234-5678", "crew", "V001"],
+      ["이효정", "MP24102", "010-9876-5432", "admin", ""],
+      ["김철수", "MP24103", "010-1111-2222", "crew", "V003"],
+    ];
+    const wsData = XLSX.utils.aoa_to_sheet([header, ...sample]);
+    wsData["!cols"] = [{ wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsData, "계정입력");
+
+    XLSX.writeFile(wb, "ME.PARK_계정일괄생성양식.xlsx");
+  };
+
+  // ── 엑셀 파일 파싱 ──
+  const handleBulkFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const wb = XLSX.read(ev.target.result, { type: "array" });
+      const ws = wb.Sheets["계정입력"] || wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+      const parsed = rows
+        .filter(r => r["이름"] && r["사번"])
+        .map(r => ({
+          name:     String(r["이름"]).trim(),
+          empNo:    String(r["사번"]).trim(),
+          phone:    String(r["전화번호"]).trim(),
+          role:     String(r["역할(admin/crew)"]).trim().toLowerCase() || "crew",
+          siteCode: String(r["소속사업장코드(crew만)"]).trim().toUpperCase() || "",
+        }));
+      setBulkRows(parsed);
+      setBulkResults([]);
+      setBulkDone(false);
+      setBulkMsg(parsed.length ? `${parsed.length}건 감지됨` : "⚠️ 데이터 행이 없습니다.");
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = "";
+  };
+
+  // ── 엑셀 일괄 생성 실행 ──
+  const handleBulkCreate = async () => {
+    if (!bulkRows.length) return;
+    setBulkCreating(true);
+    const results = [];
+    for (const row of bulkRows) {
+      const email = empNoToEmail(row.empNo);
+      const pw    = phoneToPass(row.phone);
+      if (pw.length < 4) { results.push({ ...row, ok: false, error: "전화번호 오류" }); continue; }
+      const validRoles = ["admin", "crew"];
+      const role = validRoles.includes(row.role) ? row.role : "crew";
+      const opts = { emp_no: row.empNo, ...(role === "crew" && row.siteCode ? { site_code: row.siteCode } : {}) };
+      const { error } = await createAccount(row.name, email, pw, role, opts);
+      results.push({ ...row, ok: !error, error: error || "" });
+    }
+    setBulkResults(results);
+    setBulkDone(true);
+    setBulkCreating(false);
+  };
+
+  const closeBulk = () => { setShowBulk(false); setBulkRows([]); setBulkResults([]); setBulkDone(false); setBulkMsg(""); };
+
+  // ── 비밀번호 변경 ──
   const handlePwChange = async () => {
     if (changePw.length < 6) { setPwMsg("비밀번호는 6자 이상이어야 합니다."); return; }
     if (changePw !== changePw2) { setPwMsg("비밀번호가 일치하지 않습니다."); return; }
@@ -3570,106 +3693,122 @@ function AdminInvitePanel() {
     setTimeout(() => { setPwMsg(""); setShowPwChange(false); }, 1500);
   };
 
-  const copyText = (text, label) => {
-    navigator.clipboard.writeText(text).then(() => {
-      setMsg(`✅ ${label} 복사 완료`);
-      setTimeout(() => setMsg(""), 2000);
-    });
-  };
+  // ── 계정 카드 공통 ──
+  const AccountCard = ({ p }) => (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
+      background: C.white, borderRadius: 10, border: `1px solid ${C.border}`, marginBottom: 6 }}>
+      {/* 아바타 */}
+      <div style={{ width: 36, height: 36, borderRadius: "50%", flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 14,
+        background: p.role === "super_admin" ? "#EDE7F6" : p.role === "admin" ? "#E3F2FD" : "#E8F5E9",
+        color: p.role === "super_admin" ? "#7B1FA2" : p.role === "admin" ? C.navy : C.success }}>
+        {(p.name || "?")[0]}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 13, color: C.dark, display: "flex", alignItems: "center", gap: 6 }}>
+          {p.name}
+          {p.id === user?.id && <span style={{ fontSize: 10, background: C.gold, color: C.dark, borderRadius: 4, padding: "1px 5px", fontWeight: 800 }}>나</span>}
+        </div>
+        <div style={{ fontSize: 11, color: C.gray, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.email}</div>
+        <div style={{ fontSize: 10, color: C.gray, marginTop: 1 }}>가입 {fmtDate(p.created_at)}</div>
+      </div>
+      {/* 관리 */}
+      {(canChangeRole(p) || canDelete(p)) && (
+        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+          {canChangeRole(p) && (
+            <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
+              style={{ fontSize: 11, padding: "3px 6px", border: `1px solid ${C.border}`, borderRadius: 6, background: C.white, cursor: "pointer" }}>
+              <option value="admin">어드민</option>
+              <option value="crew">크루</option>
+            </select>
+          )}
+          {canDelete(p) && (
+            <button onClick={async () => {
+              if (await confirm(`${p.name}님 계정을 삭제하시겠습니까?`, "삭제 후 복구 불가능합니다.")) removeAdmin(p.id);
+            }} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 7px", cursor: "pointer", fontSize: 13, color: C.error }}>🗑</button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 
-  const closeCreateForm = () => {
-    setShowCreateForm(false); setCreatedInfo(null); setMsg("");
-    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole(isSuperAdmin ? "admin" : "crew");
-  };
-
-  // 계정 관리 권한 계산
-  // super_admin: 자신 제외 모든 계정 역할 변경+삭제 가능 (단, 다른 super_admin 역할 변경 불가)
-  // admin: 크루 계정만 삭제 가능, 역할 변경 불가
-  const canChangeRole = (p) => isSuperAdmin && p.id !== user?.id && p.role !== "super_admin";
-  const canDelete     = (p) => {
-    if (p.id === user?.id) return false;          // 본인 삭제 불가
-    if (p.role === "super_admin") return false;   // 슈퍼어드민 삭제 불가
-    if (isSuperAdmin) return true;                // 슈퍼어드민은 admin+crew 삭제 가능
-    if (isAdmin) return p.role === "crew";        // 어드민은 크루만 삭제 가능
-    return false;
-  };
+  // ── 섹션 카드 래퍼 ──
+  const SectionCard = ({ icon, title, count, color, bg, children }) => (
+    <div style={{ ...cardStyle, padding: 0, overflow: "hidden", marginBottom: 16 }}>
+      <div style={{ background: bg, padding: "12px 18px", display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 18 }}>{icon}</span>
+        <span style={{ fontWeight: 900, fontSize: 14, color }}>{title}</span>
+        <span style={{ background: color, color: "#fff", borderRadius: 12, padding: "1px 8px", fontSize: 11, fontWeight: 700, marginLeft: 4 }}>{count}명</span>
+      </div>
+      <div style={{ padding: 14 }}>{children}</div>
+    </div>
+  );
 
   return (
-    <div>
+    <div style={{ maxWidth: 900 }}>
+      {/* ── 헤더 ── */}
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
         <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>🔐 관리자 계정 관리</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setShowPwChange(true)} style={btnOutline}>🔑 비밀번호 변경</button>
-          <button onClick={() => setShowCreateForm(true)} style={btnPrimary}>+ 계정 생성</button>
+          <button onClick={downloadTemplate} style={{ ...btnOutline, color: C.success, borderColor: C.success }}>📥 양식 다운로드</button>
+          <button onClick={() => setShowBulk(true)} style={{ ...btnOutline, color: "#E97132", borderColor: "#E97132" }}>📊 엑셀 일괄생성</button>
+          {(isSuperAdmin || isAdmin) && <button onClick={() => setShowCreateForm(true)} style={btnPrimary}>+ 계정 생성</button>}
         </div>
       </div>
 
-      {msg && !showCreateForm && <div style={{ background: msg.startsWith("✅") ? "#E8F5E9" : "#FEE2E2", color: msg.startsWith("✅") ? C.success : C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{msg}</div>}
-
-      {/* 계정 생성 모달 */}
+      {/* ── 단일 생성 모달 ── */}
       {showCreateForm && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
-          onClick={closeCreateForm}>
-          <div style={{ background: C.white, borderRadius: 16, padding: 0, width: 460, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
-            {/* 모달 헤더 */}
+          onClick={closeCreate}>
+          <div style={{ background: C.white, borderRadius: 16, width: 460, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={{ background: C.navy, padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 20 }}>🔑</span>
               <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>계정 생성</h3>
             </div>
-
             <div style={{ padding: 24 }}>
               {!createdInfo ? (
                 <>
-                  {msg && <div style={{ background: "#FEE2E2", color: C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16, whiteSpace: "pre-wrap" }}>{msg}</div>}
+                  {msg && <div style={{ background: "#FEE2E2", color: C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{msg}</div>}
 
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>이름 *</label>
-                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="홍길동" style={{ ...inputStyle, padding: "12px 14px" }} />
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>이름 *</label>
+                    <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="홍길동" style={{ ...inputStyle, padding: "11px 14px" }} />
                   </div>
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>이메일 주소 *</label>
-                    <input type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="example@email.com" style={{ ...inputStyle, padding: "12px 14px" }} />
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>사번 * <span style={{ fontWeight: 400 }}>(아이디)</span></label>
+                    <input value={newEmpNo} onChange={e => setNewEmpNo(e.target.value)} placeholder="MP24101" style={{ ...inputStyle, padding: "11px 14px", fontFamily: "monospace" }} />
+                    {newEmpNo && <div style={{ fontSize: 11, color: C.navy, marginTop: 4, fontWeight: 600 }}>→ 이메일: {empNoToEmail(newEmpNo)}</div>}
                   </div>
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>비밀번호 * <span style={{ fontWeight: 400, color: C.gray }}>(6자 이상)</span></label>
-                    <input type="text" value={newPw} onChange={e => setNewPw(e.target.value)} placeholder="초기 비밀번호 입력" style={{ ...inputStyle, padding: "12px 14px", fontFamily: "monospace" }} />
-                    <p style={{ fontSize: 11, color: C.orange, marginTop: 4, fontWeight: 600 }}>⚠️ 생성 후 본인에게 비밀번호를 전달해주세요</p>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>전화번호 * <span style={{ fontWeight: 400 }}>(뒷 4자리 → 비밀번호)</span></label>
+                    <input value={newPhone} onChange={e => setNewPhone(e.target.value)} placeholder="010-1234-5678" style={{ ...inputStyle, padding: "11px 14px" }} />
+                    {phoneToPass(newPhone).length === 4 && <div style={{ fontSize: 11, color: C.navy, marginTop: 4, fontWeight: 600 }}>→ 비밀번호: <span style={{ fontFamily: "monospace", letterSpacing: 2 }}>{"●●●●"}</span> ({phoneToPass(newPhone)})</div>}
                   </div>
-                  <div style={{ marginBottom: 20 }}>
+                  <div style={{ marginBottom: 14 }}>
                     <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 8, display: "block" }}>역할 *</label>
                     <div style={{ display: "flex", gap: 8 }}>
                       {creatableRoles.map(({ key, label, desc }) => (
-                        <button key={key} onClick={() => setNewRole(key)}
-                          style={{
-                            flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 700,
-                            border: `2px solid ${newRole === key ? C.navy : C.border}`,
-                            background: newRole === key ? C.navy : C.white, color: newRole === key ? C.white : C.gray,
-                            transition: "all 0.15s",
-                          }}>
+                        <button key={key} onClick={() => setNewRole(key)} style={{
+                          flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 700,
+                          border: `2px solid ${newRole === key ? C.navy : C.border}`,
+                          background: newRole === key ? C.navy : C.white, color: newRole === key ? C.white : C.gray,
+                        }}>
                           {label}
-                          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>{desc}</div>
+                          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.75 }}>{desc}</div>
                         </button>
                       ))}
                     </div>
                   </div>
-
-                  {/* 크루: 소속 사업장 선택 */}
                   {newRole === "crew" && (
                     <div style={{ marginBottom: 16 }}>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>소속 사업장 *</label>
-                      <select value={newSiteCode} onChange={e => setNewSiteCode(e.target.value)} style={{ ...inputStyle, padding: "12px 14px" }}>
-                        {SITES.filter(s => s.code !== "V000").map(s => (
-                          <option key={s.code} value={s.code}>{s.code} {s.name}</option>
-                        ))}
+                      <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>소속 사업장 *</label>
+                      <select value={newSiteCode} onChange={e => setNewSiteCode(e.target.value)} style={{ ...inputStyle, padding: "11px 14px" }}>
+                        {SITES.filter(s => s.code !== "V000").map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
                       </select>
-                      <p style={{ fontSize: 11, color: C.navy, marginTop: 4, fontWeight: 600 }}>
-                        💡 크루는 지정 사업장의 현장일보만 작성·조회할 수 있습니다
-                      </p>
                     </div>
                   )}
-
-                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
-                    <button onClick={closeCreateForm} style={btnOutline}>취소</button>
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", marginTop: 6 }}>
+                    <button onClick={closeCreate} style={btnOutline}>취소</button>
                     <button onClick={handleCreate} disabled={creating} style={{ ...btnPrimary, opacity: creating ? 0.6 : 1 }}>
                       {creating ? "생성 중..." : "계정 생성"}
                     </button>
@@ -3677,46 +3816,33 @@ function AdminInvitePanel() {
                 </>
               ) : (
                 <>
-                  {/* 생성 완료 */}
                   <div style={{ textAlign: "center", marginBottom: 20 }}>
-                    <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#E8F5E9", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 10 }}>✅</div>
+                    <div style={{ width: 48, height: 48, borderRadius: "50%", background: "#E8F5E9", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 24, marginBottom: 8 }}>✅</div>
                     <h4 style={{ fontSize: 16, fontWeight: 800, color: C.dark, margin: 0 }}>계정 생성 완료!</h4>
-                    <p style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>아래 정보를 본인에게 전달해주세요.</p>
+                    <p style={{ fontSize: 12, color: C.gray, marginTop: 4 }}>아래 정보를 전달해주세요.</p>
                   </div>
-
-                  <div style={{ background: "#F8FAFC", border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 16 }}>
+                  <div style={{ background: "#F8FAFC", border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
                     {[
                       ["이름", createdInfo.name],
-                      ["이메일", createdInfo.email],
-                      ["비밀번호", createdInfo.password],
+                      ["아이디(이메일)", createdInfo.email],
+                      ["비밀번호(초기)", createdInfo.password],
                       ["역할", ROLES[createdInfo.role]],
-                      ...(createdInfo.site_code ? [["소속 사업장", `${createdInfo.site_code} ${getSiteName(createdInfo.site_code)}`]] : []),
+                      ...(createdInfo.site_code ? [["소속 사업장", getSiteLbl(createdInfo.site_code)]] : []),
                     ].map(([label, value]) => (
-                      <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}` }}>
+                      <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
                         <div>
-                          <span style={{ fontSize: 11, color: C.gray }}>{label}</span>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, fontFamily: label === "비밀번호" ? "monospace" : "inherit" }}>{value}</div>
+                          <div style={{ fontSize: 10, color: C.gray }}>{label}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, fontFamily: label.includes("비밀번호") || label.includes("아이디") ? "monospace" : "inherit" }}>{value}</div>
                         </div>
-                        <button onClick={() => copyText(value, label)} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 8px", cursor: "pointer", fontSize: 11, color: C.gray }}>
-                          📋 복사
-                        </button>
+                        <button onClick={() => navigator.clipboard.writeText(value)} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer", fontSize: 11, color: C.gray }}>📋</button>
                       </div>
                     ))}
                   </div>
-
                   <button onClick={() => {
-                    const text = `[ME.PARK ERP 계정 정보]\n이름: ${createdInfo.name}\n이메일: ${createdInfo.email}\n비밀번호: ${createdInfo.password}\n역할: ${ROLES[createdInfo.role]}${createdInfo.site_code ? `\n소속 사업장: ${createdInfo.site_code} ${getSiteName(createdInfo.site_code)}` : ""}\n로그인: ${window.location.origin}\n\n※ 로그인 후 비밀번호를 변경해주세요.`;
-                    navigator.clipboard.writeText(text);
-                    setMsg("✅ 전체 계정 정보가 복사되었습니다.");
-                  }} style={{ ...btnOutline, width: "100%", marginBottom: 10, padding: 12 }}>
-                    📋 전체 정보 복사 (전달용)
-                  </button>
-
-                  {msg && <div style={{ background: "#E8F5E9", color: C.success, padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 10, textAlign: "center" }}>{msg}</div>}
-
-                  <button onClick={closeCreateForm} style={{ ...btnPrimary, width: "100%", padding: 12 }}>
-                    닫기
-                  </button>
+                    const t = `[ME.PARK ERP 계정]\n이름: ${createdInfo.name}\n아이디: ${createdInfo.email}\n비밀번호: ${createdInfo.password}\n역할: ${ROLES[createdInfo.role]}${createdInfo.site_code ? `\n소속: ${getSiteLbl(createdInfo.site_code)}` : ""}\n로그인: ${window.location.origin}`;
+                    navigator.clipboard.writeText(t);
+                  }} style={{ ...btnOutline, width: "100%", marginBottom: 8, padding: 11 }}>📋 전체 복사 (전달용)</button>
+                  <button onClick={closeCreate} style={{ ...btnPrimary, width: "100%", padding: 11 }}>닫기</button>
                 </>
               )}
             </div>
@@ -3724,25 +3850,150 @@ function AdminInvitePanel() {
         </div>
       )}
 
-      {/* 비밀번호 변경 모달 */}
+      {/* ── 엑셀 일괄 생성 모달 ── */}
+      {showBulk && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
+          onClick={bulkCreating ? null : closeBulk}>
+          <div style={{ background: C.white, borderRadius: 16, width: 560, maxHeight: "88vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: "#E97132", padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 20 }}>📊</span>
+              <h3 style={{ fontSize: 16, fontWeight: 900, color: "#fff", margin: 0 }}>엑셀 일괄 계정 생성</h3>
+            </div>
+            <div style={{ padding: 24 }}>
+              {!bulkDone ? (
+                <>
+                  {/* 안내 */}
+                  <div style={{ background: "#FFF8EE", border: "1px solid #FFD8A0", borderRadius: 10, padding: 14, marginBottom: 18, fontSize: 12, color: "#7A4500", lineHeight: 1.8 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>📌 작성 규칙</div>
+                    <div>• <b>아이디</b> = 사번@mepark.internal &nbsp;(자동 생성)</div>
+                    <div>• <b>비밀번호</b> = 전화번호 뒷 4자리 &nbsp;(자동 추출)</div>
+                    <div>• <b>역할</b>: <code>admin</code> 또는 <code>crew</code></div>
+                    <div>• <b>소속사업장코드</b>: crew인 경우만 필수 (V001~V016)</div>
+                  </div>
+
+                  {/* 템플릿 다운 + 업로드 */}
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
+                    <button onClick={downloadTemplate}
+                      style={{ padding: "16px 10px", borderRadius: 12, border: `2px dashed ${C.success}`, background: "#E8F5E9", cursor: "pointer", textAlign: "center", color: C.success, fontWeight: 700, fontSize: 13 }}>
+                      📥 샘플 양식 다운로드
+                      <div style={{ fontSize: 11, fontWeight: 400, marginTop: 4, opacity: 0.8 }}>ME.PARK_계정일괄생성양식.xlsx</div>
+                    </button>
+                    <label style={{ padding: "16px 10px", borderRadius: 12, border: `2px dashed ${C.navy}`, background: "#EEF2FF", cursor: "pointer", textAlign: "center", color: C.navy, fontWeight: 700, fontSize: 13, display: "block" }}>
+                      📂 엑셀 파일 업로드
+                      <div style={{ fontSize: 11, fontWeight: 400, marginTop: 4, opacity: 0.8 }}>클릭하여 파일 선택</div>
+                      <input type="file" accept=".xlsx,.xls" onChange={handleBulkFile} style={{ display: "none" }} />
+                    </label>
+                  </div>
+
+                  {bulkMsg && <div style={{ fontSize: 12, color: bulkMsg.startsWith("⚠️") ? C.error : C.navy, fontWeight: 700, marginBottom: 12, textAlign: "center" }}>{bulkMsg}</div>}
+
+                  {/* 파싱된 미리보기 */}
+                  {bulkRows.length > 0 && (
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: C.dark, marginBottom: 10 }}>📋 생성 예정 {bulkRows.length}건 미리보기</div>
+                      <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                          <thead>
+                            <tr style={{ background: C.navy, position: "sticky", top: 0 }}>
+                              {["이름", "사번(아이디)", "비밀번호", "역할", "사업장"].map(h => (
+                                <th key={h} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bulkRows.map((r, i) => {
+                              const pw = phoneToPass(r.phone);
+                              const valid = r.name && r.empNo && pw.length === 4;
+                              return (
+                                <tr key={i} style={{ background: valid ? (i % 2 ? C.bg : C.white) : "#FFF0F0" }}>
+                                  <td style={{ padding: "7px 10px", fontWeight: 700 }}>{r.name}</td>
+                                  <td style={{ padding: "7px 10px", fontFamily: "monospace", fontSize: 11, color: C.navy }}>{r.empNo}@mepark.internal</td>
+                                  <td style={{ padding: "7px 10px", fontFamily: "monospace", textAlign: "center" }}>{pw || <span style={{ color: C.error }}>오류</span>}</td>
+                                  <td style={{ padding: "7px 10px", textAlign: "center" }}>
+                                    <span style={{ padding: "2px 8px", borderRadius: 8, fontSize: 10, fontWeight: 700,
+                                      background: r.role === "admin" ? "#E3F2FD" : "#E8F5E9",
+                                      color: r.role === "admin" ? C.navy : C.success }}>
+                                      {r.role === "admin" ? "어드민" : "크루"}
+                                    </span>
+                                  </td>
+                                  <td style={{ padding: "7px 10px", textAlign: "center", fontSize: 10, color: C.gray }}>
+                                    {r.siteCode ? getSiteLbl(r.siteCode) : "—"}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                    <button onClick={closeBulk} style={btnOutline}>취소</button>
+                    <button onClick={handleBulkCreate} disabled={!bulkRows.length || bulkCreating}
+                      style={{ ...btnPrimary, background: "#E97132", borderColor: "#E97132", opacity: (!bulkRows.length || bulkCreating) ? 0.5 : 1 }}>
+                      {bulkCreating ? `생성 중... (${bulkResults.length}/${bulkRows.length})` : `🚀 ${bulkRows.length}건 일괄 생성`}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  {/* 결과 */}
+                  <div style={{ textAlign: "center", marginBottom: 18 }}>
+                    <div style={{ fontSize: 32, marginBottom: 8 }}>
+                      {bulkResults.every(r => r.ok) ? "✅" : bulkResults.some(r => r.ok) ? "⚠️" : "❌"}
+                    </div>
+                    <div style={{ fontWeight: 900, fontSize: 16, color: C.dark }}>
+                      {bulkResults.filter(r => r.ok).length}건 성공 / {bulkResults.filter(r => !r.ok).length}건 실패
+                    </div>
+                  </div>
+                  <div style={{ maxHeight: 300, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 10, marginBottom: 16 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                      <thead>
+                        <tr style={{ background: C.navy, position: "sticky", top: 0 }}>
+                          {["이름", "사번", "결과"].map(h => <th key={h} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>{h}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bulkResults.map((r, i) => (
+                          <tr key={i} style={{ background: r.ok ? (i % 2 ? "#E8F5E9" : "#F1FAF3") : "#FFF0F0" }}>
+                            <td style={{ padding: "7px 10px", fontWeight: 700 }}>{r.name}</td>
+                            <td style={{ padding: "7px 10px", fontFamily: "monospace", color: C.navy }}>{r.empNo}</td>
+                            <td style={{ padding: "7px 10px" }}>
+                              {r.ok
+                                ? <span style={{ color: C.success, fontWeight: 700 }}>✅ 생성 완료</span>
+                                : <span style={{ color: C.error, fontWeight: 700 }}>❌ {r.error}</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button onClick={closeBulk} style={{ ...btnPrimary, width: "100%", padding: 12 }}>닫기</button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 비밀번호 변경 모달 ── */}
       {showPwChange && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
           onClick={() => { setShowPwChange(false); setPwMsg(""); setChangePw(""); setChangePw2(""); }}>
-          <div style={{ background: C.white, borderRadius: 16, padding: 0, width: 400 }} onClick={e => e.stopPropagation()}>
+          <div style={{ background: C.white, borderRadius: 16, width: 400 }} onClick={e => e.stopPropagation()}>
             <div style={{ background: C.navy, padding: "16px 24px", borderRadius: "16px 16px 0 0" }}>
               <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>🔑 비밀번호 변경</h3>
             </div>
             <div style={{ padding: 24 }}>
               {pwMsg && <div style={{ background: pwMsg.startsWith("✅") ? "#E8F5E9" : "#FEE2E2", color: pwMsg.startsWith("✅") ? C.success : C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{pwMsg}</div>}
-              <div style={{ marginBottom: 16 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>새 비밀번호</label>
-                <input type="password" value={changePw} onChange={e => setChangePw(e.target.value)} placeholder="6자 이상" style={{ ...inputStyle, padding: "12px 14px" }} />
+              <div style={{ marginBottom: 14 }}>
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>새 비밀번호</label>
+                <input type="password" value={changePw} onChange={e => setChangePw(e.target.value)} placeholder="6자 이상" style={{ ...inputStyle, padding: "11px 14px" }} />
               </div>
               <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>비밀번호 확인</label>
-                <input type="password" value={changePw2} onChange={e => setChangePw2(e.target.value)} placeholder="비밀번호 재입력"
-                  style={{ ...inputStyle, padding: "12px 14px" }}
-                  onKeyDown={e => e.key === "Enter" && handlePwChange()} />
+                <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>비밀번호 확인</label>
+                <input type="password" value={changePw2} onChange={e => setChangePw2(e.target.value)} placeholder="재입력" style={{ ...inputStyle, padding: "11px 14px" }} onKeyDown={e => e.key === "Enter" && handlePwChange()} />
               </div>
               <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                 <button onClick={() => { setShowPwChange(false); setPwMsg(""); setChangePw(""); setChangePw2(""); }} style={btnOutline}>취소</button>
@@ -3753,86 +4004,72 @@ function AdminInvitePanel() {
         </div>
       )}
 
-      {/* 현재 계정 목록 */}
-      <div style={cardStyle}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>👤 등록된 계정 ({profiles.length}명)</h3>
+      {/* ══ 계정 목록 — 역할별 섹션 카드 ══ */}
+
+      {/* 슈퍼어드민 */}
+      <SectionCard icon="👑" title="슈퍼어드민" count={superAdmins.length} color="#7B1FA2" bg="#EDE7F6">
+        {superAdmins.length === 0
+          ? <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: "12px 0" }}>없음</div>
+          : superAdmins.map(p => <AccountCard key={p.id} p={p} />)}
+      </SectionCard>
+
+      {/* 어드민 */}
+      <SectionCard icon="🛡️" title="어드민" count={admins.length} color={C.navy} bg="#E3F2FD">
+        {admins.length === 0
+          ? <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: "12px 0" }}>없음</div>
+          : admins.map(p => <AccountCard key={p.id} p={p} />)}
+      </SectionCard>
+
+      {/* 크루 — 사업장별 */}
+      <div style={{ ...cardStyle, padding: 0, overflow: "hidden", marginBottom: 16 }}>
+        <div style={{ background: "#E8F5E9", padding: "12px 18px", display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>👷</span>
+          <span style={{ fontWeight: 900, fontSize: 14, color: C.success }}>크루</span>
+          <span style={{ background: C.success, color: "#fff", borderRadius: 12, padding: "1px 8px", fontSize: 11, fontWeight: 700, marginLeft: 4 }}>{crews.length}명</span>
         </div>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-          <thead>
-            <tr style={{ background: C.navy }}>
-              {["이름", "이메일", "역할", "가입일", "관리"].map(h => (
-                <th key={h} style={{ padding: "8px 10px", color: C.white, fontWeight: 700, textAlign: "center" }}>{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {profiles.map((p, i) => (
-              <tr key={p.id} style={{ background: i % 2 ? C.bg : C.white }}>
-                <td style={{ padding: "8px 10px", fontWeight: 700 }}>
-                  {p.name}
-                  {p.id === user?.id && <span style={{ fontSize: 10, background: C.gold, color: C.dark, borderRadius: 4, padding: "1px 5px", marginLeft: 4, fontWeight: 800 }}>나</span>}
-                </td>
-                <td style={{ padding: "8px 10px", color: C.gray }}>{p.email}</td>
-                <td style={{ padding: "8px 10px", textAlign: "center" }}>
-                  <span style={{
-                    padding: "3px 10px", borderRadius: 10, fontSize: 11, fontWeight: 700,
-                    background: p.role === "super_admin" ? "#EDE7F6" : p.role === "admin" ? "#E3F2FD" : p.role === "crew" ? "#E8F5E9" : "#F5F5F5",
-                    color: p.role === "super_admin" ? "#7B1FA2" : p.role === "admin" ? C.navy : p.role === "crew" ? C.success : C.gray,
-                  }}>
-                    {ROLES[p.role] || p.role}
-                  </span>
-                  {p.role === "crew" && p.site_code && (
-                    <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>
-                      {p.site_code} {getSiteName(p.site_code)}
-                    </div>
-                  )}
-                </td>
-                <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{fmtDate(p.created_at)}</td>
-                <td style={{ padding: "8px 10px", textAlign: "center" }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-                    {/* 역할 변경 — 슈퍼어드민만, 자신·다른 슈퍼어드민 제외 */}
-                    {canChangeRole(p) ? (
-                      <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
-                        style={{ fontSize: 11, padding: "2px 4px", border: `1px solid ${C.border}`, borderRadius: 4 }}>
-                        <option value="admin">어드민</option>
-                        <option value="crew">크루</option>
-                      </select>
-                    ) : (
-                      <span style={{ fontSize: 11, color: C.border, minWidth: 60, display: "inline-block" }}>—</span>
-                    )}
-                    {/* 삭제 — 권한 있는 경우만 */}
-                    {canDelete(p) ? (
-                      <button onClick={async () => {
-                        if (await confirm(`${p.name}님 계정을 삭제하시겠습니까?`, "삭제 후 복구가 불가능합니다."))
-                          removeAdmin(p.id);
-                      }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: C.error }}>🗑</button>
-                    ) : (
-                      <span style={{ width: 20 }} />
-                    )}
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div style={{ padding: 14 }}>
+          {crews.length === 0 && <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: "12px 0" }}>없음</div>}
+
+          {/* 사업장별 그룹 */}
+          {Object.values(crewsBySite).map(({ site, list }) => (
+            <div key={site.code} style={{ marginBottom: 14 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, padding: "6px 10px", background: "#F0FFF4", borderRadius: 8, borderLeft: `3px solid ${C.success}` }}>
+                <span style={{ fontSize: 12, fontWeight: 900, color: C.success }}>{site.code}</span>
+                <span style={{ fontSize: 12, fontWeight: 800, color: C.dark }}>{site.name}</span>
+                <span style={{ fontSize: 11, color: C.gray, marginLeft: "auto" }}>{list.length}명</span>
+              </div>
+              {list.map(p => <AccountCard key={p.id} p={p} />)}
+            </div>
+          ))}
+
+          {/* 미배정 크루 */}
+          {unassigned.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.orange, marginBottom: 8, padding: "6px 10px", background: "#FFF8EE", borderRadius: 8, borderLeft: `3px solid ${C.orange}` }}>
+                ⚠️ 사업장 미배정 ({unassigned.length}명)
+              </div>
+              {unassigned.map(p => <AccountCard key={p.id} p={p} />)}
+            </div>
+          )}
+        </div>
       </div>
 
-      {/* 안내 */}
+      {/* 권한 안내 */}
       <div style={{ ...cardStyle, background: "#F0F4FF", border: `1px solid #D0D8F0` }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginBottom: 8 }}>💡 권한 안내</div>
-        <div style={{ fontSize: 11, color: C.gray, lineHeight: 2 }}>
-          <span style={{ display: "inline-block", background: "#EDE7F6", color: "#7B1FA2", borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 4 }}>슈퍼어드민</span>
+        <div style={{ fontSize: 11, color: C.gray, lineHeight: 2.2 }}>
+          <span style={{ display: "inline-block", background: "#EDE7F6", color: "#7B1FA2", borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 6 }}>슈퍼어드민</span>
           어드민·크루 계정 생성 · 역할 변경 · 전체 권한<br/>
-          <span style={{ display: "inline-block", background: "#E3F2FD", color: C.navy, borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 4 }}>어드민</span>
+          <span style={{ display: "inline-block", background: "#E3F2FD", color: C.navy, borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 6 }}>어드민</span>
           크루 계정 생성 · 전 사업장 일보 작성/수정<br/>
-          <span style={{ display: "inline-block", background: "#E8F5E9", color: C.success, borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 4 }}>크루</span>
+          <span style={{ display: "inline-block", background: "#E8F5E9", color: C.success, borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 6 }}>크루</span>
           본인 소속 사업장 일보 작성/수정만 가능
         </div>
       </div>
     </div>
   );
 }
+
 
 // ── 14. 재직증명서 ────────────────────────────────────
 function Certificate({ employees }) {
