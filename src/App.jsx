@@ -34,7 +34,7 @@ const SITES = [
   { code: "V010", name: "곽생로여성의원" }, { code: "V011", name: "금돈옥(청담)" },
   { code: "V012", name: "금돈옥(잠실)" }, { code: "V013", name: "써브라임" },
   { code: "V014", name: "더캐리" }, { code: "V015", name: "강서푸른빛성모어린이병원" },
-  { code: "V016", name: "SC제일은행PPC(압구정)" },
+  { code: "V016", name: "SC제일은행PPC(압구정)" }, { code: "V017", name: "금돈옥(방배)" },
 ];
 
 const WORK_CODES = [
@@ -3724,26 +3724,42 @@ function AdminInvitePanel() {
           {p.name}
           {p.id === user?.id && <span style={{ fontSize: 10, background: C.gold, color: C.dark, borderRadius: 4, padding: "1px 5px", fontWeight: 800 }}>나</span>}
         </div>
-        <div style={{ fontSize: 11, color: C.gray, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.email}</div>
+        {/* 이메일 대신 사번 표시 */}
+        <div style={{ fontSize: 11, color: C.navy, marginTop: 1, fontFamily: "monospace", fontWeight: 700 }}>
+          {p.emp_no || p.email?.split("@")[0]?.toUpperCase() || "—"}
+        </div>
         <div style={{ fontSize: 10, color: C.gray, marginTop: 1 }}>가입 {fmtDate(p.created_at)}</div>
       </div>
       {/* 관리 */}
-      {(canChangeRole(p) || canDelete(p)) && (
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-          {canChangeRole(p) && (
-            <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
-              style={{ fontSize: 11, padding: "3px 6px", border: `1px solid ${C.border}`, borderRadius: 6, background: C.white, cursor: "pointer" }}>
-              <option value="admin">어드민</option>
-              <option value="crew">크루</option>
-            </select>
-          )}
-          {canDelete(p) && (
-            <button onClick={async () => {
-              if (await confirm(`${p.name}님 계정을 삭제하시겠습니까?`, "삭제 후 복구 불가능합니다.")) removeAdmin(p.id);
-            }} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 7px", cursor: "pointer", fontSize: 13, color: C.error }}>🗑</button>
-          )}
-        </div>
-      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        {/* 크루 전용: 사업장 변경 드롭다운 */}
+        {p.role === "crew" && isSuperAdmin && (
+          <select value={p.site_code || ""}
+            onChange={async e => {
+              const { error } = await supabase.from("profiles").update({ site_code: e.target.value || null }).eq("id", p.id);
+              if (error) alert("사업장 변경 실패: " + error.message);
+              else await loadData();
+            }}
+            style={{ fontSize: 11, padding: "3px 6px", border: `1.5px solid ${p.site_code ? C.success : C.orange}`, borderRadius: 6, background: p.site_code ? "#F0FFF4" : "#FFF8EE", cursor: "pointer", maxWidth: 130 }}>
+            <option value="">— 사업장 미배정 —</option>
+            {SITES.filter(s => s.code !== "V000").map(s => (
+              <option key={s.code} value={s.code}>{s.code} {s.name}</option>
+            ))}
+          </select>
+        )}
+        {canChangeRole(p) && (
+          <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
+            style={{ fontSize: 11, padding: "3px 6px", border: `1px solid ${C.border}`, borderRadius: 6, background: C.white, cursor: "pointer" }}>
+            <option value="admin">어드민</option>
+            <option value="crew">크루</option>
+          </select>
+        )}
+        {canDelete(p) && (
+          <button onClick={async () => {
+            if (await confirm(`${p.name}님 계정을 삭제하시겠습니까?`, "삭제 후 복구 불가능합니다.")) removeAdmin(p.id);
+          }} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 7px", cursor: "pointer", fontSize: 13, color: C.error }}>🗑</button>
+        )}
+      </div>
     </div>
   );
 
