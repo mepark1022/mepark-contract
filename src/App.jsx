@@ -358,6 +358,27 @@ function AuthProvider({ children }) {
       }
 
       await loadData();
+
+      // ── v9.0: employees ↔ auth 동기화 ──
+      // 계정 생성 후 매칭되는 employee 레코드에 auth 정보 기록
+      if (empNo) {
+        try {
+          // 새로 생성된 profile 찾기
+          const { data: newProf } = await supabase.from("profiles")
+            .select("id, email, role").eq("email", email).single();
+          if (newProf) {
+            await supabase.from("employees").update({
+              auth_id: newProf.id,
+              system_role: newProf.role,
+              account_email: newProf.email,
+              account_status: "active",
+            }).eq("emp_no", empNo);
+          }
+        } catch (syncErr) {
+          console.warn("employees ↔ auth 동기화 실패 (무시):", syncErr);
+        }
+      }
+
       return { error: null };
     } catch (e) {
       return { error: e.message || "계정 생성 중 오류가 발생했습니다." };
@@ -421,6 +442,10 @@ function AuthProvider({ children }) {
       // Edge Function으로 Auth ban + profiles 삭제 동시 처리
       const { error: apiError } = await callAdminApi("ban_user", { userId: id });
       if (apiError) { alert("관리자 제거 실패: " + apiError); return; }
+      // v9.0: employees 계정 상태 비활성화
+      await supabase.from("employees").update({
+        account_status: "deactivated", system_role: "none", auth_id: null, account_email: null
+      }).eq("auth_id", id);
       await loadData();
     } catch (e) { alert("오류: " + e.message); }
   };
@@ -429,6 +454,8 @@ function AuthProvider({ children }) {
     try {
       const { error } = await supabase.from("profiles").update({ role }).eq("id", id);
       if (error) { alert("역할 변경 실패: " + error.message); return; }
+      // v9.0: employees.system_role 동기화
+      await supabase.from("employees").update({ system_role: role }).eq("auth_id", id);
       await loadData();
     } catch (e) { alert("오류: " + e.message); }
   };
@@ -1872,7 +1899,10 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
             {filtered.map((e, i) => (
               <tr key={e.id} style={{ background: i % 2 ? C.bg : C.white, borderBottom: `1px solid ${C.lightGray}` }}>
                 <td style={{ padding: "8px", fontWeight: 700, textAlign: "center" }}>{e.emp_no}</td>
-                <td style={{ padding: "8px", fontWeight: 700 }}>{e.name}</td>
+                <td style={{ padding: "8px", fontWeight: 700 }}>
+                  {e.name}
+                  {e.account_status === "active" && <span title={`계정: ${e.account_email || e.system_role}`} style={{ marginLeft: 4, fontSize: 9, padding: "1px 4px", borderRadius: 4, background: "#EDE7F6", color: "#7B1FA2", fontWeight: 800 }}>🔗</span>}
+                </td>
                 <td style={{ padding: "8px", textAlign: "center", color: C.gray }}>{e.position}</td>
                 <td style={{ padding: "8px", fontSize: 11 }}>{getSiteName(e.site_code_1)}</td>
                 <td style={{ padding: "8px", textAlign: "center" }}>
@@ -3830,9 +3860,12 @@ function AdminInvitePanel() {
     const results = [];
     for (const row of toUpdate) {
       const updateData = {};
-      if (row.newSite !== row.oldSite) updateData.site_code = row.newSite || null;
-      if (row.newWork !== row.oldWork) updateData.work_code = row.newWork || null;
+      const empUpdate = {};
+      if (row.newSite !== row.oldSite) { updateData.site_code = row.newSite || null; empUpdate.site_code_1 = row.newSite || null; }
+      if (row.newWork !== row.oldWork) { updateData.work_code = row.newWork || null; empUpdate.work_code = row.newWork || null; }
       const { error } = await supabase.from("profiles").update(updateData).eq("id", row.profileId);
+      // v9.0: employees 동기화
+      if (!error && Object.keys(empUpdate).length) await supabase.from("employees").update(empUpdate).eq("auth_id", row.profileId);
       results.push({ ...row, ok: !error, error: error?.message || "" });
     }
     setBulkEditResults(results);
@@ -3885,9 +3918,10 @@ function AdminInvitePanel() {
         {p.role === "crew" && isSuperAdmin && (
           <select value={p.site_code || ""}
             onChange={async e => {
-              const { error } = await supabase.from("profiles").update({ site_code: e.target.value || null }).eq("id", p.id);
+              const val = e.target.value || null;
+              const { error } = await supabase.from("profiles").update({ site_code: val }).eq("id", p.id);
               if (error) alert("사업장 변경 실패: " + error.message);
-              else await loadData();
+              else { await supabase.from("employees").update({ site_code_1: val }).eq("auth_id", p.id); await loadData(); }
             }}
             style={{ fontSize: 11, padding: "3px 6px", border: `1.5px solid ${p.site_code ? C.success : C.orange}`, borderRadius: 6, background: p.site_code ? "#F0FFF4" : "#FFF8EE", cursor: "pointer", maxWidth: 130 }}>
             <option value="">— 사업장 미배정 —</option>
@@ -3900,9 +3934,10 @@ function AdminInvitePanel() {
         {p.role === "crew" && isSuperAdmin && (
           <select value={p.work_code || ""}
             onChange={async e => {
-              const { error } = await supabase.from("profiles").update({ work_code: e.target.value || null }).eq("id", p.id);
+              const val = e.target.value || null;
+              const { error } = await supabase.from("profiles").update({ work_code: val }).eq("id", p.id);
               if (error) alert("근무형태 변경 실패: " + error.message);
-              else await loadData();
+              else { await supabase.from("employees").update({ work_code: val }).eq("auth_id", p.id); await loadData(); }
             }}
             style={{ fontSize: 11, padding: "3px 6px", border: `1.5px solid ${p.work_code ? C.navy : C.orange}`, borderRadius: 6, background: p.work_code ? "#EEF2FF" : "#FFF8EE", cursor: "pointer", maxWidth: 100 }}>
             <option value="">— 미설정 —</option>
