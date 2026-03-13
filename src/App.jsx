@@ -10909,10 +10909,9 @@ function AttendancePage({ employees }) {
                               return <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: catColor.bg, color: catColor.color, fontWeight: 800 }}>{wl}</span>;
                             })()}
                           </div>
-                          <div style={{ fontSize: 9, color: C.gray, fontWeight: 600, marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
+                          <div style={{ fontSize: 9, color: C.gray, fontWeight: 600, marginTop: 1 }}>
                             <span style={{ color: C.navy, fontWeight: 700 }}>{emp.emp_no || "—"}</span>
-                            {emp.position && emp.position !== "일반" && <span>· {emp.position}</span>}
-                            {emp.tax_type && <span>· {emp.tax_type}</span>}
+                            {emp.position && emp.position !== "일반" && <span> · {emp.position}</span>}
                           </div>
                         </td>
                         {dates.map(d => {
