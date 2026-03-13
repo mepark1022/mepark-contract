@@ -9593,6 +9593,7 @@ function MainApp() {
         { key: "site_management", icon: "🏢", label: "사업장 관리" },
         { key: "daily_report", icon: "📋", label: "현장 일보" },
         { key: "attendance", icon: "📊", label: "근태현황" },
+        { key: "full_calendar", icon: "📅", label: "전체 캘린더" },
       ];
 
   const calcNavItems = isCrewRole ? [] : [
@@ -9761,13 +9762,552 @@ function MainApp() {
         {page === "site_management" && <SiteManagementPage employees={employees} />}
         {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} />}
         {page === "attendance" && <AttendancePage employees={employees} />}
+        {page === "full_calendar" && <FullCalendarPage employees={employees} />}
         {page === "salary_calc" && <SalaryCalculatorPage />}
       </main>
     </div>
   );
 }
 
-// ── 16-6. 근태현황 (v8.4) ─────────────────────────────
+// ── 16-6-A. 전체 캘린더 (v8.5) ─────────────────────────
+
+function FullCalendarPage({ employees }) {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const [year, setYear] = useState(new Date().getFullYear());
+  const [month, setMonth] = useState(new Date().getMonth()); // 0-based
+  const [viewMode, setViewMode] = useState("all"); // all | site | employee
+  const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
+  const [selectedEmpId, setSelectedEmpId] = useState("");
+  const [reports, setReports] = useState([]);
+  const [staffRows, setStaffRows] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [hoveredDay, setHoveredDay] = useState(null);
+
+  // 활성 직원 목록 (재직자만, 본사 제외)
+  const activeFieldEmps = useMemo(() =>
+    employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000")
+      .sort((a, b) => (a.site_code_1 || "").localeCompare(b.site_code_1 || "") || (a.name || "").localeCompare(b.name || ""))
+  , [employees]);
+
+  // 활성 사업장 (재직자가 있는 사업장)
+  const activeSites = useMemo(() => {
+    const codes = new Set(activeFieldEmps.map(e => e.site_code_1));
+    return FIELD_SITES.filter(s => codes.has(s.code));
+  }, [activeFieldEmps]);
+
+  useEffect(() => {
+    if (!selectedEmpId && activeFieldEmps.length > 0) setSelectedEmpId(activeFieldEmps[0].id);
+  }, [activeFieldEmps]);
+
+  // 월 데이터 로딩
+  const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
+  useEffect(() => {
+    (async () => {
+      setLoading(true);
+      try {
+        const startDate = `${monthStr}-01`;
+        const nm = month === 11 ? 1 : month + 2;
+        const ny = month === 11 ? year + 1 : year;
+        const endDate = `${ny}-${String(nm).padStart(2, "0")}-01`;
+        const { data: reps } = await supabase.from("daily_reports").select("*")
+          .gte("report_date", startDate).lt("report_date", endDate).order("report_date");
+        const repList = reps || [];
+        setReports(repList);
+        if (repList.length > 0) {
+          const ids = repList.map(r => r.id);
+          const { data: staff } = await supabase.from("daily_report_staff").select("*").in("report_id", ids);
+          setStaffRows(staff || []);
+        } else {
+          setStaffRows([]);
+        }
+      } catch (e) { console.error("캘린더 로드 오류:", e); }
+      setLoading(false);
+    })();
+  }, [monthStr]);
+
+  // 캘린더 날짜 계산
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const firstDow = new Date(year, month, 1).getDay(); // 0=일
+  const calendarDays = useMemo(() => {
+    const days = [];
+    // 이전 달 빈 칸 (월요일 시작)
+    const startIdx = firstDow === 0 ? 6 : firstDow - 1;
+    for (let i = 0; i < startIdx; i++) days.push(null);
+    for (let d = 1; d <= daysInMonth; d++) days.push(d);
+    return days;
+  }, [year, month, daysInMonth, firstDow]);
+
+  const getDateStr = (d) => `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
+  // 날짜별 → 사업장별 일보 상태 맵
+  const reportMap = useMemo(() => {
+    const map = {}; // { "2026-03-10": { V001: { status, report, staffCount }, V002: ... } }
+    for (let d = 1; d <= daysInMonth; d++) {
+      const ds = getDateStr(d);
+      map[ds] = {};
+      const dayReps = reports.filter(r => r.report_date === ds);
+      dayReps.forEach(r => {
+        const stf = staffRows.filter(s => s.report_id === r.id);
+        map[ds][r.site_code] = { status: r.status, report: r, staffCount: stf.length, staff: stf };
+      });
+    }
+    return map;
+  }, [reports, staffRows, daysInMonth, monthStr]);
+
+  // 직원별 근무맵 (근무자별 뷰)
+  const empWorkMap = useMemo(() => {
+    const map = {}; // { empId: { "2026-03-10": { siteCode, status } } }
+    staffRows.forEach(sr => {
+      const rep = reports.find(r => r.id === sr.report_id);
+      if (!rep) return;
+      const empId = sr.employee_id;
+      if (!empId) return;
+      if (!map[empId]) map[empId] = {};
+      map[empId][rep.report_date] = {
+        siteCode: rep.site_code,
+        status: rep.status,
+        siteName: getSiteName(rep.site_code),
+      };
+    });
+    return map;
+  }, [reports, staffRows]);
+
+  // 월 이동
+  const prevMonth = () => { if (month === 0) { setYear(y => y - 1); setMonth(11); } else setMonth(m => m - 1); };
+  const nextMonth = () => { if (month === 11) { setYear(y => y + 1); setMonth(0); } else setMonth(m => m + 1); };
+  const goToday = () => { setYear(new Date().getFullYear()); setMonth(new Date().getMonth()); };
+
+  // 통계
+  const stats = useMemo(() => {
+    const totalReps = reports.length;
+    const confirmed = reports.filter(r => r.status === "confirmed").length;
+    const submitted = reports.filter(r => r.status === "submitted").length;
+    const uniqueStaff = new Set(staffRows.map(s => s.employee_id).filter(Boolean)).size;
+    const uniqueSites = new Set(reports.map(r => r.site_code)).size;
+    return { totalReps, confirmed, submitted, uniqueStaff, uniqueSites };
+  }, [reports, staffRows]);
+
+  // ── 날짜 셀 상태 결정 ──
+  const getDayStatus = (dayNum) => {
+    if (!dayNum) return null;
+    const ds = getDateStr(dayNum);
+    const dow = new Date(year, month, dayNum).getDay();
+    const holiday = isHoliday(ds);
+    const isSun = dow === 0;
+
+    if (viewMode === "all") {
+      const dayData = reportMap[ds] || {};
+      const siteEntries = Object.values(dayData);
+      if (siteEntries.length === 0) return { type: holiday ? "holiday" : isSun ? "sunday" : "empty", label: holiday ? (HOLIDAY_NAMES[ds] || "공휴일") : null };
+      const allConfirmed = siteEntries.every(e => e.status === "confirmed");
+      const hasConfirmed = siteEntries.some(e => e.status === "confirmed");
+      const totalStaff = siteEntries.reduce((s, e) => s + e.staffCount, 0);
+      if (allConfirmed) return { type: "confirmed", count: siteEntries.length, staff: totalStaff, holiday };
+      if (hasConfirmed) return { type: "partial", count: siteEntries.length, confirmed: siteEntries.filter(e => e.status === "confirmed").length, staff: totalStaff, holiday };
+      return { type: "submitted", count: siteEntries.length, staff: totalStaff, holiday };
+    }
+
+    if (viewMode === "site") {
+      const dayData = reportMap[ds] || {};
+      const entry = dayData[selectedSite];
+      if (!entry) return { type: holiday ? "holiday" : isSun ? "sunday" : "missing", label: holiday ? (HOLIDAY_NAMES[ds] || "공휴일") : null };
+      return { type: entry.status === "confirmed" ? "confirmed" : "submitted", staff: entry.staffCount, holiday };
+    }
+
+    if (viewMode === "employee") {
+      const empData = empWorkMap[selectedEmpId];
+      if (!empData || !empData[ds]) return { type: holiday ? "holiday" : isSun ? "sunday" : "off", label: holiday ? (HOLIDAY_NAMES[ds] || "공휴일") : null };
+      return { type: empData[ds].status === "confirmed" ? "confirmed" : "submitted", siteName: empData[ds].siteName, holiday };
+    }
+    return null;
+  };
+
+  // ── 셀 색상 ──
+  const cellColor = (status) => {
+    if (!status) return { bg: "transparent", text: C.gray };
+    switch (status.type) {
+      case "confirmed": return { bg: "#E8F5E9", text: C.success, border: "#A5D6A7" };
+      case "partial": return { bg: "#FFF3E0", text: C.orange, border: "#FFCC80" };
+      case "submitted": return { bg: "#FFF3E0", text: C.orange, border: "#FFCC80" };
+      case "missing": return { bg: "#FFEBEE", text: C.error, border: "#EF9A9A" };
+      case "holiday": return { bg: "#FFF0F0", text: "#D32F2F", border: "#FFCDD2" };
+      case "sunday": return { bg: "#FFF5F5", text: "#EF5350", border: "transparent" };
+      case "off": return { bg: "#F5F5F5", text: C.gray, border: "transparent" };
+      default: return { bg: "transparent", text: C.dark, border: "transparent" };
+    }
+  };
+
+  // ── 셀 내용 렌더 ──
+  const renderCellContent = (dayNum) => {
+    const status = getDayStatus(dayNum);
+    const color = cellColor(status);
+    const ds = dayNum ? getDateStr(dayNum) : "";
+    const isToday = ds === todayStr;
+
+    return (
+      <div
+        onMouseEnter={() => setHoveredDay(dayNum)}
+        onMouseLeave={() => setHoveredDay(null)}
+        style={{
+          minHeight: 72, padding: "4px 6px", borderRadius: 8, position: "relative",
+          background: isToday ? "#E3F2FD" : color.bg,
+          border: isToday ? `2px solid ${C.navy}` : `1px solid ${color.border || "#E8E8E8"}`,
+          transition: "all 0.15s",
+          cursor: "default",
+        }}
+      >
+        {/* 날짜 번호 */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 2 }}>
+          <span style={{
+            fontSize: 13, fontWeight: isToday ? 900 : 700, color: isToday ? C.navy : color.text,
+            width: isToday ? 24 : "auto", height: isToday ? 24 : "auto",
+            borderRadius: "50%", display: "inline-flex", alignItems: "center", justifyContent: "center",
+            background: isToday ? C.gold : "transparent",
+          }}>
+            {dayNum}
+          </span>
+          {status?.holiday && <span style={{ fontSize: 8, color: "#D32F2F", fontWeight: 700 }}>{HOLIDAY_NAMES[ds] || "공휴"}</span>}
+        </div>
+
+        {/* 상태 내용 */}
+        {status?.type === "confirmed" && viewMode === "all" && (
+          <div style={{ fontSize: 10, lineHeight: 1.4 }}>
+            <div style={{ color: C.success, fontWeight: 800 }}>✅ {status.count}업장</div>
+            <div style={{ color: C.gray, fontSize: 9 }}>{status.staff}명 근무</div>
+          </div>
+        )}
+        {status?.type === "partial" && viewMode === "all" && (
+          <div style={{ fontSize: 10, lineHeight: 1.4 }}>
+            <div style={{ color: C.orange, fontWeight: 800 }}>⚠️ {status.confirmed}/{status.count}확정</div>
+            <div style={{ color: C.gray, fontSize: 9 }}>{status.staff}명 근무</div>
+          </div>
+        )}
+        {status?.type === "submitted" && viewMode === "all" && (
+          <div style={{ fontSize: 10, lineHeight: 1.4 }}>
+            <div style={{ color: C.orange, fontWeight: 800 }}>📝 {status.count}업장</div>
+            <div style={{ color: C.gray, fontSize: 9 }}>{status.staff}명 근무</div>
+          </div>
+        )}
+        {viewMode === "site" && status?.type === "confirmed" && (
+          <div style={{ fontSize: 10 }}>
+            <div style={{ color: C.success, fontWeight: 800 }}>✅ 확정</div>
+            <div style={{ color: C.gray, fontSize: 9 }}>{status.staff}명</div>
+          </div>
+        )}
+        {viewMode === "site" && status?.type === "submitted" && (
+          <div style={{ fontSize: 10 }}>
+            <div style={{ color: C.orange, fontWeight: 800 }}>📝 제출</div>
+            <div style={{ color: C.gray, fontSize: 9 }}>{status.staff}명</div>
+          </div>
+        )}
+        {viewMode === "site" && status?.type === "missing" && !status.holiday && (
+          <div style={{ fontSize: 10, color: C.error, fontWeight: 700 }}>❌ 미제출</div>
+        )}
+        {viewMode === "employee" && status?.type === "confirmed" && (
+          <div style={{ fontSize: 9 }}>
+            <div style={{ color: C.success, fontWeight: 800 }}>✅ 출근</div>
+            <div style={{ color: C.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{status.siteName}</div>
+          </div>
+        )}
+        {viewMode === "employee" && status?.type === "submitted" && (
+          <div style={{ fontSize: 9 }}>
+            <div style={{ color: C.orange, fontWeight: 800 }}>📝 출근</div>
+            <div style={{ color: C.gray, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{status.siteName}</div>
+          </div>
+        )}
+        {viewMode === "employee" && status?.type === "off" && !status.holiday && (
+          <div style={{ fontSize: 10, color: "#BDBDBD" }}>—</div>
+        )}
+      </div>
+    );
+  };
+
+  // ── 툴팁 (hover) ──
+  const renderTooltip = () => {
+    if (!hoveredDay) return null;
+    const ds = getDateStr(hoveredDay);
+    const dayData = reportMap[ds] || {};
+    const entries = Object.entries(dayData);
+    if (entries.length === 0 && !isHoliday(ds)) return null;
+
+    return (
+      <div style={{
+        position: "fixed", bottom: 16, right: 16, zIndex: 100,
+        background: C.white, border: `1px solid ${C.border}`, borderRadius: 12,
+        padding: "12px 16px", boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+        maxWidth: 320, fontSize: 12,
+      }}>
+        <div style={{ fontWeight: 900, color: C.dark, marginBottom: 8, fontSize: 13 }}>
+          📅 {ds} {isHoliday(ds) ? `(${HOLIDAY_NAMES[ds]})` : ""}
+        </div>
+        {entries.length === 0 && <div style={{ color: C.gray }}>일보 없음</div>}
+        {entries.map(([siteCode, info]) => (
+          <div key={siteCode} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}>
+            <span style={{
+              display: "inline-block", width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+              background: info.status === "confirmed" ? C.success : C.orange,
+            }} />
+            <span style={{ fontWeight: 700, color: C.dark, minWidth: 80 }}>{getSiteName(siteCode)}</span>
+            <span style={{ color: C.gray }}>{info.staffCount}명</span>
+            <span style={{
+              fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 4,
+              background: info.status === "confirmed" ? "#E8F5E9" : "#FFF3E0",
+              color: info.status === "confirmed" ? C.success : C.orange,
+            }}>{info.status === "confirmed" ? "확정" : "미확정"}</span>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // ── 월간 사업장별 요약 테이블 ──
+  const monthlySiteTable = useMemo(() => {
+    return activeSites.map(site => {
+      const siteReps = reports.filter(r => r.site_code === site.code);
+      const confirmed = siteReps.filter(r => r.status === "confirmed").length;
+      const total = siteReps.length;
+      const siteStaff = staffRows.filter(s => siteReps.some(r => r.id === s.report_id));
+      const uniqueWorkers = new Set(siteStaff.map(s => s.employee_id).filter(Boolean)).size;
+      const totalValet = siteReps.filter(r => r.status === "confirmed").reduce((s, r) => s + toNum(r.valet_amount), 0);
+      // 근무일 중 미제출일 수
+      const workDays = [];
+      for (let d = 1; d <= daysInMonth; d++) {
+        const ds = getDateStr(d);
+        const dow = new Date(year, month, d).getDay();
+        if (dow !== 0 && !isHoliday(ds)) workDays.push(ds);
+      }
+      const submitted = new Set(siteReps.map(r => r.report_date));
+      const missing = workDays.filter(d => !submitted.has(d) && d <= todayStr).length;
+      return { code: site.code, name: site.name, total, confirmed, missing, uniqueWorkers, totalValet };
+    });
+  }, [reports, staffRows, activeSites, daysInMonth, monthStr]);
+
+  const viewBtns = [
+    { key: "all", icon: "🌐", label: "전체" },
+    { key: "site", icon: "🏢", label: "매장별" },
+    { key: "employee", icon: "👤", label: "근무자별" },
+  ];
+
+  return (
+    <div style={{ maxWidth: 1100, margin: "0 auto", padding: 24, fontFamily: FONT }}>
+      {/* 헤더 */}
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12, marginBottom: 20 }}>
+        <h2 style={{ fontSize: 22, fontWeight: 900, color: C.dark, margin: 0 }}>📅 전체 캘린더</h2>
+        <div style={{ display: "flex", gap: 6 }}>
+          {viewBtns.map(b => (
+            <button key={b.key} onClick={() => setViewMode(b.key)} style={{
+              padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${viewMode === b.key ? C.navy : C.border}`,
+              background: viewMode === b.key ? C.navy : C.white, color: viewMode === b.key ? C.white : C.dark,
+              fontSize: 12, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            }}>{b.icon} {b.label}</button>
+          ))}
+        </div>
+      </div>
+
+      {/* 뷰 필터 */}
+      {viewMode === "site" && (
+        <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>🏢 사업장</span>
+          <select value={selectedSite} onChange={e => setSelectedSite(e.target.value)}
+            style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: FONT, fontWeight: 700 }}>
+            {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+          </select>
+        </div>
+      )}
+      {viewMode === "employee" && (
+        <div style={{ marginBottom: 16, display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>👤 근무자</span>
+          <select value={selectedEmpId} onChange={e => setSelectedEmpId(e.target.value)}
+            style={{ padding: "6px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: FONT, fontWeight: 700, maxWidth: 280 }}>
+            {activeFieldEmps.map(e => <option key={e.id} value={e.id}>[{e.site_code_1}] {e.name} ({e.emp_no})</option>)}
+          </select>
+        </div>
+      )}
+
+      {/* KPI 스트립 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 20 }}>
+        {[
+          { icon: "📋", label: "제출 일보", value: stats.totalReps, unit: "건", color: C.navy },
+          { icon: "✅", label: "확정", value: stats.confirmed, unit: "건", color: C.success },
+          { icon: "📝", label: "미확정", value: stats.submitted, unit: "건", color: C.orange },
+          { icon: "👥", label: "출근 인원", value: stats.uniqueStaff, unit: "명", color: C.blue },
+          { icon: "🏢", label: "운영 사업장", value: stats.uniqueSites, unit: "개", color: C.skyBlue },
+        ].map((k, i) => (
+          <div key={i} style={{ background: C.white, borderRadius: 12, padding: "14px 16px", border: `1px solid ${C.lightGray}`, textAlign: "center" }}>
+            <div style={{ fontSize: 11, color: C.gray, marginBottom: 4, fontWeight: 700 }}>{k.icon} {k.label}</div>
+            <div style={{ fontSize: 22, fontWeight: 900, color: k.color, fontFamily: "monospace" }}>
+              {k.value}<span style={{ fontSize: 11, fontWeight: 600, color: C.gray }}>{k.unit}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* 범례 */}
+      <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: C.gray }}>범례:</span>
+        {[
+          { color: "#E8F5E9", border: "#A5D6A7", label: "확정", dot: C.success },
+          { color: "#FFF3E0", border: "#FFCC80", label: "미확정", dot: C.orange },
+          { color: "#FFEBEE", border: "#EF9A9A", label: "미제출", dot: C.error },
+          { color: "#FFF0F0", border: "#FFCDD2", label: "공휴일", dot: "#D32F2F" },
+        ].map((l, i) => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <div style={{ width: 16, height: 16, borderRadius: 4, background: l.color, border: `1px solid ${l.border}` }} />
+            <span style={{ fontSize: 11, color: C.dark, fontWeight: 600 }}>{l.label}</span>
+          </div>
+        ))}
+      </div>
+
+      {/* 월 네비게이션 */}
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16, marginBottom: 16 }}>
+        <button onClick={prevMonth} style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 16, fontWeight: 700, color: C.dark, fontFamily: FONT }}>◀</button>
+        <div style={{ fontSize: 20, fontWeight: 900, color: C.navy, minWidth: 160, textAlign: "center" }}>
+          {year}년 {month + 1}월
+        </div>
+        <button onClick={nextMonth} style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 16, fontWeight: 700, color: C.dark, fontFamily: FONT }}>▶</button>
+        <button onClick={goToday} style={{
+          padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`,
+          background: C.navy, color: C.white, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+        }}>오늘</button>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 40, color: C.gray }}>로딩 중...</div>}
+
+      {/* 캘린더 그리드 */}
+      {!loading && (
+        <div style={{ background: C.white, borderRadius: 16, border: `1px solid ${C.lightGray}`, overflow: "hidden", marginBottom: 24 }}>
+          {/* 요일 헤더 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", borderBottom: `2px solid ${C.navy}` }}>
+            {["월", "화", "수", "목", "금", "토", "일"].map((d, i) => (
+              <div key={d} style={{
+                padding: "10px 0", textAlign: "center", fontSize: 12, fontWeight: 900,
+                color: i === 6 ? C.error : i === 5 ? C.blue : C.dark,
+                background: C.navy + "0A",
+              }}>{d}</div>
+            ))}
+          </div>
+          {/* 날짜 셀 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 2, padding: 4 }}>
+            {calendarDays.map((dayNum, idx) => (
+              <div key={idx}>
+                {dayNum ? renderCellContent(dayNum) : <div style={{ minHeight: 72 }} />}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* 월간 사업장별 요약 테이블 */}
+      {!loading && viewMode === "all" && monthlySiteTable.length > 0 && (
+        <div style={{ background: C.white, borderRadius: 16, border: `1px solid ${C.lightGray}`, overflow: "hidden" }}>
+          <div style={{ padding: "14px 20px", borderBottom: `2px solid ${C.navy}`, background: C.navy + "08" }}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: C.dark }}>📊 {month + 1}월 사업장별 일보 현황</span>
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: C.navy, color: C.white }}>
+                  {["#", "사업장", "제출", "확정", "미제출", "근무인원", "확정발렛비"].map((h, i) => (
+                    <th key={i} style={{ padding: "10px 8px", fontWeight: 800, textAlign: i >= 2 ? "center" : "left", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {monthlySiteTable.map((row, i) => (
+                  <tr key={row.code} style={{ borderBottom: `1px solid ${C.lightGray}`, background: i % 2 === 0 ? C.white : "#FAFBFC" }}>
+                    <td style={{ padding: "9px 8px", fontWeight: 700, color: C.gray, width: 32 }}>{i + 1}</td>
+                    <td style={{ padding: "9px 8px", fontWeight: 800, color: C.dark }}>
+                      <span style={{ fontSize: 10, color: C.gray, marginRight: 4 }}>{row.code}</span>{row.name}
+                    </td>
+                    <td style={{ padding: "9px 8px", textAlign: "center", fontWeight: 700, color: C.navy }}>{row.total}</td>
+                    <td style={{ padding: "9px 8px", textAlign: "center" }}>
+                      <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 800, background: row.confirmed === row.total && row.total > 0 ? "#E8F5E9" : "#FFF3E0", color: row.confirmed === row.total && row.total > 0 ? C.success : C.orange }}>
+                        {row.confirmed}
+                      </span>
+                    </td>
+                    <td style={{ padding: "9px 8px", textAlign: "center" }}>
+                      {row.missing > 0 ? <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 800, background: "#FFEBEE", color: C.error }}>{row.missing}</span> : <span style={{ color: "#BDBDBD" }}>0</span>}
+                    </td>
+                    <td style={{ padding: "9px 8px", textAlign: "center", fontWeight: 700, color: C.dark }}>{row.uniqueWorkers}명</td>
+                    <td style={{ padding: "9px 8px", textAlign: "right", fontWeight: 800, color: C.navy, fontFamily: "monospace" }}>{fmt(row.totalValet)}원</td>
+                  </tr>
+                ))}
+                {/* 합계행 */}
+                <tr style={{ background: C.navy + "0D", borderTop: `2px solid ${C.navy}` }}>
+                  <td colSpan={2} style={{ padding: "10px 8px", fontWeight: 900, color: C.navy }}>합계</td>
+                  <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, color: C.navy }}>{monthlySiteTable.reduce((s, r) => s + r.total, 0)}</td>
+                  <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, color: C.success }}>{monthlySiteTable.reduce((s, r) => s + r.confirmed, 0)}</td>
+                  <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, color: C.error }}>{monthlySiteTable.reduce((s, r) => s + r.missing, 0)}</td>
+                  <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, color: C.dark }}>{monthlySiteTable.reduce((s, r) => s + r.uniqueWorkers, 0)}명</td>
+                  <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(monthlySiteTable.reduce((s, r) => s + r.totalValet, 0))}원</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 근무자별 뷰 — 월간 출근 요약 */}
+      {!loading && viewMode === "employee" && selectedEmpId && (
+        <div style={{ background: C.white, borderRadius: 16, border: `1px solid ${C.lightGray}`, overflow: "hidden" }}>
+          <div style={{ padding: "14px 20px", borderBottom: `2px solid ${C.navy}`, background: C.navy + "08" }}>
+            <span style={{ fontSize: 14, fontWeight: 900, color: C.dark }}>
+              👤 {employees.find(e => e.id === selectedEmpId)?.name || "—"} — {month + 1}월 출근 현황
+            </span>
+          </div>
+          <div style={{ padding: 20 }}>
+            {(() => {
+              const empData = empWorkMap[selectedEmpId] || {};
+              const workDays = Object.entries(empData).filter(([d]) => d.startsWith(monthStr));
+              const confirmedDays = workDays.filter(([, v]) => v.status === "confirmed").length;
+              const submittedDays = workDays.filter(([, v]) => v.status === "submitted").length;
+              const siteSummary = {};
+              workDays.forEach(([, v]) => {
+                const key = v.siteCode;
+                if (!siteSummary[key]) siteSummary[key] = { name: v.siteName, count: 0 };
+                siteSummary[key].count++;
+              });
+              return (
+                <div>
+                  <div style={{ display: "flex", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
+                    <div style={{ padding: "10px 20px", borderRadius: 10, background: "#E8F5E9", textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: C.success }}>{confirmedDays}</div>
+                      <div style={{ fontSize: 11, color: C.gray, fontWeight: 700 }}>확정 출근</div>
+                    </div>
+                    <div style={{ padding: "10px 20px", borderRadius: 10, background: "#FFF3E0", textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: C.orange }}>{submittedDays}</div>
+                      <div style={{ fontSize: 11, color: C.gray, fontWeight: 700 }}>미확정 출근</div>
+                    </div>
+                    <div style={{ padding: "10px 20px", borderRadius: 10, background: "#E3F2FD", textAlign: "center" }}>
+                      <div style={{ fontSize: 22, fontWeight: 900, color: C.navy }}>{workDays.length}</div>
+                      <div style={{ fontSize: 11, color: C.gray, fontWeight: 700 }}>총 출근일</div>
+                    </div>
+                  </div>
+                  {Object.entries(siteSummary).length > 0 && (
+                    <div>
+                      <div style={{ fontSize: 12, fontWeight: 800, color: C.dark, marginBottom: 8 }}>사업장별 출근</div>
+                      {Object.entries(siteSummary).map(([code, s]) => (
+                        <div key={code} style={{ display: "flex", alignItems: "center", gap: 10, padding: "6px 0", borderBottom: `1px solid ${C.lightGray}` }}>
+                          <span style={{ fontSize: 10, color: C.gray, fontWeight: 700, minWidth: 36 }}>{code}</span>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: C.dark, flex: 1 }}>{s.name}</span>
+                          <span style={{ fontSize: 13, fontWeight: 900, color: C.navy }}>{s.count}일</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
+      {renderTooltip()}
+    </div>
+  );
+}
+
+// ── 16-6-B. 근태현황 (v8.4) ─────────────────────────────
 
 // 2026년 법정공휴일
 const HOLIDAYS_2026 = new Set([
