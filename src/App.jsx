@@ -10842,10 +10842,10 @@ function AttendancePage({ employees }) {
       {/* 캘린더 그리드 테이블 */}
       <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", minWidth: daysInMonth * 40 + 200, width: "100%" }}>
+          <table style={{ borderCollapse: "collapse", minWidth: daysInMonth * 40 + 230, width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left", minWidth: 120 }}>
+                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left", minWidth: 150 }}>
                   근무자
                 </th>
                 {dates.map(d => {
@@ -10880,6 +10880,12 @@ function AttendancePage({ employees }) {
                   <tr>
                     <td colSpan={daysInMonth + 2} style={{ padding: "6px 12px", background: "#EEF1F8", fontSize: 11, fontWeight: 800, color: C.navy, borderBottom: "1px solid #E8ECF4" }}>
                       🏢 {group.name} <span style={{ color: C.gray, fontWeight: 600 }}>({group.code}) · {group.emps.length}명</span>
+                      <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 600 }}>
+                        <span style={{ color: "#1565C0" }}>평{group.emps.filter(e => getWorkCat(e.work_code) === "weekday").length}</span>
+                        <span style={{ color: "#E65100", marginLeft: 4 }}>주{group.emps.filter(e => getWorkCat(e.work_code) === "weekend").length}</span>
+                        {group.emps.filter(e => getWorkCat(e.work_code) === "mixed").length > 0 && <span style={{ color: "#7B1FA2", marginLeft: 4 }}>복합{group.emps.filter(e => getWorkCat(e.work_code) === "mixed").length}</span>}
+                        {group.emps.filter(e => getWorkCat(e.work_code) === "parttime").length > 0 && <span style={{ color: "#2E7D32", marginLeft: 4 }}>알바{group.emps.filter(e => getWorkCat(e.work_code) === "parttime").length}</span>}
+                      </span>
                     </td>
                   </tr>
                   {group.emps.map((emp, idx) => {
@@ -10891,16 +10897,23 @@ function AttendancePage({ employees }) {
                     return (
                       <tr key={emp.id} style={{ background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
                         <td style={{
-                          position: "sticky", left: 0, zIndex: 5, padding: "6px 10px", fontSize: 12, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
-                          background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap",
+                          position: "sticky", left: 0, zIndex: 5, padding: "5px 8px", fontSize: 12, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
+                          background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap", minWidth: 150,
                         }}>
-                          {emp.name}
-                          {emp.work_code && (() => {
-                            const cat = getWorkCat(emp.work_code);
-                            const wl = WORK_CODES.find(w => w.code === emp.work_code)?.label || emp.work_code;
-                            const catColor = cat === "weekday" ? { bg: "#E3F2FD", color: "#1565C0" } : cat === "weekend" ? { bg: "#FFF3E0", color: "#E65100" } : cat === "mixed" ? { bg: "#F3E5F5", color: "#7B1FA2" } : { bg: "#E8F5E9", color: "#2E7D32" };
-                            return <span style={{ marginLeft: 4, fontSize: 9, padding: "1px 5px", borderRadius: 4, background: catColor.bg, color: catColor.color, fontWeight: 800 }}>{wl}</span>;
-                          })()}
+                          <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ fontWeight: 800, fontSize: 12 }}>{emp.name}</span>
+                            {emp.work_code && (() => {
+                              const cat = getWorkCat(emp.work_code);
+                              const wl = WORK_CODES.find(w => w.code === emp.work_code)?.label || emp.work_code;
+                              const catColor = cat === "weekday" ? { bg: "#E3F2FD", color: "#1565C0" } : cat === "weekend" ? { bg: "#FFF3E0", color: "#E65100" } : cat === "mixed" ? { bg: "#F3E5F5", color: "#7B1FA2" } : { bg: "#E8F5E9", color: "#2E7D32" };
+                              return <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, background: catColor.bg, color: catColor.color, fontWeight: 800 }}>{wl}</span>;
+                            })()}
+                          </div>
+                          <div style={{ fontSize: 9, color: C.gray, fontWeight: 600, marginTop: 1, display: "flex", alignItems: "center", gap: 4 }}>
+                            <span style={{ color: C.navy, fontWeight: 700 }}>{emp.emp_no || "—"}</span>
+                            {emp.position && emp.position !== "일반" && <span>· {emp.position}</span>}
+                            {emp.tax_type && <span>· {emp.tax_type}</span>}
+                          </div>
                         </td>
                         {dates.map(d => {
                           const st = getCellStatus(emp.id, d.dateStr);
