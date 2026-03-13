@@ -1727,8 +1727,8 @@ function Dashboard({ employees }) {
 }
 
 // ── 11. 직원대장 ──────────────────────────────────────
-function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign, onReload }) {
-  const { can } = useAuth();
+function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign, onReload, onNavigate }) {
+  const { can, callAdminApi, createAccount, updateRole, profiles, loadData: reloadAuth } = useAuth();
   const confirm = useConfirm();
   const [filter, setFilter] = useState({ site: "", cat: "", status: "재직", tax: "", search: "" });
   const [editEmp, setEditEmp] = useState(null);
@@ -1736,11 +1736,102 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   const [showImport, setShowImport] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // ── v9.0 Phase 2: 5탭 상세 패널 ──
+  const [selectedEmp, setSelectedEmp] = useState(null);
+  const [detailTab, setDetailTab] = useState("basic");
+  const [empContracts, setEmpContracts] = useState([]);
+  const [contractsLoading, setContractsLoading] = useState(false);
+  const [accountLoading, setAccountLoading] = useState(false);
+  const [accountForm, setAccountForm] = useState({ email: "", password: "", role: "field_member" });
+  const [accountMsg, setAccountMsg] = useState("");
+
   const blankEmp = {
     emp_no: "", name: "", position: "일반", site_code_1: "", work_code: "C",
     hire_date: today(), status: "재직", base_salary: 0, weekend_daily: 0,
     meal_allow: 200000, leader_allow: 0, childcare_allow: 0, car_allow: 0,
     tax_type: "3.3%", employment_type: "정규직", phone: "", probation_months: 4,
+  };
+
+  // ── v9.0 Phase 2: 상세 패널 함수 ──
+  const openDetail = async (emp) => {
+    setSelectedEmp(emp);
+    setDetailTab("basic");
+    setAccountMsg("");
+    setAccountForm({ email: emp.account_email || "", password: "", role: emp.system_role || "field_member" });
+    // 계약이력 로드
+    setContractsLoading(true);
+    try {
+      const { data } = await supabase.from("contracts").select("*").eq("emp_no", emp.emp_no).order("updated_at", { ascending: false });
+      setEmpContracts(data || []);
+    } catch (e) { setEmpContracts([]); }
+    setContractsLoading(false);
+  };
+
+  // 계정 생성
+  const handleCreateAccount = async () => {
+    if (!accountForm.email || !accountForm.password) { setAccountMsg("❌ 이메일과 비밀번호를 입력하세요."); return; }
+    if (accountForm.password.length < 6) { setAccountMsg("❌ 비밀번호 6자 이상 입력하세요."); return; }
+    setAccountLoading(true); setAccountMsg("");
+    const { error } = await createAccount(selectedEmp.name, accountForm.email, accountForm.password, accountForm.role, {
+      emp_no: selectedEmp.emp_no, site_code: selectedEmp.site_code_1, employee_id: selectedEmp.id, work_code: selectedEmp.work_code,
+    });
+    if (error) { setAccountMsg("❌ " + error); }
+    else {
+      setAccountMsg("✅ 계정 생성 완료!");
+      if (onReload) await onReload();
+      // selectedEmp 갱신
+      const { data: updated } = await supabase.from("employees").select("*").eq("id", selectedEmp.id).single();
+      if (updated) setSelectedEmp(updated);
+    }
+    setAccountLoading(false);
+  };
+
+  // 비밀번호 초기화
+  const handleResetPw = async () => {
+    if (!selectedEmp.auth_id) return;
+    const ok = await confirm("비밀번호를 초기화하시겠습니까?", "초기화 후 본인에게 임시 비밀번호를 전달해주세요.");
+    if (!ok) return;
+    setAccountLoading(true); setAccountMsg("");
+    const tempPw = "mepark" + Math.random().toString(36).slice(2, 8);
+    const { error } = await callAdminApi("reset_password", { userId: selectedEmp.auth_id, newPassword: tempPw });
+    if (error) setAccountMsg("❌ " + error);
+    else setAccountMsg(`✅ 임시 비밀번호: ${tempPw} (본인에게 전달하세요)`);
+    setAccountLoading(false);
+  };
+
+  // 계정 정지/해제
+  const handleToggleBan = async () => {
+    if (!selectedEmp.auth_id) return;
+    const isBanned = selectedEmp.account_status === "banned";
+    const action = isBanned ? "unban_user" : "ban_user";
+    const msg = isBanned ? "계정을 활성화하시겠습니까?" : "계정을 정지하시겠습니까?";
+    const ok = await confirm(msg, isBanned ? "로그인이 다시 가능해집니다." : "해당 직원은 로그인할 수 없게 됩니다.");
+    if (!ok) return;
+    setAccountLoading(true); setAccountMsg("");
+    const { error } = await callAdminApi(action, { userId: selectedEmp.auth_id });
+    if (error) { setAccountMsg("❌ " + error); }
+    else {
+      const newStatus = isBanned ? "active" : "banned";
+      await supabase.from("employees").update({ account_status: newStatus }).eq("id", selectedEmp.id);
+      setAccountMsg(isBanned ? "✅ 계정 활성화 완료" : "✅ 계정 정지 완료");
+      if (onReload) await onReload();
+      const { data: updated } = await supabase.from("employees").select("*").eq("id", selectedEmp.id).single();
+      if (updated) setSelectedEmp(updated);
+    }
+    setAccountLoading(false);
+  };
+
+  // 역할 변경
+  const handleChangeRole = async (newRole) => {
+    if (!selectedEmp.auth_id || selectedEmp.system_role === newRole) return;
+    setAccountLoading(true); setAccountMsg("");
+    await updateRole(selectedEmp.auth_id, newRole);
+    await supabase.from("employees").update({ system_role: newRole }).eq("id", selectedEmp.id);
+    setAccountMsg("✅ 역할 변경 완료: " + newRole);
+    if (onReload) await onReload();
+    const { data: updated } = await supabase.from("employees").select("*").eq("id", selectedEmp.id).single();
+    if (updated) setSelectedEmp(updated);
+    setAccountLoading(false);
   };
 
   const filtered = employees.filter(e => {
@@ -1897,7 +1988,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
           </thead>
           <tbody>
             {filtered.map((e, i) => (
-              <tr key={e.id} style={{ background: i % 2 ? C.bg : C.white, borderBottom: `1px solid ${C.lightGray}` }}>
+              <tr key={e.id} onClick={() => openDetail(e)} style={{ background: selectedEmp?.id === e.id ? "#EFF6FF" : (i % 2 ? C.bg : C.white), borderBottom: `1px solid ${C.lightGray}`, cursor: "pointer", transition: "background 0.15s" }}>
                 <td style={{ padding: "8px", fontWeight: 700, textAlign: "center" }}>{e.emp_no}</td>
                 <td style={{ padding: "8px", fontWeight: 700 }}>
                   {e.name}
@@ -1938,8 +2029,266 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
             )}
           </tbody>
         </table>
-        <div style={{ textAlign: "right", padding: "8px 0", fontSize: 12, color: C.gray }}>총 {filtered.length}명</div>
+        <div style={{ textAlign: "right", padding: "8px 0", fontSize: 12, color: C.gray }}>총 {filtered.length}명 {selectedEmp && <span style={{ marginLeft: 8, color: C.navy, fontWeight: 700, cursor: "pointer" }} onClick={() => setSelectedEmp(null)}>✕ 상세 닫기</span>}</div>
       </div>
+
+      {/* ── v9.0 Phase 2: 5탭 상세 패널 (슬라이드 오버) ── */}
+      {selectedEmp && (() => {
+        const se = employees.find(x => x.id === selectedEmp.id) || selectedEmp;
+        const DETAIL_TABS = [
+          { key: "basic", icon: "👤", label: "기본정보" },
+          { key: "salary", icon: "💰", label: "급여조건" },
+          { key: "account", icon: "🔐", label: "계정관리" },
+          { key: "contracts", icon: "📋", label: "계약이력" },
+          { key: "docs", icon: "📄", label: "문서" },
+        ];
+        const labelSt = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" };
+        const valSt = { fontSize: 13, fontWeight: 700, color: C.dark, padding: "6px 0" };
+        const sectionBox = { background: C.white, borderRadius: 12, padding: "16px 18px", marginBottom: 12, border: `1.5px solid ${C.lightGray}` };
+        const sectionTitle = (icon, title) => <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 12, display: "flex", alignItems: "center", gap: 6 }}>{icon} {title}</div>;
+        const infoRow = (label, val) => <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "5px 0", borderBottom: `1px solid ${C.bg}` }}><span style={{ fontSize: 11, color: C.gray }}>{label}</span><span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{val || "—"}</span></div>;
+
+        return (
+          <div style={{ position: "fixed", top: 0, right: 0, bottom: 0, width: 480, maxWidth: "95vw", background: "#F5F6FA", boxShadow: "-4px 0 30px rgba(0,0,0,0.15)", zIndex: 900, display: "flex", flexDirection: "column", fontFamily: FONT }}>
+            {/* 헤더 */}
+            <div style={{ background: C.navy, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
+              <div>
+                <div style={{ color: C.white, fontSize: 16, fontWeight: 900 }}>{se.name} <span style={{ fontSize: 12, fontWeight: 500, color: C.gold }}>{se.emp_no}</span></div>
+                <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 2 }}>{getSiteName(se.site_code_1)} · {getWorkLabel(se.work_code)} · <span style={{ color: se.status === "재직" ? "#81C784" : "#EF9A9A" }}>{se.status}</span></div>
+              </div>
+              <button onClick={() => setSelectedEmp(null)} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", fontSize: 16, fontWeight: 700, width: 32, height: 32, borderRadius: 8, cursor: "pointer" }}>✕</button>
+            </div>
+
+            {/* 탭 바 */}
+            <div style={{ display: "flex", background: C.white, borderBottom: `1.5px solid ${C.lightGray}`, flexShrink: 0, overflowX: "auto" }}>
+              {DETAIL_TABS.map(t => (
+                <button key={t.key} onClick={() => setDetailTab(t.key)} style={{
+                  flex: 1, padding: "10px 4px", fontSize: 11, fontWeight: detailTab === t.key ? 800 : 600,
+                  color: detailTab === t.key ? C.navy : C.gray, background: "none", border: "none",
+                  borderBottom: detailTab === t.key ? `2.5px solid ${C.navy}` : "2.5px solid transparent",
+                  cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT,
+                }}>{t.icon} {t.label}</button>
+              ))}
+            </div>
+
+            {/* 탭 콘텐츠 */}
+            <div style={{ flex: 1, overflowY: "auto", padding: "16px 18px" }}>
+
+              {/* ① 기본정보 */}
+              {detailTab === "basic" && (
+                <div>
+                  <div style={sectionBox}>
+                    {sectionTitle("👤", "인적사항")}
+                    {infoRow("사번", se.emp_no)}
+                    {infoRow("이름", se.name)}
+                    {infoRow("직위", se.position)}
+                    {infoRow("연락처", se.phone)}
+                    {infoRow("사업장", `${se.site_code_1} ${getSiteName(se.site_code_1)}`)}
+                    {infoRow("근무형태", `${se.work_code} — ${getWorkLabel(se.work_code)}`)}
+                    {infoRow("입사일", se.hire_date || "—")}
+                    {infoRow("근무조건", se.employment_type)}
+                    {infoRow("수습기간", se.probation_months ? `${se.probation_months}개월` : "없음")}
+                    {se.probation_end && infoRow("수습종료일", se.probation_end)}
+                    {infoRow("상태", se.status)}
+                    {se.resign_date && infoRow("퇴사일", se.resign_date)}
+                  </div>
+                  <div style={sectionBox}>
+                    {sectionTitle("📋", "세금/보험")}
+                    {infoRow("신고유형", se.tax_type)}
+                    {se.reporter_name && infoRow("신고자명", se.reporter_name)}
+                    {se.reporter_rrn && infoRow("신고자 주민번호", se.reporter_rrn)}
+                    {infoRow("보험 취득일", se.insurance_enroll_date || "미등록")}
+                    {infoRow("보험 상실일", se.insurance_loss_date || "—")}
+                  </div>
+                  {se.memo && <div style={sectionBox}>{sectionTitle("📝", "메모")}<div style={{ fontSize: 12, color: C.dark, whiteSpace: "pre-wrap" }}>{se.memo}</div></div>}
+                  <div style={{ textAlign: "center", paddingTop: 8 }}>
+                    <button onClick={() => { setEditEmp({ ...se }); setShowForm(true); }} style={{ ...btnPrimary, padding: "10px 32px", fontSize: 13 }}>✏️ 정보 수정</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ② 급여조건 */}
+              {detailTab === "salary" && (
+                <div>
+                  <div style={sectionBox}>
+                    {sectionTitle("💵", "기본 급여")}
+                    {infoRow("기본급(월급)", se.base_salary ? fmt(se.base_salary) + "원" : "—")}
+                    {infoRow("주말일당", se.weekend_daily ? fmt(se.weekend_daily) + "원" : "—")}
+                    {infoRow("식대", se.meal_allow ? fmt(se.meal_allow) + "원" : "—")}
+                    {infoRow("팀장수당", se.leader_allow ? fmt(se.leader_allow) + "원" : "—")}
+                    {infoRow("보육수당", se.childcare_allow ? fmt(se.childcare_allow) + "원" : "—")}
+                    {infoRow("자가운전보조금", se.car_allow ? fmt(se.car_allow) + "원" : "—")}
+                  </div>
+                  <div style={sectionBox}>
+                    {sectionTitle("💰", "급여대장 연동 조건")}
+                    {infoRow("평일수당(월급)", se.weekday_pay ? fmt(se.weekday_pay) + "원" : "—")}
+                    {infoRow("주말수당(일당)", se.weekend_pay ? fmt(se.weekend_pay) + "원" : "—")}
+                    {infoRow("명절상여", se.holiday_bonus ? fmt(se.holiday_bonus) + "원" : "—")}
+                    {infoRow("인센티브", se.incentive ? fmt(se.incentive) + "원" : "—")}
+                    {infoRow("급여식대", se.meal ? fmt(se.meal) + "원" : "—")}
+                    {infoRow("보육수당", se.childcare ? fmt(se.childcare) + "원" : "—")}
+                    {infoRow("자가운전보조", se.car_allowance ? fmt(se.car_allowance) + "원" : "—")}
+                    {infoRow("기타수당", se.extra1 ? fmt(se.extra1) + "원" : "—")}
+                    {infoRow("팀장수당(급여)", se.team_allowance ? fmt(se.team_allowance) + "원" : "—")}
+                  </div>
+                  <div style={sectionBox}>
+                    {sectionTitle("🏦", "계좌정보")}
+                    {infoRow("예금주", se.account_holder || "미등록")}
+                    {infoRow("은행명", se.bank_name || "미등록")}
+                    {infoRow("계좌번호", se.account_number || "미등록")}
+                    {infoRow("타인 입금", se.is_third_party_payment ? "✅ 예" : "아니오")}
+                    {(!se.account_holder || !se.bank_name || !se.account_number) && (
+                      <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF3E0", borderRadius: 8, fontSize: 11, color: C.orange, fontWeight: 700 }}>⚠️ 계좌정보가 미등록입니다. 급여이체 시 누락됩니다.</div>
+                    )}
+                  </div>
+                  <div style={{ textAlign: "center", paddingTop: 8 }}>
+                    <button onClick={() => { setEditEmp({ ...se }); setShowForm(true); }} style={{ ...btnPrimary, padding: "10px 32px", fontSize: 13 }}>✏️ 급여조건 수정</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ③ 계정관리 */}
+              {detailTab === "account" && (
+                <div>
+                  {se.auth_id ? (
+                    <>
+                      {/* 계정 있음 */}
+                      <div style={sectionBox}>
+                        {sectionTitle("🔗", "연결된 계정")}
+                        {infoRow("이메일", se.account_email)}
+                        {infoRow("시스템 역할", se.system_role)}
+                        {infoRow("계정 상태", se.account_status === "active" ? "✅ 활성" : se.account_status === "banned" ? "🚫 정지" : se.account_status)}
+                        {infoRow("Auth ID", se.auth_id?.slice(0, 8) + "...")}
+                      </div>
+                      {can("manage_admins") && (
+                        <div style={sectionBox}>
+                          {sectionTitle("⚙️", "계정 관리")}
+                          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                            {/* 역할 변경 */}
+                            <div>
+                              <label style={labelSt}>역할 변경</label>
+                              <div style={{ display: "flex", gap: 6 }}>
+                                {["super_admin", "admin", "crew", "field_member"].map(r => (
+                                  <button key={r} onClick={() => handleChangeRole(r)} disabled={accountLoading || se.system_role === r}
+                                    style={{ flex: 1, padding: "7px 4px", borderRadius: 8, fontSize: 10, fontWeight: 700, cursor: se.system_role === r ? "default" : "pointer", fontFamily: FONT,
+                                      background: se.system_role === r ? C.navy : C.bg, color: se.system_role === r ? C.white : C.dark,
+                                      border: se.system_role === r ? "none" : `1px solid ${C.lightGray}`, opacity: accountLoading ? 0.5 : 1,
+                                    }}>{r === "super_admin" ? "슈퍼" : r === "admin" ? "관리자" : r === "crew" ? "크루" : "현장"}</button>
+                                ))}
+                              </div>
+                            </div>
+                            {/* 비번 초기화 / 정지·해제 */}
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <button onClick={handleResetPw} disabled={accountLoading} style={{ ...btnOutline, flex: 1, fontSize: 12, opacity: accountLoading ? 0.5 : 1 }}>🔑 비밀번호 초기화</button>
+                              <button onClick={handleToggleBan} disabled={accountLoading} style={{
+                                flex: 1, padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                                background: se.account_status === "banned" ? C.success : C.error, color: C.white, border: "none", opacity: accountLoading ? 0.5 : 1,
+                              }}>{se.account_status === "banned" ? "🔓 활성화" : "🚫 정지"}</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      {/* 계정 없음 — 생성 폼 */}
+                      <div style={sectionBox}>
+                        {sectionTitle("➕", "ERP 계정 생성")}
+                        <div style={{ padding: "10px 14px", background: "#FFF8E1", borderRadius: 8, fontSize: 11, color: "#F57F17", fontWeight: 600, marginBottom: 14 }}>이 직원은 아직 ERP 계정이 없습니다. 계정을 생성하면 ERP 또는 현장앱에 로그인할 수 있습니다.</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                          <div>
+                            <label style={labelSt}>이메일</label>
+                            <input value={accountForm.email} onChange={e => setAccountForm(p => ({ ...p, email: e.target.value }))} placeholder="example@email.com" style={inputStyle} />
+                          </div>
+                          <div>
+                            <label style={labelSt}>비밀번호</label>
+                            <input type="password" value={accountForm.password} onChange={e => setAccountForm(p => ({ ...p, password: e.target.value }))} placeholder="6자 이상" style={inputStyle} />
+                          </div>
+                          <div>
+                            <label style={labelSt}>역할</label>
+                            <select value={accountForm.role} onChange={e => setAccountForm(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
+                              <option value="field_member">현장(field_member)</option>
+                              <option value="crew">크루(crew)</option>
+                              <option value="admin">관리자(admin)</option>
+                              <option value="super_admin">슈퍼관리자</option>
+                            </select>
+                          </div>
+                          {can("manage_admins") && (
+                            <button onClick={handleCreateAccount} disabled={accountLoading} style={{ ...btnPrimary, fontSize: 13, opacity: accountLoading ? 0.5 : 1 }}>
+                              {accountLoading ? "⏳ 생성 중..." : "🔐 계정 생성"}
+                            </button>
+                          )}
+                          {!can("manage_admins") && <div style={{ fontSize: 11, color: C.gray, textAlign: "center" }}>슈퍼관리자만 계정을 생성할 수 있습니다.</div>}
+                        </div>
+                      </div>
+                    </>
+                  )}
+                  {accountMsg && <div style={{ marginTop: 8, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: accountMsg.startsWith("✅") ? "#E8F5E9" : "#FFEBEE", color: accountMsg.startsWith("✅") ? C.success : C.error }}>{accountMsg}</div>}
+                </div>
+              )}
+
+              {/* ④ 계약이력 */}
+              {detailTab === "contracts" && (
+                <div>
+                  <div style={sectionBox}>
+                    {sectionTitle("📋", `계약이력 (${empContracts.length}건)`)}
+                    {contractsLoading ? <div style={{ textAlign: "center", padding: 20, color: C.gray }}>⏳ 로딩 중...</div> : empContracts.length === 0 ? (
+                      <div style={{ textAlign: "center", padding: 30, color: C.gray }}>
+                        <div style={{ fontSize: 28, marginBottom: 8 }}>📝</div>
+                        <div style={{ fontSize: 12 }}>계약이력이 없습니다.</div>
+                        {can("edit") && <button onClick={() => onContract(se)} style={{ ...btnPrimary, marginTop: 12, fontSize: 12 }}>+ 계약서 작성</button>}
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                        {empContracts.map(ct => {
+                          const stColor = ct.status === "확정" ? C.success : ct.status === "작성중" ? C.orange : C.gray;
+                          return (
+                            <div key={ct.id} style={{ padding: "12px 14px", background: C.bg, borderRadius: 10, border: `1px solid ${C.lightGray}` }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                                <span style={{ fontSize: 12, fontWeight: 800, color: C.dark }}>{ct.contract_type === "weekday" ? "평일제" : ct.contract_type === "weekend" ? "주말제" : ct.contract_type === "mixed" ? "복합" : ct.contract_type === "parttime" ? "알바" : ct.contract_type}</span>
+                                <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 6, background: stColor + "20", color: stColor }}>{ct.status}</span>
+                              </div>
+                              <div style={{ fontSize: 11, color: C.gray }}>
+                                {ct.start_date && <span>📅 {ct.start_date} ~ {ct.end_date || "무기한"}</span>}
+                              </div>
+                              <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>
+                                {ct.base_salary ? `기본급 ${fmt(ct.base_salary)}원` : ""}{ct.weekend_daily ? ` / 일당 ${fmt(ct.weekend_daily)}원` : ""}
+                              </div>
+                              <div style={{ fontSize: 10, color: C.gray, marginTop: 4 }}>최종수정: {ct.updated_at ? new Date(ct.updated_at).toLocaleDateString("ko-KR") : "—"}</div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                  {can("edit") && <div style={{ textAlign: "center", paddingTop: 4 }}><button onClick={() => onContract(se)} style={{ ...btnPrimary, fontSize: 12, padding: "10px 28px" }}>📝 새 계약서 작성</button></div>}
+                </div>
+              )}
+
+              {/* ⑤ 문서 */}
+              {detailTab === "docs" && (
+                <div>
+                  <div style={sectionBox}>
+                    {sectionTitle("📄", "문서 바로가기")}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                      <button onClick={() => { if (onNavigate) onNavigate("certificate"); }} style={{ ...btnOutline, padding: "14px 16px", fontSize: 13, textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
+                        📑 <span><span style={{ fontWeight: 800 }}>재직증명서</span><br /><span style={{ fontSize: 10, color: C.gray }}>재직증명서 발급 화면으로 이동</span></span>
+                      </button>
+                      <button onClick={() => onResign(se)} style={{ ...btnOutline, padding: "14px 16px", fontSize: 13, textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
+                        📋 <span><span style={{ fontWeight: 800 }}>사직서</span><br /><span style={{ fontSize: 10, color: C.gray }}>사직서 작성 화면으로 이동</span></span>
+                      </button>
+                      <button onClick={() => onContract(se)} style={{ ...btnOutline, padding: "14px 16px", fontSize: 13, textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
+                        📝 <span><span style={{ fontWeight: 800 }}>근로계약서</span><br /><span style={{ fontSize: 10, color: C.gray }}>근로계약서 작성/수정 화면으로 이동</span></span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 직원 등록/수정 모달 — 와이드 레이아웃 */}
       {showForm && editEmp && (
@@ -10102,7 +10451,7 @@ function MainApp() {
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {page === "main_dashboard" && <MainDashboard employees={employees} onNavigate={setPage} profitState={profitState} />}
         {page === "dashboard" && <Dashboard employees={employees} />}
-        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onReload={loadEmployees} />}
+        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onReload={loadEmployees} onNavigate={setPage} />}
         {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={() => {}} />}
         {page === "history" && <ContractHistory employees={employees} onEditContract={goEditContract} onNewContract={goNewContract} />}
         {page === "resignation" && <Resignation employees={employees} />}
