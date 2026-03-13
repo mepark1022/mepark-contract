@@ -9916,6 +9916,7 @@ function MainApp() {
         { key: "site_management", icon: "🏢", label: "사업장 관리" },
         { key: "daily_report", icon: "📋", label: "현장 일보" },
         { key: "closing_report", icon: "📊", label: "마감보고현황" },
+        { key: "attendance", icon: "📅", label: "근태현황" },
       ];
 
   const calcNavItems = isCrewRole ? [] : [
@@ -10084,6 +10085,7 @@ function MainApp() {
         {page === "site_management" && <SiteManagementPage employees={employees} />}
         {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} />}
         {page === "closing_report" && <ClosingReportPage employees={employees} />}
+        {page === "attendance" && <AttendancePage employees={employees} />}
         {page === "salary_calc" && <SalaryCalculatorPage />}
       </main>
     </div>
@@ -10094,9 +10096,14 @@ function MainApp() {
 
 function ClosingReportPage({ employees }) {
   const todayStr = new Date().toISOString().slice(0, 10);
+  // 전일 계산
+  const yesterdayObj = new Date(); yesterdayObj.setDate(yesterdayObj.getDate() - 1);
+  const yesterdayStr = yesterdayObj.toISOString().slice(0, 10);
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth()); // 0-based
-  const [selectedDate, setSelectedDate] = useState(todayStr); // 선택된 날짜
+  const [selectedDate, setSelectedDate] = useState(todayStr); // 캘린더 선택 날짜
+  const [kpiDate, setKpiDate] = useState(yesterdayStr); // KPI 기준 날짜 (전일 기본)
+  const [siteFilter, setSiteFilter] = useState("all"); // 매장 필터
   const [reports, setReports] = useState([]);
   const [staffRows, setStaffRows] = useState([]);
   const [paymentRows, setPaymentRows] = useState([]);
@@ -10111,6 +10118,12 @@ function ClosingReportPage({ employees }) {
     const codes = new Set(activeFieldEmps.map(e => e.site_code_1));
     return FIELD_SITES.filter(s => codes.has(s.code));
   }, [activeFieldEmps]);
+
+  // 매장필터 적용된 사이트
+  const filteredSites = useMemo(() => {
+    if (siteFilter === "all") return activeSites;
+    return activeSites.filter(s => s.code === siteFilter);
+  }, [activeSites, siteFilter]);
 
   // 월 데이터 로딩
   const monthStr = `${year}-${String(month + 1).padStart(2, "0")}`;
@@ -10175,35 +10188,35 @@ function ClosingReportPage({ employees }) {
   const nextMonth = () => { if (month === 11) { setYear(y => y + 1); setMonth(0); } else setMonth(m => m + 1); };
   const goToday = () => { setYear(new Date().getFullYear()); setMonth(new Date().getMonth()); setSelectedDate(todayStr); };
 
-  // 통계 (확정/미확정 구분 없이 제출 여부만)
+  // 통계 — kpiDate 기준 (전일 기본, 날짜선택 가능)
   const stats = useMemo(() => {
-    const totalReps = reports.length;
-    const uniqueStaff = new Set(staffRows.map(s => s.employee_id).filter(Boolean)).size;
-    const uniqueSites = new Set(reports.map(r => r.site_code)).size;
-    // 미제출 일수 (오늘 이전 평일 중 일보 없는 날 × 사업장)
+    const dayReports = reports.filter(r => r.report_date === kpiDate);
+    // 사이트 필터 적용
+    const filteredDayReports = siteFilter === "all" ? dayReports : dayReports.filter(r => r.site_code === siteFilter);
+    const totalReps = filteredDayReports.length;
+    const dayStaff = staffRows.filter(s => filteredDayReports.some(r => r.id === s.report_id));
+    const uniqueStaff = new Set(dayStaff.map(s => s.employee_id).filter(Boolean)).size;
+    const uniqueSites = new Set(filteredDayReports.map(r => r.site_code)).size;
+    // 미제출: kpiDate 기준 활성 사업장 중 일보 없는 곳
+    const kpiDow = new Date(kpiDate + "T00:00:00").getDay();
+    const kpiIsOff = kpiDow === 0 || isHoliday(kpiDate);
     let missingCount = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-      const ds = getDateStr(d);
-      if (ds > todayStr) continue;
-      const dow = new Date(year, month, d).getDay();
-      if (dow === 0 || isHoliday(ds)) continue;
-      const dayData = reportMap[ds] || {};
-      activeSites.forEach(site => {
-        if (!dayData[site.code]) missingCount++;
-      });
+    if (!kpiIsOff && kpiDate <= todayStr) {
+      const reportedSites = new Set(filteredDayReports.map(r => r.site_code));
+      filteredSites.forEach(site => { if (!reportedSites.has(site.code)) missingCount++; });
     }
-    const totalValet = reports.reduce((s, r) => s + toNum(r.valet_amount), 0);
+    const totalValet = filteredDayReports.reduce((s, r) => s + toNum(r.valet_amount), 0);
     return { totalReps, uniqueStaff, uniqueSites, missingCount, totalValet };
-  }, [reports, staffRows, reportMap, activeSites, daysInMonth, monthStr]);
+  }, [reports, staffRows, reportMap, filteredSites, kpiDate, siteFilter]);
 
   // 선택된 날짜의 매장별 카드 데이터
   const selectedDayData = useMemo(() => {
     const dayData = reportMap[selectedDate] || {};
-    return activeSites.map(site => {
+    return filteredSites.map(site => {
       const info = dayData[site.code] || null;
       return { code: site.code, name: site.name, info };
     });
-  }, [selectedDate, reportMap, activeSites]);
+  }, [selectedDate, reportMap, filteredSites]);
 
   // 날짜 셀 클릭
   const handleDayClick = (dayNum) => {
@@ -10211,7 +10224,7 @@ function ClosingReportPage({ employees }) {
     setSelectedDate(getDateStr(dayNum));
   };
 
-  // 셀 상태 (제출/미제출만 구분)
+  // 셀 상태 (제출/미제출만 구분) — 매장필터 적용
   const getDayCellInfo = (dayNum) => {
     if (!dayNum) return null;
     const ds = getDateStr(dayNum);
@@ -10219,11 +10232,12 @@ function ClosingReportPage({ employees }) {
     const holiday = isHoliday(ds);
     const isSun = dow === 0;
     const dayData = reportMap[ds] || {};
-    const siteEntries = Object.values(dayData);
-    const totalStaff = siteEntries.reduce((s, e) => s + e.staffCount, 0);
+    // 매장필터 적용
+    const filteredEntries = siteFilter === "all" ? Object.values(dayData) : Object.entries(dayData).filter(([code]) => code === siteFilter).map(([, v]) => v);
+    const totalStaff = filteredEntries.reduce((s, e) => s + e.staffCount, 0);
     return { 
       ds, holiday, isSun, 
-      reportCount: siteEntries.length, 
+      reportCount: filteredEntries.length, 
       staffCount: totalStaff,
       isFuture: ds > todayStr,
       isSelected: ds === selectedDate,
@@ -10277,7 +10291,7 @@ function ClosingReportPage({ employees }) {
 
   // 월간 사업장별 요약 테이블
   const monthlySiteTable = useMemo(() => {
-    return activeSites.map(site => {
+    return filteredSites.map(site => {
       const siteReps = reports.filter(r => r.site_code === site.code);
       const total = siteReps.length;
       const siteStaff = staffRows.filter(s => siteReps.some(r => r.id === s.report_id));
@@ -10293,7 +10307,7 @@ function ClosingReportPage({ employees }) {
       const missing = workDays.filter(d => !submitted.has(d) && d <= todayStr).length;
       return { code: site.code, name: site.name, total, missing, uniqueWorkers, totalValet };
     });
-  }, [reports, staffRows, activeSites, daysInMonth, monthStr]);
+  }, [reports, staffRows, filteredSites, daysInMonth, monthStr]);
 
   // 선택된 날짜 포맷
   const selDateObj = new Date(selectedDate + "T00:00:00");
@@ -10307,22 +10321,36 @@ function ClosingReportPage({ employees }) {
         <h2 style={{ fontSize: 22, fontWeight: 900, color: C.dark, margin: 0 }}>📊 마감보고현황</h2>
       </div>
 
-      {/* KPI 스트립 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 10, marginBottom: 20 }}>
-        {[
-          { icon: "📋", label: "제출 일보", value: stats.totalReps, unit: "건", color: C.navy },
-          { icon: "⚠️", label: "미제출", value: stats.missingCount, unit: "건", color: stats.missingCount > 0 ? C.error : C.gray },
-          { icon: "👥", label: "출근 인원", value: stats.uniqueStaff, unit: "명", color: C.blue },
-          { icon: "🏢", label: "운영 사업장", value: stats.uniqueSites, unit: "개", color: C.skyBlue },
-          { icon: "💰", label: "발렛비 합계", value: pFmt(stats.totalValet), unit: "", color: C.success },
-        ].map((k, i) => (
-          <div key={i} style={{ background: C.white, borderRadius: 12, padding: "14px 16px", border: `1px solid ${C.lightGray}`, textAlign: "center" }}>
-            <div style={{ fontSize: 11, color: C.gray, marginBottom: 4, fontWeight: 700 }}>{k.icon} {k.label}</div>
-            <div style={{ fontSize: 22, fontWeight: 900, color: k.color, fontFamily: "monospace" }}>
-              {k.value}<span style={{ fontSize: 11, fontWeight: 600, color: C.gray }}>{k.unit}</span>
+      {/* KPI 스트립 — kpiDate 기준 (전일 기본) */}
+      <div style={{ background: "#fff", border: `1.5px solid ${C.lightGray}`, borderRadius: 14, padding: "14px 20px", marginBottom: 20 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12, flexWrap: "wrap" }}>
+          <span style={{ fontSize: 13, fontWeight: 900, color: C.dark }}>📋 일일 현황</span>
+          <input type="date" value={kpiDate} max={todayStr}
+            onChange={e => setKpiDate(e.target.value)}
+            style={{ padding: "5px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: FONT, fontWeight: 700, background: "#F4F6FB", color: C.navy, cursor: "pointer" }}
+          />
+          <button onClick={() => setKpiDate(yesterdayStr)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${kpiDate === yesterdayStr ? C.navy : C.border}`, background: kpiDate === yesterdayStr ? C.navy : "#fff", color: kpiDate === yesterdayStr ? "#fff" : C.gray, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>전일</button>
+          <button onClick={() => setKpiDate(todayStr)} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${kpiDate === todayStr ? C.navy : C.border}`, background: kpiDate === todayStr ? C.navy : "#fff", color: kpiDate === todayStr ? "#fff" : C.gray, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>오늘</button>
+          <span style={{ fontSize: 11, color: C.gray, marginLeft: 4 }}>
+            ({(() => { const d = new Date(kpiDate + "T00:00:00"); return `${d.getMonth()+1}/${d.getDate()}(${["일","월","화","수","목","금","토"][d.getDay()]})`; })()})
+          </span>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 10 }}>
+          {[
+            { icon: "📋", label: "제출 일보", value: stats.totalReps, unit: "건", color: C.navy },
+            { icon: "⚠️", label: "미제출", value: stats.missingCount, unit: "건", color: stats.missingCount > 0 ? C.error : C.gray },
+            { icon: "👥", label: "출근 인원", value: stats.uniqueStaff, unit: "명", color: C.blue },
+            { icon: "🏢", label: "운영 사업장", value: stats.uniqueSites, unit: "개", color: C.skyBlue },
+            { icon: "💰", label: "발렛비 합계", value: pFmt(stats.totalValet), unit: "", color: C.success },
+          ].map((k, i) => (
+            <div key={i} style={{ background: "#F8F9FC", borderRadius: 10, padding: "10px 14px", textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: C.gray, marginBottom: 3, fontWeight: 700 }}>{k.icon} {k.label}</div>
+              <div style={{ fontSize: 20, fontWeight: 900, color: k.color, fontFamily: "monospace" }}>
+                {k.value}<span style={{ fontSize: 10, fontWeight: 600, color: C.gray }}>{k.unit}</span>
+              </div>
             </div>
-          </div>
-        ))}
+          ))}
+        </div>
       </div>
 
       {/* 범례 */}
@@ -10341,8 +10369,8 @@ function ClosingReportPage({ employees }) {
         ))}
       </div>
 
-      {/* 월 네비게이션 */}
-      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16, marginBottom: 16 }}>
+      {/* 월 네비게이션 + 매장 선택 */}
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
         <button onClick={prevMonth} style={{ width: 36, height: 36, borderRadius: 8, border: `1px solid ${C.border}`, background: C.white, cursor: "pointer", fontSize: 16, fontWeight: 700, color: C.dark, fontFamily: FONT }}>◀</button>
         <div style={{ fontSize: 20, fontWeight: 900, color: C.navy, minWidth: 160, textAlign: "center" }}>
           {year}년 {month + 1}월
@@ -10352,6 +10380,13 @@ function ClosingReportPage({ employees }) {
           padding: "6px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`,
           background: C.navy, color: C.white, fontSize: 11, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
         }}>오늘</button>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 8 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.gray }}>매장</span>
+          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ padding: "6px 10px", borderRadius: 8, border: `1.5px solid ${C.border}`, fontSize: 12, fontFamily: FONT, fontWeight: 700, background: "#fff", color: C.dark, minWidth: 130 }}>
+            <option value="all">전체 ({activeSites.length}개)</option>
+            {activeSites.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+          </select>
+        </div>
       </div>
 
       {loading && <div style={{ textAlign: "center", padding: 40, color: C.gray }}>로딩 중...</div>}
