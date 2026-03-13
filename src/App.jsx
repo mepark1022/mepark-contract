@@ -10109,15 +10109,32 @@ function ClosingReportPage({ employees }) {
   const [paymentRows, setPaymentRows] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // 활성 사업장 (재직자가 있는 사업장)
+  // 활성 사업장 (재직자가 있는 사업장 + 커스텀 사업장)
+  const [customSites, setCustomSites] = useState([]);
+  useEffect(() => {
+    (async () => {
+      const { data: details } = await supabase.from("site_details").select("site_code, site_name");
+      if (details) {
+        const extras = details.filter(d => !SITES.find(s => s.code === d.site_code) && d.site_name)
+          .map(d => ({ code: d.site_code, name: d.site_name }));
+        setCustomSites(extras);
+      }
+    })();
+  }, []);
+
+  const allFieldSites = useMemo(() => {
+    const base = FIELD_SITES;
+    return [...base, ...customSites.filter(cs => !base.find(b => b.code === cs.code))];
+  }, [customSites]);
+
   const activeFieldEmps = useMemo(() =>
     employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000")
       .sort((a, b) => (a.site_code_1 || "").localeCompare(b.site_code_1 || "") || (a.name || "").localeCompare(b.name || ""))
   , [employees]);
   const activeSites = useMemo(() => {
     const codes = new Set(activeFieldEmps.map(e => e.site_code_1));
-    return FIELD_SITES.filter(s => codes.has(s.code));
-  }, [activeFieldEmps]);
+    return allFieldSites.filter(s => codes.has(s.code));
+  }, [activeFieldEmps, allFieldSites]);
 
   // 매장필터 적용된 사이트
   const filteredSites = useMemo(() => {
@@ -10288,26 +10305,6 @@ function ClosingReportPage({ employees }) {
       </div>
     );
   };
-
-  // 월간 사업장별 요약 테이블
-  const monthlySiteTable = useMemo(() => {
-    return filteredSites.map(site => {
-      const siteReps = reports.filter(r => r.site_code === site.code);
-      const total = siteReps.length;
-      const siteStaff = staffRows.filter(s => siteReps.some(r => r.id === s.report_id));
-      const uniqueWorkers = new Set(siteStaff.map(s => s.employee_id).filter(Boolean)).size;
-      const totalValet = siteReps.reduce((s, r) => s + toNum(r.valet_amount), 0);
-      const workDays = [];
-      for (let d = 1; d <= daysInMonth; d++) {
-        const ds = getDateStr(d);
-        const dow = new Date(year, month, d).getDay();
-        if (dow !== 0 && !isHoliday(ds)) workDays.push(ds);
-      }
-      const submitted = new Set(siteReps.map(r => r.report_date));
-      const missing = workDays.filter(d => !submitted.has(d) && d <= todayStr).length;
-      return { code: site.code, name: site.name, total, missing, uniqueWorkers, totalValet };
-    });
-  }, [reports, staffRows, filteredSites, daysInMonth, monthStr]);
 
   // 선택된 날짜 포맷
   const selDateObj = new Date(selectedDate + "T00:00:00");
@@ -10521,49 +10518,6 @@ function ClosingReportPage({ employees }) {
                 </div>
               );
             })}
-          </div>
-        </div>
-      )}
-
-      {/* 월간 사업장별 요약 테이블 */}
-      {!loading && monthlySiteTable.length > 0 && (
-        <div style={{ background: C.white, borderRadius: 16, border: `1px solid ${C.lightGray}`, overflow: "hidden" }}>
-          <div style={{ padding: "14px 20px", borderBottom: `2px solid ${C.navy}`, background: C.navy + "08" }}>
-            <span style={{ fontSize: 14, fontWeight: 900, color: C.dark }}>📊 {month + 1}월 사업장별 마감보고 현황</span>
-          </div>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-              <thead>
-                <tr style={{ background: C.navy, color: C.white }}>
-                  {["#", "사업장", "제출", "미제출", "근무인원", "발렛비 합계"].map((h, i) => (
-                    <th key={i} style={{ padding: "10px 8px", fontWeight: 800, textAlign: i >= 2 ? "center" : "left", whiteSpace: "nowrap" }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {monthlySiteTable.map((row, i) => (
-                  <tr key={row.code} style={{ borderBottom: `1px solid ${C.lightGray}`, background: i % 2 === 0 ? C.white : "#FAFBFC" }}>
-                    <td style={{ padding: "9px 8px", fontWeight: 700, color: C.gray, width: 32 }}>{i + 1}</td>
-                    <td style={{ padding: "9px 8px", fontWeight: 800, color: C.dark }}>
-                      <span style={{ fontSize: 10, color: C.gray, marginRight: 4 }}>{row.code}</span>{row.name}
-                    </td>
-                    <td style={{ padding: "9px 8px", textAlign: "center", fontWeight: 700, color: C.navy }}>{row.total}</td>
-                    <td style={{ padding: "9px 8px", textAlign: "center" }}>
-                      {row.missing > 0 ? <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 800, background: "#FFEBEE", color: C.error }}>{row.missing}</span> : <span style={{ color: "#BDBDBD" }}>0</span>}
-                    </td>
-                    <td style={{ padding: "9px 8px", textAlign: "center", fontWeight: 700, color: C.dark }}>{row.uniqueWorkers}명</td>
-                    <td style={{ padding: "9px 8px", textAlign: "right", fontWeight: 800, color: C.navy, fontFamily: "monospace" }}>{fmt(row.totalValet)}원</td>
-                  </tr>
-                ))}
-                <tr style={{ background: C.navy + "0D", borderTop: `2px solid ${C.navy}` }}>
-                  <td colSpan={2} style={{ padding: "10px 8px", fontWeight: 900, color: C.navy }}>합계</td>
-                  <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, color: C.navy }}>{monthlySiteTable.reduce((s, r) => s + r.total, 0)}</td>
-                  <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, color: C.error }}>{monthlySiteTable.reduce((s, r) => s + r.missing, 0)}</td>
-                  <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 900, color: C.dark }}>{monthlySiteTable.reduce((s, r) => s + r.uniqueWorkers, 0)}명</td>
-                  <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(monthlySiteTable.reduce((s, r) => s + r.totalValet, 0))}원</td>
-                </tr>
-              </tbody>
-            </table>
           </div>
         </div>
       )}
