@@ -10895,6 +10895,12 @@ function AttendancePage({ employees }) {
                           background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap",
                         }}>
                           {emp.name}
+                          {emp.work_code && (() => {
+                            const cat = getWorkCat(emp.work_code);
+                            const wl = WORK_CODES.find(w => w.code === emp.work_code)?.label || emp.work_code;
+                            const catColor = cat === "weekday" ? { bg: "#E3F2FD", color: "#1565C0" } : cat === "weekend" ? { bg: "#FFF3E0", color: "#E65100" } : cat === "mixed" ? { bg: "#F3E5F5", color: "#7B1FA2" } : { bg: "#E8F5E9", color: "#2E7D32" };
+                            return <span style={{ marginLeft: 4, fontSize: 9, padding: "1px 5px", borderRadius: 4, background: catColor.bg, color: catColor.color, fontWeight: 800 }}>{wl}</span>;
+                          })()}
                         </td>
                         {dates.map(d => {
                           const st = getCellStatus(emp.id, d.dateStr);
