@@ -168,7 +168,7 @@ Deno.serve(async (req) => {
     // ACTION: create_user
     // ────────────────────────────────────────────────────────
     if (action === "create_user") {
-      const { email, password, name, role, site_code, employee_id, emp_no } = body;
+      const { email, password, name, role, site_code, employee_id, emp_no, work_code } = body;
 
       if (!email || !password || !name || !role) {
         return new Response(JSON.stringify({ error: "필수 정보가 누락되었습니다." }), {
@@ -203,6 +203,7 @@ Deno.serve(async (req) => {
       if (site_code) profileData.site_code = site_code;
       if (employee_id) profileData.employee_id = employee_id;
       if (emp_no) profileData.emp_no = emp_no;
+      if (work_code) profileData.work_code = work_code;
 
       const { error: profErr } = await supabaseAdmin.from("profiles").upsert(profileData, { onConflict: "id" });
       if (profErr) {

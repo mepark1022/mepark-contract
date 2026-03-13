@@ -346,6 +346,7 @@ function AuthProvider({ children }) {
         site_code: options.site_code || null,
         employee_id: options.employee_id || null,
         emp_no: empNo,
+        work_code: options.work_code || null,
       });
 
       // auth 중복 오류는 친절하게 변환
@@ -3571,6 +3572,7 @@ function AdminInvitePanel() {
   const [newPhone, setNewPhone]     = useState("");   // 전화번호 → pw(뒷4자리)
   const [newRole, setNewRole]       = useState(isSuperAdmin ? "admin" : "crew");
   const [newSiteCode, setNewSiteCode] = useState("V001");
+  const [newWorkCode, setNewWorkCode] = useState("C");
   const [creating, setCreating]     = useState(false);
   const [msg, setMsg]               = useState("");
   const [createdInfo, setCreatedInfo] = useState(null);
@@ -3630,15 +3632,15 @@ function AdminInvitePanel() {
     if (newRole === "crew" && !newSiteCode) { setMsg("소속 사업장을 선택하세요."); return; }
     const email = empNoToEmail(newEmpNo);
     setCreating(true); setMsg("");
-    const opts = { emp_no: newEmpNo.trim(), ...(newRole === "crew" ? { site_code: newSiteCode } : {}) };
+    const opts = { emp_no: newEmpNo.trim(), ...(newRole === "crew" ? { site_code: newSiteCode, work_code: newWorkCode } : {}) };
     const { error } = await createAccount(newName.trim(), email, pw, newRole, opts);
     setCreating(false);
     if (error) { setMsg(error); return; }
-    setCreatedInfo({ name: newName.trim(), empNo: newEmpNo.trim(), email, password: pw, role: newRole, site_code: newRole === "crew" ? newSiteCode : null });
-    setNewName(""); setNewEmpNo(""); setNewPhone(""); setNewRole(isSuperAdmin ? "admin" : "crew"); setNewSiteCode("V001");
+    setCreatedInfo({ name: newName.trim(), empNo: newEmpNo.trim(), email, password: pw, role: newRole, site_code: newRole === "crew" ? newSiteCode : null, work_code: newRole === "crew" ? newWorkCode : null });
+    setNewName(""); setNewEmpNo(""); setNewPhone(""); setNewRole(isSuperAdmin ? "admin" : "crew"); setNewSiteCode("V001"); setNewWorkCode("C");
   };
 
-  const closeCreate = () => { setShowCreateForm(false); setCreatedInfo(null); setMsg(""); setNewName(""); setNewEmpNo(""); setNewPhone(""); setNewRole(isSuperAdmin ? "admin" : "crew"); };
+  const closeCreate = () => { setShowCreateForm(false); setCreatedInfo(null); setMsg(""); setNewName(""); setNewEmpNo(""); setNewPhone(""); setNewRole(isSuperAdmin ? "admin" : "crew"); setNewSiteCode("V001"); setNewWorkCode("C"); };
 
   // ── 엑셀 템플릿 다운로드 ──
   const downloadTemplate = () => {
@@ -3652,23 +3654,27 @@ function AdminInvitePanel() {
       ["· 비밀번호 = 전화번호 뒷 4자리  (자동 추출)"],
       ["· 역할: admin (어드민) 또는 crew (크루)"],
       ["· 소속사업장코드: crew인 경우만 필수 (V001~V016)"],
+      ["· 근무형태코드: crew인 경우 선택 (미입력 시 C 기본)"],
       [""],
       ["◆ 사업장 코드 목록"],
       ...SITES.filter(s => s.code !== "V000").map(s => [s.code, s.name]),
+      [""],
+      ["◆ 근무형태 코드 목록"],
+      ...WORK_CODES.map(w => [w.code, w.label, w.cat === "weekday" ? "평일" : w.cat === "weekend" ? "주말" : w.cat === "mixed" ? "복합" : "알바"]),
     ];
     const wsGuide = XLSX.utils.aoa_to_sheet(guide);
     wsGuide["!cols"] = [{ wch: 30 }, { wch: 24 }];
     XLSX.utils.book_append_sheet(wb, wsGuide, "작성안내");
 
     // 입력 시트 (헤더 + 샘플 3행)
-    const header = ["이름", "사번", "전화번호", "역할(admin/crew)", "소속사업장코드(crew만)"];
+    const header = ["이름", "사번", "전화번호", "역할(admin/crew)", "소속사업장코드(crew만)", "근무형태코드"];
     const sample = [
-      ["홍길동", "MP24101", "010-1234-5678", "crew", "V001"],
-      ["이효정", "MP24102", "010-9876-5432", "admin", ""],
-      ["김철수", "MP24103", "010-1111-2222", "crew", "V003"],
+      ["홍길동", "MP24101", "010-1234-5678", "crew", "V001", "C"],
+      ["이효정", "MP24102", "010-9876-5432", "admin", "", ""],
+      ["김철수", "MP24103", "010-1111-2222", "crew", "V003", "E"],
     ];
     const wsData = XLSX.utils.aoa_to_sheet([header, ...sample]);
-    wsData["!cols"] = [{ wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 20 }];
+    wsData["!cols"] = [{ wch: 12 }, { wch: 12 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(wb, wsData, "계정입력");
 
     XLSX.writeFile(wb, "ME.PARK_계정일괄생성양식.xlsx");
@@ -3691,6 +3697,7 @@ function AdminInvitePanel() {
           phone:    String(r["전화번호"]).trim(),
           role:     String(r["역할(admin/crew)"]).trim().toLowerCase() || "crew",
           siteCode: String(r["소속사업장코드(crew만)"]).trim().toUpperCase() || "",
+          workCode: String(r["근무형태코드"] || "").trim().toUpperCase() || "",
         }));
       setBulkRows(parsed);
       setBulkResults([]);
@@ -3712,7 +3719,7 @@ function AdminInvitePanel() {
       if (pw.length < 4) { results.push({ ...row, ok: false, error: "전화번호 오류" }); continue; }
       const validRoles = ["admin", "crew"];
       const role = validRoles.includes(row.role) ? row.role : "crew";
-      const opts = { emp_no: row.empNo, ...(role === "crew" && row.siteCode ? { site_code: row.siteCode } : {}) };
+      const opts = { emp_no: row.empNo, ...(role === "crew" && row.siteCode ? { site_code: row.siteCode } : {}), ...(role === "crew" && row.workCode ? { work_code: row.workCode } : {}) };
       const { error } = await createAccount(row.name, email, pw, role, opts);
       results.push({ ...row, ok: !error, error: error || "" });
     }
@@ -3750,8 +3757,12 @@ function AdminInvitePanel() {
           {p.id === user?.id && <span style={{ fontSize: 10, background: C.gold, color: C.dark, borderRadius: 4, padding: "1px 5px", fontWeight: 800 }}>나</span>}
         </div>
         {/* 이메일 대신 사번 표시 */}
-        <div style={{ fontSize: 11, color: C.navy, marginTop: 1, fontFamily: "monospace", fontWeight: 700 }}>
+        <div style={{ fontSize: 11, color: C.navy, marginTop: 1, fontFamily: "monospace", fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
           {p.emp_no || p.email?.split("@")[0]?.toUpperCase() || "—"}
+          {p.work_code && <span style={{ fontSize: 9, padding: "1px 5px", borderRadius: 4, fontWeight: 700, fontFamily: "'Noto Sans KR', sans-serif",
+            background: getWorkCat(p.work_code) === "weekday" ? "#EFF6FF" : getWorkCat(p.work_code) === "weekend" ? "#FFF3E0" : getWorkCat(p.work_code) === "mixed" ? "#E0F7FA" : "#F5F5F5",
+            color: getWorkCat(p.work_code) === "weekday" ? C.navy : getWorkCat(p.work_code) === "weekend" ? C.orange : getWorkCat(p.work_code) === "mixed" ? C.skyBlue : C.gray,
+          }}>{getWorkLabel(p.work_code)}</span>}
         </div>
         <div style={{ fontSize: 10, color: C.gray, marginTop: 1 }}>가입 {fmtDate(p.created_at)}</div>
       </div>
@@ -3769,6 +3780,21 @@ function AdminInvitePanel() {
             <option value="">— 사업장 미배정 —</option>
             {SITES.filter(s => s.code !== "V000").map(s => (
               <option key={s.code} value={s.code}>{s.code} {s.name}</option>
+            ))}
+          </select>
+        )}
+        {/* 크루 전용: 근무형태 변경 드롭다운 */}
+        {p.role === "crew" && isSuperAdmin && (
+          <select value={p.work_code || ""}
+            onChange={async e => {
+              const { error } = await supabase.from("profiles").update({ work_code: e.target.value || null }).eq("id", p.id);
+              if (error) alert("근무형태 변경 실패: " + error.message);
+              else await loadData();
+            }}
+            style={{ fontSize: 11, padding: "3px 6px", border: `1.5px solid ${p.work_code ? C.navy : C.orange}`, borderRadius: 6, background: p.work_code ? "#EEF2FF" : "#FFF8EE", cursor: "pointer", maxWidth: 100 }}>
+            <option value="">— 미설정 —</option>
+            {WORK_CODES.map(w => (
+              <option key={w.code} value={w.code}>{w.code} {w.label}</option>
             ))}
           </select>
         )}
@@ -3857,10 +3883,18 @@ function AdminInvitePanel() {
                     </div>
                   </div>
                   {newRole === "crew" && (
-                    <div style={{ marginBottom: 16 }}>
+                    <div style={{ marginBottom: 14 }}>
                       <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>소속 사업장 *</label>
                       <select value={newSiteCode} onChange={e => setNewSiteCode(e.target.value)} style={{ ...inputStyle, padding: "11px 14px" }}>
                         {SITES.filter(s => s.code !== "V000").map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {newRole === "crew" && (
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 5, display: "block" }}>근무형태</label>
+                      <select value={newWorkCode} onChange={e => setNewWorkCode(e.target.value)} style={{ ...inputStyle, padding: "11px 14px" }}>
+                        {WORK_CODES.map(w => <option key={w.code} value={w.code}>{w.code} — {w.label}</option>)}
                       </select>
                     </div>
                   )}
@@ -3885,6 +3919,7 @@ function AdminInvitePanel() {
                       ["비밀번호 (초기)", createdInfo.password],
                       ["역할", ROLES[createdInfo.role]],
                       ...(createdInfo.site_code ? [["소속 사업장", getSiteLbl(createdInfo.site_code)]] : []),
+                      ...(createdInfo.work_code ? [["근무형태", `${createdInfo.work_code} — ${getWorkLabel(createdInfo.work_code)}`]] : []),
                     ].map(([label, value]) => (
                       <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
                         <div>
@@ -3896,7 +3931,7 @@ function AdminInvitePanel() {
                     ))}
                   </div>
                   <button onClick={() => {
-                    const t = `[ME.PARK ERP 계정]\n이름: ${createdInfo.name}\n아이디: ${createdInfo.email}\n비밀번호: ${createdInfo.password}\n역할: ${ROLES[createdInfo.role]}${createdInfo.site_code ? `\n소속: ${getSiteLbl(createdInfo.site_code)}` : ""}\n로그인: ${window.location.origin}`;
+                    const t = `[ME.PARK ERP 계정]\n이름: ${createdInfo.name}\n아이디: ${createdInfo.email}\n비밀번호: ${createdInfo.password}\n역할: ${ROLES[createdInfo.role]}${createdInfo.site_code ? `\n소속: ${getSiteLbl(createdInfo.site_code)}` : ""}${createdInfo.work_code ? `\n근무형태: ${createdInfo.work_code} ${getWorkLabel(createdInfo.work_code)}` : ""}\n로그인: ${window.location.origin}`;
                     navigator.clipboard.writeText(t);
                   }} style={{ ...btnOutline, width: "100%", marginBottom: 8, padding: 11 }}>📋 전체 복사 (전달용)</button>
                   <button onClick={closeCreate} style={{ ...btnPrimary, width: "100%", padding: 11 }}>닫기</button>
@@ -3926,6 +3961,7 @@ function AdminInvitePanel() {
                     <div>• <b>비밀번호</b> = 전화번호 뒷 4자리 &nbsp;(자동 추출)</div>
                     <div>• <b>역할</b>: <code>admin</code> 또는 <code>crew</code></div>
                     <div>• <b>소속사업장코드</b>: crew인 경우만 필수 (V001~V016)</div>
+                    <div>• <b>근무형태코드</b>: crew인 경우 선택 (C, E, F 등 — 미입력 시 기본 C)</div>
                   </div>
 
                   {/* 템플릿 다운 + 업로드 */}
@@ -3952,7 +3988,7 @@ function AdminInvitePanel() {
                         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                           <thead>
                             <tr style={{ background: C.navy, position: "sticky", top: 0 }}>
-                              {["이름", "사번(아이디)", "비밀번호", "역할", "사업장"].map(h => (
+                              {["이름", "사번(아이디)", "비밀번호", "역할", "사업장", "근무형태"].map(h => (
                                 <th key={h} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>
                               ))}
                             </tr>
@@ -3975,6 +4011,9 @@ function AdminInvitePanel() {
                                   </td>
                                   <td style={{ padding: "7px 10px", textAlign: "center", fontSize: 10, color: C.gray }}>
                                     {r.siteCode ? getSiteLbl(r.siteCode) : "—"}
+                                  </td>
+                                  <td style={{ padding: "7px 10px", textAlign: "center" }}>
+                                    {r.workCode ? <span style={{ padding: "2px 6px", borderRadius: 6, fontSize: 10, fontWeight: 700, background: "#EEF2FF", color: C.navy }}>{r.workCode} {getWorkLabel(r.workCode)}</span> : <span style={{ color: C.gray, fontSize: 10 }}>C(기본)</span>}
                                   </td>
                                 </tr>
                               );
