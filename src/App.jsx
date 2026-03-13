@@ -400,13 +400,19 @@ function AuthProvider({ children }) {
   const isFieldRole = profile && profile.role === "field_member";
   const isCrewRole  = profile && profile.role === "crew";
 
-  // 크루: 본인 소속 사업장 일보 작성/수정만 가능
+  // 권한 체계
+  // super_admin : 전체 권한 (어드민+크루 생성, 역할 변경, 삭제)
+  // admin       : 크루 생성 + 전 사업장 일보 작성/수정 (역할 변경/슈퍼어드민 계정 관리 불가)
+  // crew        : 본인 소속 사업장 일보 작성/수정만
   const can = (action) => {
     if (!profile) return false;
     if (isFieldRole) return false; // 마감앱 전용 — ERP 접근 불가
     if (profile.role === "super_admin") return true;
-    if (profile.role === "admin") return !["manage_admins", "settings"].includes(action);
-    // crew: invite(크루 생성) 불가, daily_report 작성/수정만 허용
+    if (profile.role === "admin") {
+      // 어드민 불가: 역할 변경, 슈퍼어드민 계정 관리, 시스템 설정
+      return !["manage_admins", "settings", "change_role", "delete_admin"].includes(action);
+    }
+    // crew: 소속 사업장 일보만
     if (isCrewRole) return ["view", "daily_report"].includes(action);
     return action === "view";
   };
@@ -3515,6 +3521,7 @@ function AdminInvitePanel() {
   const { profiles, createAccount, removeAdmin, updateRole, user, changePassword, profile: myProfile } = useAuth();
   const confirm = useConfirm();
   const isSuperAdmin = myProfile?.role === "super_admin";
+  const isAdmin      = myProfile?.role === "admin";
 
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showPwChange, setShowPwChange] = useState(false);
@@ -3572,7 +3579,19 @@ function AdminInvitePanel() {
 
   const closeCreateForm = () => {
     setShowCreateForm(false); setCreatedInfo(null); setMsg("");
-    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole("admin");
+    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole(isSuperAdmin ? "admin" : "crew");
+  };
+
+  // 계정 관리 권한 계산
+  // super_admin: 자신 제외 모든 계정 역할 변경+삭제 가능 (단, 다른 super_admin 역할 변경 불가)
+  // admin: 크루 계정만 삭제 가능, 역할 변경 불가
+  const canChangeRole = (p) => isSuperAdmin && p.id !== user?.id && p.role !== "super_admin";
+  const canDelete     = (p) => {
+    if (p.id === user?.id) return false;          // 본인 삭제 불가
+    if (p.role === "super_admin") return false;   // 슈퍼어드민 삭제 불가
+    if (isSuperAdmin) return true;                // 슈퍼어드민은 admin+crew 삭제 가능
+    if (isAdmin) return p.role === "crew";        // 어드민은 크루만 삭제 가능
+    return false;
   };
 
   return (
@@ -3595,7 +3614,7 @@ function AdminInvitePanel() {
             {/* 모달 헤더 */}
             <div style={{ background: C.navy, padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 20 }}>🔑</span>
-              <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>관리자 계정 생성</h3>
+              <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>계정 생성</h3>
             </div>
 
             <div style={{ padding: 24 }}>
@@ -3686,7 +3705,7 @@ function AdminInvitePanel() {
                   </div>
 
                   <button onClick={() => {
-                    const text = `[ME.PARK ERP 계정 정보]\n이름: ${createdInfo.name}\n이메일: ${createdInfo.email}\n비밀번호: ${createdInfo.password}\n로그인: ${window.location.origin}\n\n※ 로그인 후 비밀번호를 변경해주세요.`;
+                    const text = `[ME.PARK ERP 계정 정보]\n이름: ${createdInfo.name}\n이메일: ${createdInfo.email}\n비밀번호: ${createdInfo.password}\n역할: ${ROLES[createdInfo.role]}${createdInfo.site_code ? `\n소속 사업장: ${createdInfo.site_code} ${getSiteName(createdInfo.site_code)}` : ""}\n로그인: ${window.location.origin}\n\n※ 로그인 후 비밀번호를 변경해주세요.`;
                     navigator.clipboard.writeText(text);
                     setMsg("✅ 전체 계정 정보가 복사되었습니다.");
                   }} style={{ ...btnOutline, width: "100%", marginBottom: 10, padding: 12 }}>
@@ -3734,10 +3753,10 @@ function AdminInvitePanel() {
         </div>
       )}
 
-      {/* 현재 관리자 목록 */}
+      {/* 현재 계정 목록 */}
       <div style={cardStyle}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
-          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>👤 등록된 관리자 ({profiles.length}명)</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>👤 등록된 계정 ({profiles.length}명)</h3>
         </div>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
@@ -3750,7 +3769,10 @@ function AdminInvitePanel() {
           <tbody>
             {profiles.map((p, i) => (
               <tr key={p.id} style={{ background: i % 2 ? C.bg : C.white }}>
-                <td style={{ padding: "8px 10px", fontWeight: 700 }}>{p.name}</td>
+                <td style={{ padding: "8px 10px", fontWeight: 700 }}>
+                  {p.name}
+                  {p.id === user?.id && <span style={{ fontSize: 10, background: C.gold, color: C.dark, borderRadius: 4, padding: "1px 5px", marginLeft: 4, fontWeight: 800 }}>나</span>}
+                </td>
                 <td style={{ padding: "8px 10px", color: C.gray }}>{p.email}</td>
                 <td style={{ padding: "8px 10px", textAlign: "center" }}>
                   <span style={{
@@ -3758,7 +3780,7 @@ function AdminInvitePanel() {
                     background: p.role === "super_admin" ? "#EDE7F6" : p.role === "admin" ? "#E3F2FD" : p.role === "crew" ? "#E8F5E9" : "#F5F5F5",
                     color: p.role === "super_admin" ? "#7B1FA2" : p.role === "admin" ? C.navy : p.role === "crew" ? C.success : C.gray,
                   }}>
-                    {ROLES[p.role]}
+                    {ROLES[p.role] || p.role}
                   </span>
                   {p.role === "crew" && p.site_code && (
                     <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>
@@ -3768,20 +3790,27 @@ function AdminInvitePanel() {
                 </td>
                 <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{fmtDate(p.created_at)}</td>
                 <td style={{ padding: "8px 10px", textAlign: "center" }}>
-                  {p.id !== user?.id ? (
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
+                    {/* 역할 변경 — 슈퍼어드민만, 자신·다른 슈퍼어드민 제외 */}
+                    {canChangeRole(p) ? (
                       <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
                         style={{ fontSize: 11, padding: "2px 4px", border: `1px solid ${C.border}`, borderRadius: 4 }}>
-                        <option value="super_admin">슈퍼어드민</option>
                         <option value="admin">어드민</option>
                         <option value="crew">크루</option>
                       </select>
-                      <button onClick={async () => { if (await confirm(`${p.name}님을 제거하시겠습니까?`, "관리자 목록에서 제거됩니다.")) removeAdmin(p.id); }}
-                        style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>🗑</button>
-                    </div>
-                  ) : (
-                    <span style={{ fontSize: 11, color: C.gray }}>나</span>
-                  )}
+                    ) : (
+                      <span style={{ fontSize: 11, color: C.border, minWidth: 60, display: "inline-block" }}>—</span>
+                    )}
+                    {/* 삭제 — 권한 있는 경우만 */}
+                    {canDelete(p) ? (
+                      <button onClick={async () => {
+                        if (await confirm(`${p.name}님 계정을 삭제하시겠습니까?`, "삭제 후 복구가 불가능합니다."))
+                          removeAdmin(p.id);
+                      }} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: C.error }}>🗑</button>
+                    ) : (
+                      <span style={{ width: 20 }} />
+                    )}
+                  </div>
                 </td>
               </tr>
             ))}
@@ -3791,11 +3820,14 @@ function AdminInvitePanel() {
 
       {/* 안내 */}
       <div style={{ ...cardStyle, background: "#F0F4FF", border: `1px solid #D0D8F0` }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginBottom: 8 }}>💡 관리자 계정 안내</div>
-        <div style={{ fontSize: 11, color: C.gray, lineHeight: 1.8 }}>
-          • 슈퍼관리자가 직접 계정을 생성하고, 이메일/비밀번호를 본인에게 전달합니다.<br/>
-          • 관리자는 로그인 후 「🔑 비밀번호 변경」으로 비밀번호를 변경할 수 있습니다.<br/>
-          • 슈퍼어드민: 어드민·크루 계정 생성 + 전체 권한 · 어드민: 크루 계정 생성 + 전 사업장 일보 · 크루: 본인 소속 사업장 일보만 가능
+        <div style={{ fontSize: 12, fontWeight: 700, color: C.navy, marginBottom: 8 }}>💡 권한 안내</div>
+        <div style={{ fontSize: 11, color: C.gray, lineHeight: 2 }}>
+          <span style={{ display: "inline-block", background: "#EDE7F6", color: "#7B1FA2", borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 4 }}>슈퍼어드민</span>
+          어드민·크루 계정 생성 · 역할 변경 · 전체 권한<br/>
+          <span style={{ display: "inline-block", background: "#E3F2FD", color: C.navy, borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 4 }}>어드민</span>
+          크루 계정 생성 · 전 사업장 일보 작성/수정<br/>
+          <span style={{ display: "inline-block", background: "#E8F5E9", color: C.success, borderRadius: 4, padding: "1px 7px", fontWeight: 700, marginRight: 4 }}>크루</span>
+          본인 소속 사업장 일보 작성/수정만 가능
         </div>
       </div>
     </div>
