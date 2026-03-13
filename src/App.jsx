@@ -6017,9 +6017,20 @@ function SiteManagementPage({ employees }) {
                 <MeParkDatePicker value={detail.contract_end_date || ""} onChange={v => updateDetail(sel.code, "contract_end_date", v)} style={fld} />
               </div>
             </div>
-            <div style={{ marginBottom: 18 }}>
-              <label style={lbl}>월 계약금액</label>
-              <BlurSaveNum value={toNum(detail.monthly_contract)} onSave={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fld, textAlign: "right" }} />
+            <div style={{ display: "grid", gridTemplateColumns: "1.4fr 1fr", gap: 12, marginBottom: 18 }}>
+              <div>
+                <label style={lbl}>월 계약금액</label>
+                <BlurSaveNum value={toNum(detail.monthly_contract)} onSave={v => updateDetail(sel.code, "monthly_contract", v)} style={{ ...fld, textAlign: "right" }} />
+              </div>
+              <div>
+                <label style={lbl}>발렛 단가 (건당)</label>
+                <BlurSaveNum value={toNum(detail.valet_rate)} onSave={v => updateDetail(sel.code, "valet_rate", v)} style={{ ...fld, textAlign: "right" }} placeholder="0" />
+                {toNum(detail.valet_rate) > 0 && (
+                  <div style={{ fontSize: 11, color: C.navy, marginTop: 4, fontWeight: 600 }}>
+                    → 마감앱 자동계산 적용
+                  </div>
+                )}
+              </div>
             </div>
             {/* 주소 */}
             <div style={{ marginBottom: 18 }}>
