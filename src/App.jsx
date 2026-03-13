@@ -723,24 +723,29 @@ function MeParkDatePicker({ value, onChange, style: st, label }) {
 // ── 6. 로그인 페이지 ──────────────────────────────────
 function LoginPage() {
   const { signIn } = useAuth();
-  const [email, setEmail] = useState(() => {
-    try { return localStorage.getItem("mepark_saved_email") || ""; } catch { return ""; }
+  // 사번 또는 이메일 입력 → @mepark.internal 자동 추가 (기존 이메일 계정 호환)
+  const [empNo, setEmpNo] = useState(() => {
+    try { return localStorage.getItem("mepark_saved_empno") || ""; } catch { return ""; }
   });
   const [pw, setPw] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [rememberEmail, setRememberEmail] = useState(() => {
-    try { return !!localStorage.getItem("mepark_saved_email"); } catch { return false; }
+  const [rememberEmpNo, setRememberEmpNo] = useState(() => {
+    try { return !!localStorage.getItem("mepark_saved_empno"); } catch { return false; }
   });
 
+  // 사번 → 이메일 변환 (이미 @가 있으면 그대로)
+  const toEmail = (val) => val.includes("@") ? val : `${val.trim().toLowerCase()}@mepark.internal`;
+
   const handleLogin = async () => {
+    if (!empNo.trim()) { setError("사번을 입력하세요."); return; }
     setLoading(true); setError("");
     try {
-      if (rememberEmail) localStorage.setItem("mepark_saved_email", email);
-      else localStorage.removeItem("mepark_saved_email");
+      if (rememberEmpNo) localStorage.setItem("mepark_saved_empno", empNo);
+      else localStorage.removeItem("mepark_saved_empno");
     } catch {}
-    const { error: e } = await signIn(email, pw);
-    if (e) setError(e);
+    const { error: e } = await signIn(toEmail(empNo), pw);
+    if (e) setError("사번 또는 비밀번호가 올바르지 않습니다.");
     setLoading(false);
   };
 
@@ -759,27 +764,27 @@ function LoginPage() {
           {error && <div style={{ background: "#FEE2E2", color: C.error, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 600, marginBottom: 16 }}>{error}</div>}
 
           <div style={{ marginBottom: 16 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>이메일</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="admin@mrpark.co.kr"
-              style={{ ...inputStyle, padding: "12px 14px", fontSize: 14 }}
-              onKeyDown={e => e.key === "Enter" && handleLogin()} />
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>사번 (아이디)</label>
+            <input value={empNo} onChange={e => setEmpNo(e.target.value)} placeholder="MP24101"
+              style={{ ...inputStyle, padding: "12px 14px", fontSize: 14, fontFamily: "monospace" }}
+              onKeyDown={e => e.key === "Enter" && handleLogin()} autoComplete="username" />
           </div>
           <div style={{ marginBottom: 14 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호</label>
-            <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="••••••••"
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호 <span style={{ fontWeight: 400, fontSize: 11 }}>(초기: 전화번호 뒷 4자리)</span></label>
+            <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="••••"
               style={{ ...inputStyle, padding: "12px 14px", fontSize: 14 }}
-              onKeyDown={e => e.key === "Enter" && handleLogin()} />
+              onKeyDown={e => e.key === "Enter" && handleLogin()} autoComplete="current-password" />
           </div>
 
           <div style={{ marginBottom: 20 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", userSelect: "none" }}
-              onClick={() => setRememberEmail(v => !v)}>
+              onClick={() => setRememberEmpNo(v => !v)}>
               <div style={{
-                width: 18, height: 18, borderRadius: 4, border: `2px solid ${rememberEmail ? C.navy : "#D0D5DD"}`,
-                background: rememberEmail ? C.navy : C.white, display: "flex", alignItems: "center", justifyContent: "center",
+                width: 18, height: 18, borderRadius: 4, border: `2px solid ${rememberEmpNo ? C.navy : "#D0D5DD"}`,
+                background: rememberEmpNo ? C.navy : C.white, display: "flex", alignItems: "center", justifyContent: "center",
                 transition: "all 0.15s", flexShrink: 0,
               }}>
-                {rememberEmail && <span style={{ color: C.white, fontSize: 11, fontWeight: 900, lineHeight: 1 }}>✓</span>}
+                {rememberEmpNo && <span style={{ color: C.white, fontSize: 11, fontWeight: 900, lineHeight: 1 }}>✓</span>}
               </div>
               <span style={{ fontSize: 12, color: C.gray, fontWeight: 500 }}>아이디 저장</span>
             </label>
@@ -791,7 +796,7 @@ function LoginPage() {
           </button>
 
           <p style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: C.gray }}>
-            계정이 없으시면 슈퍼관리자에게 문의하세요.
+            계정이 없으시면 슈퍼어드민에게 문의하세요.
           </p>
         </div>
       </div>
@@ -3824,15 +3829,15 @@ function AdminInvitePanel() {
                   <div style={{ background: "#F8FAFC", border: `1.5px solid ${C.border}`, borderRadius: 12, padding: 16, marginBottom: 14 }}>
                     {[
                       ["이름", createdInfo.name],
-                      ["아이디(이메일)", createdInfo.email],
-                      ["비밀번호(초기)", createdInfo.password],
+                      ["사번 (아이디)", createdInfo.empNo],
+                      ["비밀번호 (초기)", createdInfo.password],
                       ["역할", ROLES[createdInfo.role]],
                       ...(createdInfo.site_code ? [["소속 사업장", getSiteLbl(createdInfo.site_code)]] : []),
                     ].map(([label, value]) => (
                       <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderBottom: `1px solid ${C.border}` }}>
                         <div>
                           <div style={{ fontSize: 10, color: C.gray }}>{label}</div>
-                          <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, fontFamily: label.includes("비밀번호") || label.includes("아이디") ? "monospace" : "inherit" }}>{value}</div>
+                          <div style={{ fontSize: 13, fontWeight: 700, color: C.dark, fontFamily: label.includes("비밀번호") || label.includes("사번") ? "monospace" : "inherit" }}>{value}</div>
                         </div>
                         <button onClick={() => navigator.clipboard.writeText(value)} style={{ background: "none", border: `1px solid ${C.border}`, borderRadius: 6, padding: "3px 8px", cursor: "pointer", fontSize: 11, color: C.gray }}>📋</button>
                       </div>
