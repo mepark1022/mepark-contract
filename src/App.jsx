@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef, createContext, useContext, Fragment, Component } from "react";
 import { supabase, supabaseUrl, supabaseAnonKey, callAdminApi } from "./supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
@@ -11,6 +11,31 @@ import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, Headi
    Phase B: 재무KPI 5개 + 기간선택 실연산 + P&L확장 + 세금계산서카드
    Phase C: Recharts 현금흐름 차트 + 비용입력 DB저장 + 대시보드 연동
    ═══════════════════════════════════════════════════════ */
+
+// ── ErrorBoundary ──
+class ErrorBoundary extends Component {
+  constructor(props) { super(props); this.state = { hasError: false, error: null, info: null }; }
+  static getDerivedStateFromError(error) { return { hasError: true, error }; }
+  componentDidCatch(error, info) { this.setState({ info }); console.error("ErrorBoundary caught:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "'Noto Sans KR', sans-serif", background: "#F4F5F7", padding: 32 }}>
+          <div style={{ maxWidth: 600, background: "#fff", borderRadius: 16, padding: 32, boxShadow: "0 4px 24px rgba(0,0,0,0.1)" }}>
+            <h2 style={{ color: "#E53935", fontSize: 20, fontWeight: 900, marginBottom: 12 }}>⚠️ 오류가 발생했습니다</h2>
+            <p style={{ color: "#666", fontSize: 14, marginBottom: 16 }}>페이지를 새로고침하거나 관리자에게 문의하세요.</p>
+            <div style={{ background: "#FFF3F3", border: "1px solid #FFCDD2", borderRadius: 8, padding: 16, fontSize: 12, color: "#B71C1C", fontFamily: "monospace", whiteSpace: "pre-wrap", wordBreak: "break-all", maxHeight: 300, overflow: "auto" }}>
+              {this.state.error?.toString()}
+              {this.state.info?.componentStack ? "\n\nComponent Stack:" + this.state.info.componentStack.slice(0, 500) : ""}
+            </div>
+            <button onClick={() => window.location.reload()} style={{ marginTop: 16, padding: "10px 24px", background: "#1428A0", color: "#fff", border: "none", borderRadius: 8, fontSize: 14, fontWeight: 800, cursor: "pointer" }}>🔄 새로고침</button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // ── 1. 상수 ──────────────────────────────────────────
 const C = {
@@ -10681,11 +10706,13 @@ export default function App() {
   }, []);
 
   return (
-    <ConfirmProvider>
-      <AuthProvider>
-        <AppRouter />
-      </AuthProvider>
-    </ConfirmProvider>
+    <ErrorBoundary>
+      <ConfirmProvider>
+        <AuthProvider>
+          <AppRouter />
+        </AuthProvider>
+      </ConfirmProvider>
+    </ErrorBoundary>
   );
 }
 
