@@ -10951,6 +10951,8 @@ function AttendancePage({ employees }) {
   const [loading, setLoading] = useState(false);
   const [popup, setPopup] = useState(null); // { empId, date, x, y }
   const [saving, setSaving] = useState(false);
+  const [viewMode, setViewMode] = useState("calendar"); // calendar / card
+  const [empSearch, setEmpSearch] = useState("");
 
   // 해당 월 날짜 배열
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -11048,6 +11050,7 @@ function AttendancePage({ employees }) {
       const sc = e.site_code_1 || e.site_code || "V000";
       if (sc === "V000") return;
       if (siteFilter !== "all" && sc !== siteFilter) return;
+      if (empSearch && !e.name.includes(empSearch) && !(e.emp_no || "").toLowerCase().includes(empSearch.toLowerCase())) return;
       if (!groups[sc]) groups[sc] = [];
       groups[sc].push(e);
     });
@@ -11056,13 +11059,15 @@ function AttendancePage({ employees }) {
       code, name: SITES.find(s => s.code === code)?.name || code,
       emps: emps.sort((a, b) => (a.name || "").localeCompare(b.name || "")),
     }));
-  }, [activeEmps, siteFilter]);
+  }, [activeEmps, siteFilter, empSearch]);
 
   const allFilteredEmps = siteGroups.flatMap(g => g.emps);
 
   // KPI
   const totalEmps = allFilteredEmps.length;
   const holidaysInMonth = dates.filter(d => d.isHoliday).length;
+  const pastWorkDates = dates.filter(d => !d.isWeekend && !d.isHoliday && d.dateStr <= todayStr);
+  const totalWorkableDays = pastWorkDates.length;
   const kpiAttCount = allFilteredEmps.reduce((sum, emp) => {
     return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "출근").length;
   }, 0);
@@ -11075,6 +11080,71 @@ function AttendancePage({ employees }) {
   const kpiAbsentCount = allFilteredEmps.reduce((sum, emp) => {
     return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "결근").length;
   }, 0);
+  const kpiLeaveCount = allFilteredEmps.reduce((sum, emp) => {
+    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "연차").length;
+  }, 0);
+  const expectedTotal = totalEmps * totalWorkableDays;
+  const overallAttRate = expectedTotal > 0 ? Math.round(((kpiAttCount + kpiExtraCount + kpiLateCount) / expectedTotal) * 100) : 0;
+
+  // Per-employee stats (for card view)
+  const empStats = useMemo(() => {
+    return allFilteredEmps.map(emp => {
+      const att = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "출근").length;
+      const extra = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "추가").length;
+      const late = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "지각").length;
+      const absent = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "결근").length;
+      const leave = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "연차").length;
+      const worked = att + extra + late;
+      const rate = totalWorkableDays > 0 ? Math.round((worked / totalWorkableDays) * 100) : 0;
+      return { ...emp, att, extra, late, absent, leave, worked, rate };
+    });
+  }, [allFilteredEmps, dates, getCellStatus, totalWorkableDays]);
+
+  // Excel Export
+  const exportExcel = async () => {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    // Sheet 1: 근태 요약
+    const summaryRows = empStats.map(e => ({
+      "사번": e.emp_no || "", "이름": e.name, "사업장": getSiteName(e.site_code_1),
+      "근무형태": getWorkLabel(e.work_code), "출근": e.att, "추가": e.extra,
+      "지각": e.late, "결근": e.absent, "연차": e.leave, "근무일수": e.worked,
+      "출근률(%)": e.rate,
+    }));
+    const ws1 = XLSX.utils.json_to_sheet(summaryRows);
+    ws1["!cols"] = [{ wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws1, "근태요약");
+
+    // Sheet 2: 일별 상세
+    const detailRows = empStats.flatMap(e =>
+      dates.filter(d => d.dateStr <= todayStr).map(d => ({
+        "사번": e.emp_no || "", "이름": e.name, "사업장": getSiteName(e.site_code_1),
+        "날짜": d.dateStr, "요일": d.dayName, "상태": getCellStatus(e.id, d.dateStr) || (d.isHoliday ? "공휴일" : d.isWeekend ? "주말" : ""),
+      }))
+    );
+    const ws2 = XLSX.utils.json_to_sheet(detailRows);
+    ws2["!cols"] = [{ wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 4 }, { wch: 8 }];
+    XLSX.utils.book_append_sheet(wb, ws2, "일별상세");
+
+    // Sheet 3: 매장별 집계
+    const siteRows = siteGroups.map(g => {
+      const gEmps = empStats.filter(e => (e.site_code_1 || e.site_code) === g.code);
+      const gAtt = gEmps.reduce((s, e) => s + e.att, 0);
+      const gExtra = gEmps.reduce((s, e) => s + e.extra, 0);
+      const gLate = gEmps.reduce((s, e) => s + e.late, 0);
+      const gAbsent = gEmps.reduce((s, e) => s + e.absent, 0);
+      const gExpected = gEmps.length * totalWorkableDays;
+      const gRate = gExpected > 0 ? Math.round(((gAtt + gExtra + gLate) / gExpected) * 100) : 0;
+      return { "사업장": `${g.code} ${g.name}`, "인원": gEmps.length, "출근": gAtt, "추가": gExtra, "지각": gLate, "결근": gAbsent, "출근률(%)": gRate };
+    });
+    const ws3 = XLSX.utils.json_to_sheet(siteRows);
+    ws3["!cols"] = [{ wch: 18 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, ws3, "매장별집계");
+
+    const { saveAs } = await import("file-saver");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    saveAs(new Blob([buf]), `근태현황_${year}년${month}월.xlsx`);
+  };
 
   // 셀 클릭 → 팝업
   const handleCellClick = (empId, dateStr, e) => {
@@ -11122,16 +11192,52 @@ function AttendancePage({ employees }) {
   return (
     <div style={{ padding: "24px 28px", maxWidth: 1400, margin: "0 auto" }}>
       {/* 헤더 */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 900, color: C.dark, margin: 0 }}>📅 전체 캘린더</h2>
+          <h2 style={{ fontSize: 22, fontWeight: 900, color: C.dark, margin: 0 }}>📅 근태현황</h2>
           <div style={{ fontSize: 12, color: C.gray, marginTop: 3 }}>현장일보 자동반영 + 수동 편집 · 셀 클릭으로 상태 선택</div>
         </div>
-        {loading && <span style={{ fontSize: 12, color: C.gray }}>⏳ 로딩 중...</span>}
-        {saving && <span style={{ fontSize: 12, color: C.orange, fontWeight: 700 }}>💾 저장 중...</span>}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {loading && <span style={{ fontSize: 12, color: C.gray }}>⏳ 로딩 중...</span>}
+          {saving && <span style={{ fontSize: 12, color: C.orange, fontWeight: 700 }}>💾 저장 중...</span>}
+          <button onClick={exportExcel} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 Excel</button>
+        </div>
       </div>
 
-      {/* 범례 + 필터 */}
+      {/* 월 네비게이션 + 뷰 전환 + 검색 + 필터 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "10px 16px", flexWrap: "wrap" }}>
+        <button onClick={() => moveMonth(-1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+        <div style={{ fontSize: 16, fontWeight: 900, color: C.dark, minWidth: 120, textAlign: "center" }}>{year}년 {month}월</div>
+        <button onClick={() => moveMonth(1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+        <button onClick={goToday} style={{ padding: "5px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>오늘</button>
+        {holidaysInMonth > 0 && (
+          <div style={{ fontSize: 11, color: "#C62828", background: "#FFEBEE", borderRadius: 6, padding: "3px 10px", fontWeight: 700 }}>
+            🎌 공휴일 {holidaysInMonth}일
+          </div>
+        )}
+        <div style={{ display: "flex", background: "#F0F2F8", borderRadius: 8, padding: 2, marginLeft: 8 }}>
+          {[["calendar", "📅 캘린더"], ["card", "🃏 카드"]].map(([k, v]) => (
+            <button key={k} onClick={() => setViewMode(k)} style={{
+              padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+              background: viewMode === k ? "#fff" : "transparent", color: viewMode === k ? C.navy : C.gray,
+              border: "none", boxShadow: viewMode === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
+            }}>{v}</button>
+          ))}
+        </div>
+        <input value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="🔍 이름/사번 검색" style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, width: 140, background: "#fff" }} />
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: C.gray }}>사업장</span>
+          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, fontWeight: 600, background: "#fff" }}>
+            <option value="all">전체 ({activeEmps.length}명)</option>
+            {siteFilterOptions.map(s => {
+              const cnt = activeEmps.filter(e => (e.site_code_1 || e.site_code) === s.code).length;
+              return <option key={s.code} value={s.code}>{s.name} ({cnt}명)</option>;
+            })}
+          </select>
+        </div>
+      </div>
+
+      {/* 범례 */}
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1, flexWrap: "wrap" }}>
           {ATT_STATUSES.map(s => (
@@ -11145,41 +11251,18 @@ function AttendancePage({ employees }) {
             <span style={{ fontWeight: 600, color: "#43A047" }}>일보 자동</span>
           </div>
         </div>
-        <span style={{ fontSize: 11, color: C.gray }}>🔹 셀 클릭으로 상태 선택</span>
       </div>
 
-      {/* 월 네비게이션 + 사업장 필터 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "10px 16px", flexWrap: "wrap" }}>
-        <button onClick={() => moveMonth(-1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
-        <div style={{ fontSize: 16, fontWeight: 900, color: C.dark, minWidth: 120, textAlign: "center" }}>{year}년 {month}월</div>
-        <button onClick={() => moveMonth(1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
-        <button onClick={goToday} style={{ padding: "5px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>오늘</button>
-        {holidaysInMonth > 0 && (
-          <div style={{ fontSize: 11, color: "#C62828", background: "#FFEBEE", borderRadius: 6, padding: "3px 10px", fontWeight: 700 }}>
-            🎌 공휴일 {holidaysInMonth}일
-          </div>
-        )}
-        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.gray }}>사업장</span>
-          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, fontWeight: 600, background: "#fff" }}>
-            <option value="all">전체 ({activeEmps.length}명)</option>
-            {siteFilterOptions.map(s => {
-              const cnt = activeEmps.filter(e => (e.site_code_1 || e.site_code) === s.code).length;
-              return <option key={s.code} value={s.code}>{s.name} ({cnt}명)</option>;
-            })}
-          </select>
-        </div>
-      </div>
-
-      {/* KPI 스트립 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 20 }}>
+      {/* KPI 스트립 (7개) */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10, marginBottom: 20 }}>
         {[
           { icon: "👥", label: "표시 인원", value: `${totalEmps}명`, color: C.navy },
+          { icon: "📊", label: "출근률", value: `${overallAttRate}%`, color: overallAttRate >= 80 ? C.success : overallAttRate >= 60 ? C.orange : C.error },
           { icon: "✅", label: "출근", value: `${kpiAttCount}건`, color: C.success },
           { icon: "💜", label: "추가근무", value: `${kpiExtraCount}건`, color: "#7C3AED" },
           { icon: "⏰", label: "지각", value: `${kpiLateCount}건`, color: "#F57F17" },
           { icon: "❌", label: "결근", value: `${kpiAbsentCount}건`, color: C.error },
-          { icon: "🎌", label: "공휴일", value: `${holidaysInMonth}일`, color: "#C62828" },
+          { icon: "🏖️", label: "연차", value: `${kpiLeaveCount}건`, color: "#6A1B9A" },
         ].map(k => (
           <div key={k.label} style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "10px 14px", textAlign: "center" }}>
             <div style={{ fontSize: 18, marginBottom: 2 }}>{k.icon}</div>
@@ -11189,7 +11272,71 @@ function AttendancePage({ employees }) {
         ))}
       </div>
 
-      {/* 캘린더 그리드 테이블 */}
+      {/* ── 카드 뷰 ── */}
+      {viewMode === "card" && (
+        <div>
+          {siteGroups.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 14 }}>{loading ? "로딩 중..." : "표시할 직원이 없습니다"}</div>}
+          {siteGroups.map(group => (
+            <div key={group.code} style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+                🏢 {group.name} <span style={{ color: C.gray, fontWeight: 600 }}>({group.code}) · {group.emps.length}명</span>
+              </div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280, 1fr))", gap: 10 }}>
+                {empStats.filter(e => (e.site_code_1 || e.site_code) === group.code).map(emp => {
+                  const rateColor = emp.rate >= 80 ? C.success : emp.rate >= 60 ? C.orange : C.error;
+                  return (
+                    <div key={emp.id} style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, padding: "16px 18px", transition: "box-shadow 0.15s" }}
+                      onMouseEnter={e => e.currentTarget.style.boxShadow = "0 4px 16px rgba(0,0,0,0.08)"}
+                      onMouseLeave={e => e.currentTarget.style.boxShadow = "none"}>
+                      {/* 카드 헤더 */}
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                        <div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>{emp.name}</div>
+                          <div style={{ fontSize: 11, color: C.gray }}>{emp.emp_no} · {getWorkLabel(emp.work_code)}</div>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 22, fontWeight: 900, color: rateColor }}>{emp.rate}%</div>
+                          <div style={{ fontSize: 10, color: C.gray }}>출근률</div>
+                        </div>
+                      </div>
+                      {/* 출근률 바 */}
+                      <div style={{ height: 6, background: "#F0F2F8", borderRadius: 3, marginBottom: 12, overflow: "hidden" }}>
+                        <div style={{ height: "100%", width: `${Math.min(emp.rate, 100)}%`, background: rateColor, borderRadius: 3, transition: "width 0.4s" }} />
+                      </div>
+                      {/* 상세 카운트 */}
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 4, textAlign: "center" }}>
+                        {[
+                          { label: "출근", val: emp.att, color: C.success },
+                          { label: "추가", val: emp.extra, color: "#7C3AED" },
+                          { label: "지각", val: emp.late, color: "#F57F17" },
+                          { label: "결근", val: emp.absent, color: C.error },
+                          { label: "연차", val: emp.leave, color: "#6A1B9A" },
+                        ].map(s => (
+                          <div key={s.label}>
+                            <div style={{ fontSize: 14, fontWeight: 800, color: s.val > 0 ? s.color : "#DDD" }}>{s.val}</div>
+                            <div style={{ fontSize: 9, color: C.gray, marginTop: 1 }}>{s.label}</div>
+                          </div>
+                        ))}
+                      </div>
+                      {/* 미니 달력 도트 */}
+                      <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 2 }}>
+                        {dates.filter(d => d.dateStr <= todayStr).map(d => {
+                          const st = getCellStatus(emp.id, d.dateStr);
+                          const dotColor = st === "출근" ? "#C8E6C9" : st === "추가" ? "#E8D5F5" : st === "지각" ? "#FFF9C4" : st === "결근" ? "#FFCDD2" : st === "연차" ? "#E1BEE7" : st === "휴무" ? "#E0E0E0" : d.isHoliday || d.isWeekend ? "#F5F5F5" : "#EEEEEE";
+                          return <div key={d.dateStr} title={`${d.dateStr} ${st || ""}`} style={{ width: 8, height: 8, borderRadius: 2, background: dotColor }} />;
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── 캘린더 그리드 테이블 ── */}
+      {viewMode === "calendar" && (
       <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
           <table style={{ borderCollapse: "collapse", minWidth: daysInMonth * 40 + 230, width: "100%" }}>
@@ -11312,15 +11459,18 @@ function AttendancePage({ employees }) {
         </div>
         {/* 하단 요약 */}
         {allFilteredEmps.length > 0 && (
-          <div style={{ padding: "10px 16px", background: "#F8F9FC", borderTop: "1.5px solid #EEF1F8", fontSize: 12, color: C.gray, display: "flex", gap: 16 }}>
+          <div style={{ padding: "10px 16px", background: "#F8F9FC", borderTop: "1.5px solid #EEF1F8", fontSize: 12, color: C.gray, display: "flex", gap: 16, flexWrap: "wrap" }}>
             <span>👥 총 {totalEmps}명</span>
+            <span>📊 출근률 {overallAttRate}%</span>
             <span>✅ 출근 {kpiAttCount}건</span>
             <span>💜 추가 {kpiExtraCount}건</span>
             <span>⏰ 지각 {kpiLateCount}건</span>
             <span>❌ 결근 {kpiAbsentCount}건</span>
+            <span>🏖️ 연차 {kpiLeaveCount}건</span>
           </div>
         )}
       </div>
+      )}
 
       {/* 공휴일 목록 */}
       {holidaysInMonth > 0 && (
