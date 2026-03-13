@@ -307,18 +307,29 @@ function AuthProvider({ children }) {
   // ── 계정 직접 생성 (슈퍼관리자 전용 — Edge Function) ──
   const createAccount = async (name, email, password, role, options = {}) => {
     try {
-      const existingProfile = profiles.find(p => p.email === email);
-      if (existingProfile) return { error: "이미 등록된 관리자입니다." };
+      // profiles 기준 중복 체크 (emp_no 또는 email)
+      const empNo = options.emp_no || null;
+      const existingByEmail = profiles.find(p => p.email === email);
+      const existingByEmpNo = empNo ? profiles.find(p => p.emp_no === empNo) : null;
+      if (existingByEmail || existingByEmpNo) {
+        return { error: `이미 등록된 계정입니다 (${empNo || email})` };
+      }
 
-      // Edge Function으로 계정 생성 (service_role 키는 서버에서만 사용)
+      // Edge Function으로 계정 생성
       const { data, error: apiError } = await callAdminApi("create_user", {
         email, password, name, role,
         site_code: options.site_code || null,
         employee_id: options.employee_id || null,
-        emp_no: options.emp_no || null,
+        emp_no: empNo,
       });
 
-      if (apiError) return { error: apiError };
+      // auth 중복 오류는 친절하게 변환
+      if (apiError) {
+        if (apiError.includes("already") || apiError.includes("duplicate") || apiError.includes("exists")) {
+          return { error: `중복 계정 — auth에 이미 존재합니다 (${empNo || email}). Supabase에서 삭제 후 재시도하세요.` };
+        }
+        return { error: apiError };
+      }
 
       await loadData();
       return { error: null };
