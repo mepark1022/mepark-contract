@@ -3585,6 +3585,14 @@ function AdminInvitePanel() {
   const [bulkDone, setBulkDone]         = useState(false);
   const [bulkMsg, setBulkMsg]           = useState("");
 
+  // ── 엑셀 일괄 수정 ──
+  const [showBulkEdit, setShowBulkEdit]       = useState(false);
+  const [bulkEditRows, setBulkEditRows]       = useState([]);
+  const [bulkEditing, setBulkEditing]         = useState(false);
+  const [bulkEditResults, setBulkEditResults] = useState([]);
+  const [bulkEditDone, setBulkEditDone]       = useState(false);
+  const [bulkEditMsg, setBulkEditMsg]         = useState("");
+
   // ── 비밀번호 변경 ──
   const [showPwChange, setShowPwChange] = useState(false);
   const [changePw, setChangePw]   = useState("");
@@ -3730,6 +3738,111 @@ function AdminInvitePanel() {
 
   const closeBulk = () => { setShowBulk(false); setBulkRows([]); setBulkResults([]); setBulkDone(false); setBulkMsg(""); };
 
+  // ── 크루 현황 엑셀 다운로드 ──
+  const downloadCrewExcel = () => {
+    const wb = XLSX.utils.book_new();
+    // 안내 시트
+    const guide = [
+      ["ME.PARK ERP 계정 일괄수정 양식"],
+      [""],
+      ["◆ 수정 방법"],
+      ["· '사업장코드' 또는 '근무형태코드' 컬럼을 수정 후 다시 업로드"],
+      ["· '이름', '사번', '역할'은 참조용 (수정 불가)"],
+      ["· 사번(emp_no)을 기준으로 매칭합니다"],
+      [""],
+      ["◆ 사업장 코드 목록"],
+      ...SITES.filter(s => s.code !== "V000").map(s => [s.code, s.name]),
+      [""],
+      ["◆ 근무형태 코드 목록"],
+      ...WORK_CODES.map(w => [w.code, w.label, w.cat === "weekday" ? "평일" : w.cat === "weekend" ? "주말" : w.cat === "mixed" ? "복합" : "알바"]),
+    ];
+    const wsGuide = XLSX.utils.aoa_to_sheet(guide);
+    wsGuide["!cols"] = [{ wch: 30 }, { wch: 24 }, { wch: 10 }];
+    XLSX.utils.book_append_sheet(wb, wsGuide, "작성안내");
+
+    // 데이터 시트 — 전체 계정 (슈퍼어드민 + 어드민 + 크루)
+    const allProfiles = [...superAdmins, ...admins, ...crews];
+    const header = ["이름", "사번", "역할", "사업장코드", "사업장명", "근무형태코드", "근무형태명"];
+    const rows = allProfiles.map(p => [
+      p.name || "",
+      p.emp_no || p.email?.split("@")[0]?.toUpperCase() || "",
+      ROLES[p.role] || p.role,
+      p.site_code || "",
+      getSiteLbl(p.site_code || ""),
+      p.work_code || "",
+      p.work_code ? getWorkLabel(p.work_code) : "",
+    ]);
+    const wsData = XLSX.utils.aoa_to_sheet([header, ...rows]);
+    wsData["!cols"] = [{ wch: 12 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 16 }];
+    XLSX.utils.book_append_sheet(wb, wsData, "계정현황");
+
+    XLSX.writeFile(wb, `ME.PARK_계정현황_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
+  // ── 일괄 수정 파일 파싱 ──
+  const handleBulkEditFile = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const wb = XLSX.read(ev.target.result, { type: "array" });
+      const ws = wb.Sheets["계정현황"] || wb.Sheets[wb.SheetNames.find(n => n !== "작성안내")] || wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: "" });
+      const allProfiles = [...superAdmins, ...admins, ...crews];
+      const parsed = rows
+        .filter(r => r["사번"])
+        .map(r => {
+          const empNo = String(r["사번"]).trim().toUpperCase();
+          const existing = allProfiles.find(p => (p.emp_no || p.email?.split("@")[0]?.toUpperCase()) === empNo);
+          const newSite = String(r["사업장코드"] || "").trim().toUpperCase();
+          const newWork = String(r["근무형태코드"] || "").trim().toUpperCase();
+          const changed = existing && (
+            (newSite !== (existing.site_code || "")) ||
+            (newWork !== (existing.work_code || ""))
+          );
+          return {
+            name: String(r["이름"] || "").trim(),
+            empNo,
+            profileId: existing?.id || null,
+            oldSite: existing?.site_code || "",
+            newSite,
+            oldWork: existing?.work_code || "",
+            newWork,
+            changed,
+            found: !!existing,
+          };
+        });
+      const changedCount = parsed.filter(r => r.changed).length;
+      setBulkEditRows(parsed);
+      setBulkEditResults([]);
+      setBulkEditDone(false);
+      setBulkEditMsg(changedCount > 0 ? `${changedCount}건 변경 감지됨 (전체 ${parsed.length}건 중)` : parsed.length > 0 ? "⚠️ 변경사항이 없습니다." : "⚠️ 데이터 행이 없습니다.");
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = "";
+  };
+
+  // ── 일괄 수정 실행 ──
+  const handleBulkEdit = async () => {
+    const toUpdate = bulkEditRows.filter(r => r.changed && r.profileId);
+    if (!toUpdate.length) return;
+    setBulkEditing(true);
+    const results = [];
+    for (const row of toUpdate) {
+      const updateData = {};
+      if (row.newSite !== row.oldSite) updateData.site_code = row.newSite || null;
+      if (row.newWork !== row.oldWork) updateData.work_code = row.newWork || null;
+      const { error } = await supabase.from("profiles").update(updateData).eq("id", row.profileId);
+      results.push({ ...row, ok: !error, error: error?.message || "" });
+    }
+    setBulkEditResults(results);
+    setBulkEditDone(true);
+    setBulkEditing(false);
+    await loadData();
+  };
+
+  const closeBulkEdit = () => { setShowBulkEdit(false); setBulkEditRows([]); setBulkEditResults([]); setBulkEditDone(false); setBulkEditMsg(""); };
+
   // ── 비밀번호 변경 ──
   const handlePwChange = async () => {
     if (changePw.length < 6) { setPwMsg("비밀번호는 6자 이상이어야 합니다."); return; }
@@ -3829,14 +3942,19 @@ function AdminInvitePanel() {
   return (
     <div style={{ maxWidth: 900 }}>
       {/* ── 헤더 ── */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
         <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: 0 }}>🔐 관리자 계정 관리</h2>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={() => setShowPwChange(true)} style={btnOutline}>🔑 비밀번호 변경</button>
-          <button onClick={downloadTemplate} style={{ ...btnOutline, color: C.success, borderColor: C.success }}>📥 양식 다운로드</button>
-          <button onClick={() => setShowBulk(true)} style={{ ...btnOutline, color: "#E97132", borderColor: "#E97132" }}>📊 엑셀 일괄생성</button>
           {(isSuperAdmin || isAdmin) && <button onClick={() => setShowCreateForm(true)} style={btnPrimary}>+ 계정 생성</button>}
         </div>
+      </div>
+      {/* ── 엑셀 기능 버튼 ── */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 20, flexWrap: "wrap" }}>
+        <button onClick={downloadCrewExcel} style={{ ...btnOutline, color: C.navy, borderColor: C.navy, fontSize: 12, padding: "7px 14px" }}>📥 현황 다운로드</button>
+        <button onClick={() => setShowBulkEdit(true)} style={{ ...btnOutline, color: C.skyBlue, borderColor: C.skyBlue, fontSize: 12, padding: "7px 14px" }}>📤 일괄 수정</button>
+        <button onClick={downloadTemplate} style={{ ...btnOutline, color: C.success, borderColor: C.success, fontSize: 12, padding: "7px 14px" }}>📋 생성양식</button>
+        <button onClick={() => setShowBulk(true)} style={{ ...btnOutline, color: "#E97132", borderColor: "#E97132", fontSize: 12, padding: "7px 14px" }}>📊 일괄 생성</button>
       </div>
 
       {/* ── 단일 생성 모달 ── */}
@@ -4066,6 +4184,137 @@ function AdminInvitePanel() {
                     </table>
                   </div>
                   <button onClick={closeBulk} style={{ ...btnPrimary, width: "100%", padding: 12 }}>닫기</button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 일괄 수정 모달 ── */}
+      {showBulkEdit && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
+          onClick={bulkEditing ? null : closeBulkEdit}>
+          <div style={{ background: C.white, borderRadius: 16, width: 680, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+            <div style={{ background: C.skyBlue, padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 20 }}>📤</span>
+              <h3 style={{ fontSize: 16, fontWeight: 900, color: "#fff", margin: 0 }}>엑셀 일괄 수정 (사업장·근무형태)</h3>
+            </div>
+            <div style={{ padding: 24 }}>
+              {!bulkEditDone ? (
+                <>
+                  <div style={{ background: "#E3F2FD", border: "1px solid #90CAF9", borderRadius: 10, padding: 14, marginBottom: 18, fontSize: 12, color: "#1565C0", lineHeight: 1.8 }}>
+                    <div style={{ fontWeight: 800, marginBottom: 6 }}>📌 사용 방법</div>
+                    <div>1. <b>[📥 현황 다운로드]</b> 버튼으로 현재 계정 목록 엑셀 다운로드</div>
+                    <div>2. 엑셀에서 <b>사업장코드</b> 또는 <b>근무형태코드</b> 컬럼 수정</div>
+                    <div>3. 수정된 엑셀을 아래에 업로드 → 변경사항 확인 후 적용</div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
+                    <button onClick={downloadCrewExcel}
+                      style={{ padding: "16px 10px", borderRadius: 12, border: `2px dashed ${C.navy}`, background: "#EEF2FF", cursor: "pointer", textAlign: "center", color: C.navy, fontWeight: 700, fontSize: 13 }}>
+                      📥 현황 엑셀 다운로드
+                      <div style={{ fontSize: 11, fontWeight: 400, marginTop: 4, opacity: 0.8 }}>현재 계정 목록</div>
+                    </button>
+                    <label style={{ padding: "16px 10px", borderRadius: 12, border: `2px dashed ${C.skyBlue}`, background: "#E3F2FD", cursor: "pointer", textAlign: "center", color: C.skyBlue, fontWeight: 700, fontSize: 13, display: "block" }}>
+                      📤 수정된 엑셀 업로드
+                      <div style={{ fontSize: 11, fontWeight: 400, marginTop: 4, opacity: 0.8 }}>클릭하여 파일 선택</div>
+                      <input type="file" accept=".xlsx,.xls" onChange={handleBulkEditFile} style={{ display: "none" }} />
+                    </label>
+                  </div>
+
+                  {bulkEditMsg && <div style={{ fontSize: 12, color: bulkEditMsg.startsWith("⚠️") ? C.error : C.navy, fontWeight: 700, marginBottom: 12, textAlign: "center" }}>{bulkEditMsg}</div>}
+
+                  {bulkEditRows.length > 0 && (
+                    <div style={{ marginBottom: 18 }}>
+                      <div style={{ fontWeight: 800, fontSize: 13, color: C.dark, marginBottom: 10 }}>📋 변경 내역 미리보기 <span style={{ color: C.skyBlue }}>({bulkEditRows.filter(r => r.changed).length}건 변경)</span></div>
+                      <div style={{ maxHeight: 320, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 10 }}>
+                        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                          <thead>
+                            <tr style={{ background: C.navy, position: "sticky", top: 0 }}>
+                              {["이름", "사번", "사업장", "근무형태", "상태"].map(h => (
+                                <th key={h} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {bulkEditRows.filter(r => r.changed || !r.found).map((r, i) => (
+                              <tr key={i} style={{ background: !r.found ? "#FFF0F0" : r.changed ? "#FFFCE8" : (i % 2 ? C.bg : C.white) }}>
+                                <td style={{ padding: "7px 10px", fontWeight: 700 }}>{r.name}</td>
+                                <td style={{ padding: "7px 10px", fontFamily: "monospace", color: C.navy, fontSize: 11 }}>{r.empNo}</td>
+                                <td style={{ padding: "7px 10px", fontSize: 10 }}>
+                                  {r.oldSite !== r.newSite ? (
+                                    <span><span style={{ color: C.error, textDecoration: "line-through" }}>{r.oldSite || "미배정"}</span> → <span style={{ color: C.success, fontWeight: 800 }}>{r.newSite || "미배정"}</span></span>
+                                  ) : (
+                                    <span style={{ color: C.gray }}>{r.newSite || "—"}</span>
+                                  )}
+                                </td>
+                                <td style={{ padding: "7px 10px", fontSize: 10 }}>
+                                  {r.oldWork !== r.newWork ? (
+                                    <span><span style={{ color: C.error, textDecoration: "line-through" }}>{r.oldWork ? `${r.oldWork} ${getWorkLabel(r.oldWork)}` : "미설정"}</span> → <span style={{ color: C.success, fontWeight: 800 }}>{r.newWork ? `${r.newWork} ${getWorkLabel(r.newWork)}` : "미설정"}</span></span>
+                                  ) : (
+                                    <span style={{ color: C.gray }}>{r.newWork ? `${r.newWork} ${getWorkLabel(r.newWork)}` : "—"}</span>
+                                  )}
+                                </td>
+                                <td style={{ padding: "7px 10px", textAlign: "center" }}>
+                                  {!r.found ? <span style={{ color: C.error, fontWeight: 700, fontSize: 10 }}>❌ 미매칭</span>
+                                   : r.changed ? <span style={{ color: C.gold, fontWeight: 700, fontSize: 10 }}>✏️ 변경</span>
+                                   : <span style={{ color: C.gray, fontSize: 10 }}>—</span>}
+                                </td>
+                              </tr>
+                            ))}
+                            {bulkEditRows.filter(r => r.changed || !r.found).length === 0 && (
+                              <tr><td colSpan={5} style={{ padding: 20, textAlign: "center", color: C.gray, fontSize: 12 }}>변경사항이 없습니다.</td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+                    <button onClick={closeBulkEdit} style={btnOutline}>취소</button>
+                    <button onClick={handleBulkEdit} disabled={!bulkEditRows.filter(r => r.changed && r.profileId).length || bulkEditing}
+                      style={{ ...btnPrimary, background: C.skyBlue, borderColor: C.skyBlue, opacity: (!bulkEditRows.filter(r => r.changed && r.profileId).length || bulkEditing) ? 0.5 : 1 }}>
+                      {bulkEditing ? "수정 중..." : `✅ ${bulkEditRows.filter(r => r.changed && r.profileId).length}건 일괄 적용`}
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div style={{ textAlign: "center", marginBottom: 18 }}>
+                    <div style={{ fontSize: 32, marginBottom: 8 }}>
+                      {bulkEditResults.every(r => r.ok) ? "✅" : bulkEditResults.some(r => r.ok) ? "⚠️" : "❌"}
+                    </div>
+                    <div style={{ fontWeight: 900, fontSize: 16, color: C.dark }}>
+                      {bulkEditResults.filter(r => r.ok).length}건 수정 완료 / {bulkEditResults.filter(r => !r.ok).length}건 실패
+                    </div>
+                  </div>
+                  <div style={{ maxHeight: 260, overflowY: "auto", border: `1px solid ${C.border}`, borderRadius: 10, marginBottom: 16 }}>
+                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                      <thead>
+                        <tr style={{ background: C.navy, position: "sticky", top: 0 }}>
+                          {["이름", "사번", "변경내용", "결과"].map(h => <th key={h} style={{ padding: "8px 10px", color: "#fff", fontWeight: 700 }}>{h}</th>)}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {bulkEditResults.map((r, i) => (
+                          <tr key={i} style={{ background: r.ok ? (i % 2 ? "#E8F5E9" : "#F1FAF3") : "#FFF0F0" }}>
+                            <td style={{ padding: "7px 10px", fontWeight: 700 }}>{r.name}</td>
+                            <td style={{ padding: "7px 10px", fontFamily: "monospace", color: C.navy }}>{r.empNo}</td>
+                            <td style={{ padding: "7px 10px", fontSize: 10 }}>
+                              {r.oldSite !== r.newSite && <span>사업장: {r.oldSite || "미배정"}→{r.newSite || "미배정"} </span>}
+                              {r.oldWork !== r.newWork && <span>근무형태: {r.oldWork || "미설정"}→{r.newWork || "미설정"}</span>}
+                            </td>
+                            <td style={{ padding: "7px 10px", textAlign: "center" }}>
+                              {r.ok ? <span style={{ color: C.success, fontWeight: 700 }}>✅</span> : <span style={{ color: C.error, fontSize: 10 }}>❌ {r.error}</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <button onClick={closeBulkEdit} style={{ ...btnPrimary, width: "100%", padding: 11 }}>닫기</button>
                 </>
               )}
             </div>
