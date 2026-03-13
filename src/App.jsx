@@ -54,7 +54,7 @@ const WORK_CODES = [
 const POSITIONS = ["대표", "본부장", "운영이사", "수석팀장", "센터장", "팀장", "일반"];
 const TAX_TYPES = ["4대보험", "3.3%", "3.3%(타인)", "고용&산재", "미신고"];
 const BANKS = ["국민은행","신한은행","우리은행","하나은행","농협은행","기업은행","SC제일은행","카카오뱅크","토스뱅크","케이뱅크","수협은행","대구은행","부산은행","경남은행","광주은행","전북은행","제주은행","새마을금고","우체국","신협","산업은행"];
-const ROLES = { super_admin: "슈퍼관리자", admin: "일반관리자", viewer: "뷰어", field_member: "현장팀원" };
+const ROLES = { super_admin: "슈퍼어드민", admin: "어드민", crew: "크루", field_member: "현장팀원" };
 
 // 날짜 포맷 헬퍼 (어드민 패널용)
 const fmtDate = (d) => {
@@ -398,11 +398,16 @@ function AuthProvider({ children }) {
 
   const profile = user ? profiles.find(p => p.id === user.id) : null;
   const isFieldRole = profile && profile.role === "field_member";
+  const isCrewRole  = profile && profile.role === "crew";
+
+  // 크루: 본인 소속 사업장 일보 작성/수정만 가능
   const can = (action) => {
     if (!profile) return false;
-    if (isFieldRole) return false; // 현장 역할은 ERP 기능 접근 불가
+    if (isFieldRole) return false; // 마감앱 전용 — ERP 접근 불가
     if (profile.role === "super_admin") return true;
-    if (profile.role === "admin") return !["invite", "manage_admins", "settings"].includes(action);
+    if (profile.role === "admin") return !["manage_admins", "settings"].includes(action);
+    // crew: invite(크루 생성) 불가, daily_report 작성/수정만 허용
+    if (isCrewRole) return ["view", "daily_report"].includes(action);
     return action === "view";
   };
 
@@ -410,7 +415,7 @@ function AuthProvider({ children }) {
     <AuthCtx.Provider value={{
       user, profile, loading, signIn, signUp, signOut, createAccount, changePassword, sendInvite,
       cancelInvite, resendInvite, removeAdmin, updateRole,
-      profiles, invitations, can, loadData, callAdminApi,
+      profiles, invitations, can, loadData, callAdminApi, isCrewRole,
     }}>
       {children}
     </AuthCtx.Provider>
@@ -3507,17 +3512,27 @@ const detailRow = { fontSize: 12, marginBottom: 4, color: C.dark };
 
 // ── 13. 관리자 계정 관리 ──────────────────────────────
 function AdminInvitePanel() {
-  const { profiles, createAccount, removeAdmin, updateRole, user, changePassword } = useAuth();
+  const { profiles, createAccount, removeAdmin, updateRole, user, changePassword, profile: myProfile } = useAuth();
   const confirm = useConfirm();
+  const isSuperAdmin = myProfile?.role === "super_admin";
+
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showPwChange, setShowPwChange] = useState(false);
   const [newName, setNewName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPw, setNewPw] = useState("");
-  const [newRole, setNewRole] = useState("admin");
+  // 슈퍼어드민: admin+crew 생성 가능 / 어드민: crew만 생성 가능
+  const [newRole, setNewRole] = useState(isSuperAdmin ? "admin" : "crew");
+  const [newSiteCode, setNewSiteCode] = useState("V001"); // crew 전용 소속 사업장
   const [msg, setMsg] = useState("");
   const [creating, setCreating] = useState(false);
-  const [createdInfo, setCreatedInfo] = useState(null); // 생성 완료 후 정보 표시
+  const [createdInfo, setCreatedInfo] = useState(null);
+
+  // 역할별 생성 가능 목록
+  const creatableRoles = isSuperAdmin
+    ? [{ key: "admin", label: "어드민", desc: "크루 계정 생성 + 전 사업장 일보" },
+       { key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만 가능" }]
+    : [{ key: "crew",  label: "크루",   desc: "본인 소속 사업장 일보만 가능" }];
 
   // 비밀번호 변경 state
   const [changePw, setChangePw] = useState("");
@@ -3528,12 +3543,14 @@ function AdminInvitePanel() {
     if (!newName.trim()) { setMsg("이름을 입력하세요."); return; }
     if (!newEmail.includes("@")) { setMsg("유효한 이메일을 입력하세요."); return; }
     if (newPw.length < 6) { setMsg("비밀번호는 6자 이상이어야 합니다."); return; }
+    if (newRole === "crew" && !newSiteCode) { setMsg("소속 사업장을 선택하세요."); return; }
     setCreating(true); setMsg("");
-    const { error } = await createAccount(newName, newEmail, newPw, newRole);
+    const opts = newRole === "crew" ? { site_code: newSiteCode } : {};
+    const { error } = await createAccount(newName, newEmail, newPw, newRole, opts);
     setCreating(false);
     if (error) { setMsg(error); return; }
-    setCreatedInfo({ name: newName, email: newEmail, password: newPw, role: newRole });
-    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole("admin");
+    setCreatedInfo({ name: newName, email: newEmail, password: newPw, role: newRole, site_code: newRole === "crew" ? newSiteCode : null });
+    setNewName(""); setNewEmail(""); setNewPw(""); setNewRole(isSuperAdmin ? "admin" : "crew"); setNewSiteCode("V001");
   };
 
   const handlePwChange = async () => {
@@ -3602,7 +3619,7 @@ function AdminInvitePanel() {
                   <div style={{ marginBottom: 20 }}>
                     <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 8, display: "block" }}>역할 *</label>
                     <div style={{ display: "flex", gap: 8 }}>
-                      {Object.entries(ROLES).map(([key, label]) => (
+                      {creatableRoles.map(({ key, label, desc }) => (
                         <button key={key} onClick={() => setNewRole(key)}
                           style={{
                             flex: 1, padding: "10px 8px", borderRadius: 10, cursor: "pointer", fontSize: 12, fontWeight: 700,
@@ -3611,13 +3628,26 @@ function AdminInvitePanel() {
                             transition: "all 0.15s",
                           }}>
                           {label}
-                          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>
-                            {key === "super_admin" ? "전체 권한" : key === "admin" ? "편집 권한" : key === "viewer" ? "읽기 전용" : "현장앱 전용"}
-                          </div>
+                          <div style={{ fontSize: 10, fontWeight: 400, marginTop: 2, opacity: 0.7 }}>{desc}</div>
                         </button>
                       ))}
                     </div>
                   </div>
+
+                  {/* 크루: 소속 사업장 선택 */}
+                  {newRole === "crew" && (
+                    <div style={{ marginBottom: 16 }}>
+                      <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6, display: "block" }}>소속 사업장 *</label>
+                      <select value={newSiteCode} onChange={e => setNewSiteCode(e.target.value)} style={{ ...inputStyle, padding: "12px 14px" }}>
+                        {SITES.filter(s => s.code !== "V000").map(s => (
+                          <option key={s.code} value={s.code}>{s.code} {s.name}</option>
+                        ))}
+                      </select>
+                      <p style={{ fontSize: 11, color: C.navy, marginTop: 4, fontWeight: 600 }}>
+                        💡 크루는 지정 사업장의 현장일보만 작성·조회할 수 있습니다
+                      </p>
+                    </div>
+                  )}
 
                   <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
                     <button onClick={closeCreateForm} style={btnOutline}>취소</button>
@@ -3641,6 +3671,7 @@ function AdminInvitePanel() {
                       ["이메일", createdInfo.email],
                       ["비밀번호", createdInfo.password],
                       ["역할", ROLES[createdInfo.role]],
+                      ...(createdInfo.site_code ? [["소속 사업장", `${createdInfo.site_code} ${getSiteName(createdInfo.site_code)}`]] : []),
                     ].map(([label, value]) => (
                       <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 0", borderBottom: `1px solid ${C.border}` }}>
                         <div>
@@ -3724,11 +3755,16 @@ function AdminInvitePanel() {
                 <td style={{ padding: "8px 10px", textAlign: "center" }}>
                   <span style={{
                     padding: "3px 10px", borderRadius: 10, fontSize: 11, fontWeight: 700,
-                    background: p.role === "super_admin" ? "#EDE7F6" : p.role === "admin" ? "#E3F2FD" : "#F5F5F5",
-                    color: p.role === "super_admin" ? "#7B1FA2" : p.role === "admin" ? C.navy : C.gray,
+                    background: p.role === "super_admin" ? "#EDE7F6" : p.role === "admin" ? "#E3F2FD" : p.role === "crew" ? "#E8F5E9" : "#F5F5F5",
+                    color: p.role === "super_admin" ? "#7B1FA2" : p.role === "admin" ? C.navy : p.role === "crew" ? C.success : C.gray,
                   }}>
                     {ROLES[p.role]}
                   </span>
+                  {p.role === "crew" && p.site_code && (
+                    <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>
+                      {p.site_code} {getSiteName(p.site_code)}
+                    </div>
+                  )}
                 </td>
                 <td style={{ padding: "8px 10px", textAlign: "center", color: C.gray }}>{fmtDate(p.created_at)}</td>
                 <td style={{ padding: "8px 10px", textAlign: "center" }}>
@@ -3736,7 +3772,9 @@ function AdminInvitePanel() {
                     <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
                       <select value={p.role} onChange={e => updateRole(p.id, e.target.value)}
                         style={{ fontSize: 11, padding: "2px 4px", border: `1px solid ${C.border}`, borderRadius: 4 }}>
-                        {Object.entries(ROLES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                        <option value="super_admin">슈퍼어드민</option>
+                        <option value="admin">어드민</option>
+                        <option value="crew">크루</option>
                       </select>
                       <button onClick={async () => { if (await confirm(`${p.name}님을 제거하시겠습니까?`, "관리자 목록에서 제거됩니다.")) removeAdmin(p.id); }}
                         style={{ background: "none", border: "none", cursor: "pointer", fontSize: 13 }}>🗑</button>
@@ -3757,7 +3795,7 @@ function AdminInvitePanel() {
         <div style={{ fontSize: 11, color: C.gray, lineHeight: 1.8 }}>
           • 슈퍼관리자가 직접 계정을 생성하고, 이메일/비밀번호를 본인에게 전달합니다.<br/>
           • 관리자는 로그인 후 「🔑 비밀번호 변경」으로 비밀번호를 변경할 수 있습니다.<br/>
-          • 슈퍼관리자: 전체 권한 · 일반관리자: 편집 권한 · 뷰어: 읽기 전용 · 현장팀원: 현장앱 전용
+          • 슈퍼어드민: 어드민·크루 계정 생성 + 전체 권한 · 어드민: 크루 계정 생성 + 전 사업장 일보 · 크루: 본인 소속 사업장 일보만 가능
         </div>
       </div>
     </div>
@@ -6095,10 +6133,12 @@ const EXTRA_TYPES = [
 
 function DailyReportPage({ employees, onDataChange }) {
   const confirm = useConfirm();
-  const { profile } = useAuth();
+  const { profile, isCrewRole } = useAuth();
   const todayStr = today();
+  // 크루: 본인 사업장(profile.site_code)으로 고정
+  const crewSiteCode = isCrewRole ? (profile?.site_code || "V001") : null;
   const [selMonth, setSelMonth] = useState(todayStr.slice(0, 7));
-  const [selSite, setSelSite] = useState("ALL");
+  const [selSite, setSelSite] = useState(crewSiteCode || "ALL");
   const [selDate, setSelDate] = useState(todayStr);
   const [reports, setReports] = useState([]);
   const [staffMap, setStaffMap] = useState({});
@@ -6221,7 +6261,8 @@ function DailyReportPage({ employees, onDataChange }) {
 
   // ── 새 일보 작성 시작 (중복 방지) ──
   const startNew = (siteCode) => {
-    const site = siteCode || (selSite !== "ALL" ? selSite : FIELD_SITES[0]?.code);
+    // 크루: 항상 본인 사업장으로 고정
+    const site = isCrewRole ? crewSiteCode : (siteCode || (selSite !== "ALL" ? selSite : FIELD_SITES[0]?.code));
     // 중복 체크: 같은 날짜 + 같은 사업장에 이미 일보가 있는지
     const existing = reports.find(r => r.report_date === selDate && r.site_code === site);
     if (existing) {
@@ -6779,12 +6820,19 @@ function DailyReportPage({ employees, onDataChange }) {
           </div>
         </div>
 
-        {/* 사업장 선택 */}
+        {/* 사업장 선택 — 크루는 본인 사업장 고정 */}
         <div style={{ marginBottom: 14 }}>
           <label style={labelSt}>사업장</label>
-          <select value={form.site_code} onChange={e => { const code = e.target.value; setForm(f => ({ ...f, site_code: code, staffList: employees.filter(emp => emp.site_code_1 === code && emp.status === "재직").map(emp => ({ employee_id: emp.id, name_raw: emp.name, staff_type: "regular", work_hours: 8 })) })); }} style={fieldSt} disabled={!!form.id}>
-            {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
-          </select>
+          {isCrewRole ? (
+            <div style={{ ...fieldSt, background: "#e8ebf5", color: C.navy, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}>
+              🏢 {getSiteName(crewSiteCode)}
+              <span style={{ fontSize: 10, color: C.gray, marginLeft: 4 }}>(소속 사업장)</span>
+            </div>
+          ) : (
+            <select value={form.site_code} onChange={e => { const code = e.target.value; setForm(f => ({ ...f, site_code: code, staffList: employees.filter(emp => emp.site_code_1 === code && emp.status === "재직").map(emp => ({ employee_id: emp.id, name_raw: emp.name, staff_type: "regular", work_hours: 8 })) })); }} style={fieldSt} disabled={!!form.id}>
+              {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+            </select>
+          )}
         </div>
 
         {/* 발렛 현황 — 건수 × 단가 = 발렛비 자동계산 */}
@@ -8766,9 +8814,10 @@ function PayrollPage({ employees, profitState }) {
 
 // ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
-  const { profile, signOut, can } = useAuth();
-  const [page, setPage] = useState("main_dashboard");
-  const [openSections, setOpenSections] = useState({ hr: true, site: false, profit: false, calc: false });
+  const { profile, signOut, can, isCrewRole } = useAuth();
+  // 크루 역할: 기본 페이지를 현장일보로 고정
+  const [page, setPage] = useState(isCrewRole ? "daily_report" : "main_dashboard");
+  const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: false, calc: false });
   const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
   const [contractEdit, setContractEdit] = useState(null);
@@ -8952,7 +9001,8 @@ function MainApp() {
   const goEditContract = (c) => { setContractEdit(c); setContractEmp(null); setPage("contract"); };
   const goNewContract = () => { setContractEdit(null); setContractEmp(null); setPage("contract"); };
 
-  const hrNavItems = [
+  // 크루: 현장일보만 표시
+  const hrNavItems = isCrewRole ? [] : [
     { key: "dashboard", icon: "📊", label: "HR 대시보드" },
     { key: "employees", icon: "👥", label: "직원현황" },
     { key: "contract", icon: "📝", label: "계약서" },
@@ -8963,7 +9013,7 @@ function MainApp() {
     ...(can("invite") ? [{ key: "invite", icon: "🔐", label: "관리자 계정" }] : []),
   ];
 
-  const profitNavItems = [
+  const profitNavItems = isCrewRole ? [] : [
     { key: "profit_summary", icon: "📊", label: "전체 요약" },
     { key: "profit_site_pl", icon: "🏢", label: "사업장 PL" },
     { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
@@ -8974,12 +9024,14 @@ function MainApp() {
     { key: "profit_import", icon: "📥", label: "데이터 Import" },
   ];
 
-  const siteNavItems = [
-    { key: "site_management", icon: "🏢", label: "사업장 관리" },
-    { key: "daily_report", icon: "📋", label: "현장 일보" },
-  ];
+  const siteNavItems = isCrewRole
+    ? [{ key: "daily_report", icon: "📋", label: "현장 일보" }]
+    : [
+        { key: "site_management", icon: "🏢", label: "사업장 관리" },
+        { key: "daily_report", icon: "📋", label: "현장 일보" },
+      ];
 
-  const calcNavItems = [
+  const calcNavItems = isCrewRole ? [] : [
     { key: "salary_calc", icon: "📋", label: "인건비 견적" },
   ];
 
@@ -9179,7 +9231,7 @@ function AppRouter() {
       <div style={{ color: C.gray, fontSize: 13 }}>로딩 중...</div>
     </div>
   </div>;
-  // 현장 계정이 ERP에 접근한 경우 차단 안내
+  // field_member(마감앱 전용) 차단 — crew는 ERP 접근 허용
   if (user && profile && profile.role === "field_member") {
     return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, background: C.bg }}>
       <div style={{ textAlign: "center", maxWidth: 400, padding: 32 }}>
@@ -9187,7 +9239,7 @@ function AppRouter() {
         <h2 style={{ fontSize: 18, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>관리자 전용 시스템</h2>
         <p style={{ fontSize: 14, color: C.gray, lineHeight: 1.6, margin: "0 0 24px" }}>
           현장 계정({profile.emp_no || profile.name})은 이 시스템에 접근할 수 없습니다.<br/>
-          현장일보 앱을 이용해주세요.
+          현장일보 앱(마감앱)을 이용해주세요.
         </p>
         <button onClick={() => supabase.auth.signOut()} style={{ ...btnPrimary, padding: "12px 32px", fontSize: 14 }}>로그아웃</button>
       </div>
