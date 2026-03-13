@@ -1034,7 +1034,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
     const bankIn = targetSummaries.reduce((s, d) => s + toNum(d.bank_in), 0);
     const bankOut = targetSummaries.reduce((s, d) => s + toNum(d.bank_out), 0);
     // 가용자금: 가장 최근 월의 bank_balance
-    const latestSummary = targetSummaries.sort((a, b) => b.month.localeCompare(a.month))[0];
+    const latestSummary = targetSummaries.sort((a, b) => (b.month || "").localeCompare(a.month || ""))[0];
     const bankBalance = toNum(latestSummary?.bank_balance);
     const cardTotal = targetSummaries.reduce((s, d) => s + toNum(d.card_total), 0);
     const cardCount = targetSummaries.reduce((s, d) => s + toNum(d.card_count), 0);
@@ -1148,7 +1148,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
       if (toNum(tx.balance_after) > 0) grouped[key].balance = toNum(tx.balance_after);
     });
 
-    const arr = Object.values(grouped).sort((a, b) => a.key.localeCompare(b.key));
+    const arr = Object.values(grouped).sort((a, b) => (a.key || "").localeCompare(b.key || ""));
     let lastBal = 0;
     arr.forEach(d => { if (d.balance > 0) lastBal = d.balance; else d.balance = lastBal; });
     return arr;
@@ -6647,7 +6647,7 @@ function DailyReportPage({ employees, onDataChange }) {
     // selDate 기준 이전 날짜의 동일 사업장 일보 찾기
     const prevReports = reports
       .filter(r => r.site_code === site && r.report_date < selDate)
-      .sort((a, b) => b.report_date.localeCompare(a.report_date));
+      .sort((a, b) => (b.report_date || "").localeCompare(a.report_date || ""));
     if (prevReports.length === 0) { alert("이전 일보가 없습니다."); return; }
     const prev = prevReports[0];
     const stf = staffMap[prev.id] || [];
@@ -6847,7 +6847,7 @@ function DailyReportPage({ employees, onDataChange }) {
   const handleExportExcel = async () => {
     const XLSX = (await import("xlsx")).default || (await import("xlsx"));
     const filtered = selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite);
-    const sorted = [...filtered].sort((a, b) => a.report_date.localeCompare(b.report_date));
+    const sorted = [...filtered].sort((a, b) => (a.report_date || "").localeCompare(b.report_date || ""));
     if (sorted.length === 0) { alert("내보낼 일보가 없습니다."); return; }
 
     // Sheet 1: 사업장별 요약
@@ -7570,7 +7570,7 @@ function DailyReportPage({ employees, onDataChange }) {
   // ── 렌더: 월간 테이블 뷰 ──
   function renderTableView() {
     const filtered = selSite === "ALL" ? reports : reports.filter(r => r.site_code === selSite);
-    const sorted = [...filtered].sort((a, b) => a.report_date.localeCompare(b.report_date));
+    const sorted = [...filtered].sort((a, b) => (a.report_date || "").localeCompare(b.report_date || ""));
     if (sorted.length === 0) return <div style={{ ...cardStyle, textAlign: "center", color: C.gray, padding: 30 }}>📋 이번 달 작성된 일보가 없습니다.</div>;
 
     return (
@@ -8721,7 +8721,7 @@ function PayrollPage({ employees, profitState }) {
         };
       })
       .filter(Boolean)
-      .sort((a, b) => (a.site_code || "").localeCompare(b.site_code || "") || a.emp_no.localeCompare(b.emp_no));
+      .sort((a, b) => (a.site_code || "").localeCompare(b.site_code || "") || (a.emp_no || "").localeCompare(b.emp_no || ""));
   }, [pyRecords, empMap]);
 
   const transferTotal = transferList.reduce((s, t) => s + t.amount, 0);
@@ -10480,7 +10480,7 @@ function AttendancePage({ employees }) {
       return { ...emp, siteName: site?.name || emp.site_code, days: myRows.length, confirmed };
     })
     .filter(e => mode !== "month" || e.days > 0 || activeSitesByEmp.includes(e.site_code))
-    .sort((a, b) => b.days - a.days || a.siteName.localeCompare(b.siteName));
+    .sort((a, b) => b.days - a.days || (a.siteName || "").localeCompare(b.siteName || ""));
 
   const cardBg = "#F8F9FC";
   const borderStyle = "1.5px solid #E8ECF4";
