@@ -3560,7 +3560,7 @@ const detailRow = { fontSize: 12, marginBottom: 4, color: C.dark };
 
 // ── 13. 관리자 계정 관리 ──────────────────────────────
 function AdminInvitePanel() {
-  const { profiles, createAccount, removeAdmin, updateRole, user, changePassword, profile: myProfile } = useAuth();
+  const { profiles, createAccount, removeAdmin, updateRole, user, changePassword, profile: myProfile, loadData } = useAuth();
   const confirm = useConfirm();
   const isSuperAdmin = myProfile?.role === "super_admin";
   const isAdmin      = myProfile?.role === "admin";
