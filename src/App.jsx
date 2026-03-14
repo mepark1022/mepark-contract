@@ -50,7 +50,7 @@ const FONT = "'Noto Sans KR', sans-serif";
 // 카카오 지도 API (JavaScript 앱키)
 const KAKAO_MAP_KEY = "c7b46fd78613ab48353a0e0666838807";
 
-const SITES = [
+const DEFAULT_SITES = [
   { code: "V000", name: "기획운영팀(본사)" }, { code: "V001", name: "강원빌딩" },
   { code: "V002", name: "사계절한정식" }, { code: "V003", name: "신한은행(서초)" },
   { code: "V004", name: "장안면옥" }, { code: "V005", name: "한티옥(방이)" },
@@ -61,6 +61,20 @@ const SITES = [
   { code: "V014", name: "더캐리" }, { code: "V015", name: "강서푸른빛성모어린이병원" },
   { code: "V016", name: "SC제일은행PPC(압구정)" }, { code: "V017", name: "금돈옥(방배)" },
 ];
+// ★ 동적 사업장 목록 — DB site_details에서 추가된 사업장 포함
+let SITES = [...DEFAULT_SITES];
+let FIELD_SITES = SITES.filter(s => s.code !== "V000");
+function _refreshGlobalSites(detailsMap) {
+  const base = [...DEFAULT_SITES];
+  Object.entries(detailsMap || {}).forEach(([code, d]) => {
+    if (!base.find(s => s.code === code) && d.site_name) {
+      base.push({ code, name: d.site_name });
+    }
+  });
+  base.sort((a, b) => a.code.localeCompare(b.code));
+  SITES = base;
+  FIELD_SITES = SITES.filter(s => s.code !== "V000");
+}
 
 const WORK_CODES = [
   { code: "A", label: "평(3)", cat: "weekday" }, { code: "B", label: "평(4)", cat: "weekday" },
@@ -5192,7 +5206,7 @@ function FinancialImportPage({ onImportComplete }) {
 }
 
 // ── 16-1. 수익성 분석 시스템 (v7.0 통합) ────────────────
-const FIELD_SITES = SITES.filter(s => s.code !== "V000");
+// FIELD_SITES: 모듈 상단에서 let으로 선언, _refreshGlobalSites로 동적 갱신
 const ALLOC_METHODS = [
   { key: "revenue", label: "매출비중", desc: "사업장 매출 비율로 배분" },
   { key: "headcount", label: "인원비중", desc: "사업장 인원 비율로 배분" },
@@ -5943,7 +5957,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
 }
 
 // ── 16-2. 사업장 현황 관리 ─────────────────────────────
-function SiteManagementPage({ employees }) {
+function SiteManagementPage({ employees, onSiteChange }) {
   const confirm = useConfirm();
   const [selectedSite, setSelectedSite] = useState(null);
   const [siteDetails, setSiteDetails] = useState({});
@@ -6018,6 +6032,7 @@ function SiteManagementPage({ employees }) {
       setSiteDetails(p => ({ ...p, [code]: data[0] }));
       setNewSiteName(""); setShowAddForm(false);
       setSelectedSite({ code, name });
+      onSiteChange?.(); // ★ 글로벌 SITES 갱신
     } catch (e) { setAddError("등록 중 오류: " + e.message); }
     setSaving(false);
   };
@@ -6033,6 +6048,7 @@ function SiteManagementPage({ employees }) {
       setSiteDetails(p => { const n = { ...p }; delete n[code]; return n; });
       setSiteParking(p => { const n = { ...p }; delete n[code]; return n; });
       if (selectedSite?.code === code) setSelectedSite(null);
+      onSiteChange?.(); // ★ 글로벌 SITES 갱신
     } catch (e) { alert("삭제 중 오류: " + e.message); }
     setSaving(false);
   };
@@ -6052,6 +6068,7 @@ function SiteManagementPage({ employees }) {
       const { error } = await supabase.from("site_details")
         .upsert({ site_code: code, site_name: siteName, [field]: value, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
       if (error) console.error("site_details save error:", error);
+      if (field === "site_name") onSiteChange?.(); // ★ 사업장명 변경 시 글로벌 갱신
       setSaving(false);
     }, 800);
   };
@@ -6064,6 +6081,7 @@ function SiteManagementPage({ employees }) {
     ["start_date","contract_end_date","monthly_contract","address","latitude","longitude","memo","contract_file_name","contract_file_url","valet_rate","weekday_staff","weekend_staff"].forEach(k => { if (d[k] !== undefined) payload[k] = d[k]; });
     await supabase.from("site_details").upsert(payload, { onConflict: "site_code" });
     setSaving(false);
+    onSiteChange?.(); // ★ 글로벌 SITES 갱신
     alert("✅ 저장 완료");
   };
 
@@ -9908,6 +9926,7 @@ function MainApp() {
     if (data) {
       const map = {};
       data.forEach(d => { map[d.site_code] = d; });
+      _refreshGlobalSites(map); // ★ 동적 사업장 목록 갱신
       setSiteDetailsMap(map);
     }
   };
@@ -9947,7 +9966,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); loadSiteDetails(); loadDailyReportSummary(); }, []);
+  useEffect(() => { (async () => { await loadSiteDetails(); loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); loadDailyReportSummary(); })(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
@@ -10167,7 +10186,7 @@ function MainApp() {
         {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
         {page === "monthly_parking" && <MonthlyParkingPage employees={employees} onDataChange={loadMonthlyParking} />}
         {page === "payroll" && <PayrollPage employees={employees} profitState={profitState} />}
-        {page === "site_management" && <SiteManagementPage employees={employees} />}
+        {page === "site_management" && <SiteManagementPage employees={employees} onSiteChange={loadSiteDetails} />}
         {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} />}
         {page === "closing_report" && <ClosingReportPage employees={employees} />}
         {page === "attendance" && <AttendancePage employees={employees} />}
