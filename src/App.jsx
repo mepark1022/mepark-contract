@@ -1727,7 +1727,7 @@ function Dashboard({ employees }) {
 }
 
 // ── 11. 직원대장 ──────────────────────────────────────
-function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign, onReload, onNavigate }) {
+function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign, onCertificate, onReload, onNavigate }) {
   const { can, callAdminApi, createAccount, updateRole, profiles, loadData: reloadAuth } = useAuth();
   const confirm = useConfirm();
   const [filter, setFilter] = useState({ site: "", cat: "", status: "재직", tax: "", search: "" });
@@ -2271,11 +2271,11 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                   <div style={sectionBox}>
                     {sectionTitle("📄", "문서 바로가기")}
                     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      <button onClick={() => { if (onNavigate) onNavigate("certificate"); }} style={{ ...btnOutline, padding: "14px 16px", fontSize: 13, textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
-                        📑 <span><span style={{ fontWeight: 800 }}>재직증명서</span><br /><span style={{ fontSize: 10, color: C.gray }}>재직증명서 발급 화면으로 이동</span></span>
+                      <button onClick={() => { if (onCertificate) onCertificate(se); }} style={{ ...btnOutline, padding: "14px 16px", fontSize: 13, textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
+                        📑 <span><span style={{ fontWeight: 800 }}>재직증명서</span><br /><span style={{ fontSize: 10, color: C.gray }}>{se?.name || ""}님 재직증명서 발급</span></span>
                       </button>
                       <button onClick={() => onResign(se)} style={{ ...btnOutline, padding: "14px 16px", fontSize: 13, textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
-                        📋 <span><span style={{ fontWeight: 800 }}>사직서</span><br /><span style={{ fontSize: 10, color: C.gray }}>사직서 작성 화면으로 이동</span></span>
+                        📋 <span><span style={{ fontWeight: 800 }}>사직서</span><br /><span style={{ fontSize: 10, color: C.gray }}>{se?.name || ""}님 사직서 작성</span></span>
                       </button>
                       <button onClick={() => onContract(se)} style={{ ...btnOutline, padding: "14px 16px", fontSize: 13, textAlign: "left", display: "flex", alignItems: "center", gap: 10 }}>
                         📝 <span><span style={{ fontWeight: 800 }}>근로계약서</span><br /><span style={{ fontSize: 10, color: C.gray }}>근로계약서 작성/수정 화면으로 이동</span></span>
@@ -4811,8 +4811,8 @@ function AdminInvitePanel() {
 
 
 // ── 14. 재직증명서 ────────────────────────────────────
-function Certificate({ employees }) {
-  const [selId, setSelId] = useState("");
+function Certificate({ employees, initialEmp }) {
+  const [selId, setSelId] = useState(initialEmp?.id || "");
   const [purpose, setPurpose] = useState("은행 제출용");
   const [issueDate, setIssueDate] = useState(today());
   const active = employees.filter(e => e.status === "재직");
@@ -4899,8 +4899,8 @@ const RESIGN_REASONS = [
   "기타 사유",
 ];
 
-function Resignation({ employees }) {
-  const [selId, setSelId] = useState("");
+function Resignation({ employees, initialEmp }) {
+  const [selId, setSelId] = useState(initialEmp?.id || "");
   const [reason, setReason] = useState(RESIGN_REASONS[0]);
   const [customReason, setCustomReason] = useState("");
   const [resignDate, setResignDate] = useState(today());
@@ -10270,6 +10270,7 @@ function MainApp() {
   const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: false, calc: false });
   const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
+  const [docTargetEmp, setDocTargetEmp] = useState(null);
   const [contractEdit, setContractEdit] = useState(null);
   const [empLoading, setEmpLoading] = useState(true);
 
@@ -10447,7 +10448,8 @@ function MainApp() {
   };
 
   const goContract = (emp) => { setContractEmp(emp); setContractEdit(null); setPage("contract"); };
-  const goResign = (emp) => { setPage("resignation"); };
+  const goResign = (emp) => { setDocTargetEmp(emp || null); setPage("resignation"); };
+  const goCertificate = (emp) => { setDocTargetEmp(emp || null); setPage("certificate"); };
   const goEditContract = (c) => { setContractEdit(c); setContractEmp(null); setPage("contract"); };
   const goNewContract = () => { setContractEdit(null); setContractEmp(null); setPage("contract"); };
 
@@ -10457,8 +10459,6 @@ function MainApp() {
     { key: "employees", icon: "👥", label: "직원현황" },
     { key: "contract", icon: "📝", label: "계약서" },
     { key: "history", icon: "📋", label: "계약 이력" },
-    { key: "resignation", icon: "📄", label: "사직서" },
-    { key: "certificate", icon: "📑", label: "재직증명서" },
     ...(can("settings") ? [{ key: "settings", icon: "⚙️", label: "계약서 조항변경" }] : []),
     ...(can("invite") ? [{ key: "invite", icon: "🔐", label: "관리자 계정" }] : []),
   ];
@@ -10632,11 +10632,11 @@ function MainApp() {
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {page === "main_dashboard" && <MainDashboard employees={employees} onNavigate={setPage} profitState={profitState} />}
         {page === "dashboard" && <Dashboard employees={employees} />}
-        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onReload={loadEmployees} onNavigate={setPage} />}
+        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onCertificate={goCertificate} onReload={loadEmployees} onNavigate={setPage} />}
         {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={() => {}} />}
         {page === "history" && <ContractHistory employees={employees} onEditContract={goEditContract} onNewContract={goNewContract} />}
-        {page === "resignation" && <Resignation employees={employees} />}
-        {page === "certificate" && <Certificate employees={employees} />}
+        {page === "resignation" && <Resignation employees={employees} initialEmp={docTargetEmp} />}
+        {page === "certificate" && <Certificate employees={employees} initialEmp={docTargetEmp} />}
         {page === "settings" && <Settings />}
         {page === "invite" && <AdminInvitePanel />}
         {page === "profit_summary" && <ProfitabilityPage employees={employees} subPage="summary" profitState={profitState} />}
