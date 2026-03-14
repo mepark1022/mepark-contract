@@ -2067,13 +2067,17 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
     if (filter.account === "has" && !e.auth_id) return false;
     if (filter.account === "none" && e.auth_id) return false;
     if (filter.account === "banned" && e.account_status !== "banned") return false;
-    if (filter.role && e.system_role !== filter.role) return false;
+    if (filter.role) {
+      if (!e.auth_id) return false;
+      if (e.system_role !== filter.role) return false;
+    }
     if (filter.search) {
       const s = filter.search.toLowerCase();
       if (!e.name.toLowerCase().includes(s) && !e.emp_no.toLowerCase().includes(s) && !getSiteName(e.site_code_1).toLowerCase().includes(s)) return false;
     }
     return true;
   });
+  const activeFilterCount = [filter.site, filter.cat, filter.status !== "재직" ? filter.status : "", filter.account, filter.role, filter.search].filter(Boolean).length;
 
   const saveEmp = async (emp) => {
     // 사번 비어있으면 자동생성
@@ -2215,20 +2219,20 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
           <option value="재직">재직</option>
           <option value="퇴사">퇴사</option>
         </select>
-        <select value={filter.account} onChange={e => setFilter(p => ({ ...p, account: e.target.value }))} style={{ ...inputStyle, width: 110 }}>
+        <select value={filter.account} onChange={e => { const v = e.target.value; setFilter(p => ({ ...p, account: v, ...(v === "none" ? { role: "" } : {}) })); }} style={{ ...inputStyle, width: 110 }}>
           <option value="">전체 계정</option>
           <option value="has">✅ 계정있음</option>
           <option value="none">⬜ 계정없음</option>
           <option value="banned">🚫 정지됨</option>
         </select>
-        <select value={filter.role} onChange={e => setFilter(p => ({ ...p, role: e.target.value }))} style={{ ...inputStyle, width: 110 }}>
+        <select value={filter.role} onChange={e => setFilter(p => ({ ...p, role: e.target.value }))} disabled={filter.account === "none"} style={{ ...inputStyle, width: 110, ...(filter.account === "none" ? { opacity: 0.4, cursor: "not-allowed" } : {}) }}>
           <option value="">전체 역할</option>
           <option value="super_admin">슈퍼관리자</option>
           <option value="admin">관리자</option>
           <option value="crew">크루</option>
           <option value="field_member">현장</option>
         </select>
-        <button onClick={() => setFilter({ site: "", cat: "", status: "재직", tax: "", search: "", account: "", role: "" })} style={{ ...btnSmall, background: C.lightGray, color: C.dark }}>초기화</button>
+        <button onClick={() => setFilter({ site: "", cat: "", status: "재직", tax: "", search: "", account: "", role: "" })} style={{ ...btnSmall, background: activeFilterCount > 0 ? C.navy : C.lightGray, color: activeFilterCount > 0 ? C.white : C.dark }}>{activeFilterCount > 0 ? `초기화 (${activeFilterCount})` : "초기화"}</button>
       </div>
 
       {/* 테이블 */}
@@ -2290,7 +2294,11 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={10} style={{ padding: 40, textAlign: "center", color: C.gray }}>조건에 맞는 직원이 없습니다.</td></tr>
+              <tr><td colSpan={10} style={{ padding: 40, textAlign: "center", color: C.gray }}>
+                <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
+                <div>조건에 맞는 직원이 없습니다.</div>
+                {activeFilterCount > 0 && <div style={{ marginTop: 8, fontSize: 11 }}>필터 {activeFilterCount}개 적용 중 — <span onClick={() => setFilter({ site: "", cat: "", status: "재직", tax: "", search: "", account: "", role: "" })} style={{ color: C.navy, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>초기화</span></div>}
+              </td></tr>
             )}
           </tbody>
         </table>
