@@ -834,7 +834,7 @@ function LoginPage() {
               onKeyDown={e => e.key === "Enter" && handleLogin()} autoComplete="username" />
           </div>
           <div style={{ marginBottom: 14 }}>
-            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호 <span style={{ fontWeight: 400, fontSize: 11 }}>(초기: 전화번호 뒷 4자리)</span></label>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: C.gray, marginBottom: 6 }}>비밀번호 <span style={{ fontWeight: 400, fontSize: 11 }}>(초기: mp + 전화번호 뒷 4자리)</span></label>
             <input type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="••••"
               style={{ ...inputStyle, padding: "12px 14px", fontSize: 14 }}
               onKeyDown={e => e.key === "Enter" && handleLogin()} autoComplete="current-password" />
@@ -1765,7 +1765,13 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
 
   // ── v9.1: 헬퍼 ──
   const empNoToEmail = (no) => `${no.trim().toLowerCase()}@mepark.internal`;
-  const phoneToPass = (ph) => (ph || "").replace(/\D/g, "").slice(-4);
+  const phoneToPass = (ph, empNo) => {
+    const digits = (ph || "").replace(/\D/g, "").slice(-4);
+    if (digits.length >= 4) return "mp" + digits;  // "mp" + 4자리 → 6자
+    // 전화번호 미등록 시 → "mp" + 사번 뒤 4자리 (0 패딩)
+    const suffix = ((empNo || "").replace(/\D/g, "") + "0000").slice(-4);
+    return "mp" + suffix;
+  };
   const isSuperAdmin = myProfile?.role === "super_admin";
   const isAdmin = myProfile?.role === "admin";
 
@@ -1784,7 +1790,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
     // v9.1: 자동채움 — 사번→이메일, 전화번호→비밀번호
     setAccountForm({
       email: emp.account_email || empNoToEmail(emp.emp_no || ""),
-      password: emp.auth_id ? "" : phoneToPass(emp.phone || ""),
+      password: emp.auth_id ? "" : phoneToPass(emp.phone || "", emp.emp_no),
       role: emp.system_role || "crew",
     });
     // 계약이력 로드
@@ -1885,7 +1891,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
       ["ME.PARK ERP 계정 일괄생성 양식"], [""],
       ["◆ 작성 규칙"],
       ["· 아이디(이메일) = 사번@mepark.internal  (자동 생성)"],
-      ["· 비밀번호 = 전화번호 뒷 4자리  (자동 추출)"],
+      ["· 비밀번호 = mp + 전화번호 뒷 4자리  (자동 생성, 6자 이상)"],
       ["· 역할: admin (어드민) 또는 crew (크루)"],
       ["· 소속사업장코드: crew인 경우만 필수 (V001~V016)"],
       ["· 근무형태코드: crew인 경우 선택 (미입력 시 C 기본)"],
@@ -1930,8 +1936,8 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
     const results = [];
     for (const row of bulkRows) {
       const email = empNoToEmail(row.empNo);
-      const pw = phoneToPass(row.phone);
-      if (pw.length < 4) { results.push({ ...row, ok: false, error: "전화번호 오류" }); continue; }
+      const pw = phoneToPass(row.phone, row.empNo);
+      if (pw.length < 6) { results.push({ ...row, ok: false, error: "비밀번호 생성 불가" }); continue; }
       const validRoles = ["admin", "crew"];
       const role = validRoles.includes(row.role) ? row.role : "crew";
       const opts = { emp_no: row.empNo, ...(role === "crew" && row.siteCode ? { site_code: row.siteCode } : {}), ...(role === "crew" && row.workCode ? { work_code: row.workCode } : {}) };
@@ -2000,12 +2006,28 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
     setBulkEditing(true);
     const results = [];
     for (const row of toUpdate) {
-      let err = null;
-      if (row.newRole && row.newRole !== row.oldRole) {
-        await updateRole(row.authId, row.newRole);
-        await supabase.from("employees").update({ system_role: row.newRole }).eq("id", row.empId);
+      try {
+        // 역할 변경
+        if (row.newRole && row.newRole !== row.oldRole) {
+          await updateRole(row.authId, row.newRole);
+          await supabase.from("employees").update({ system_role: row.newRole }).eq("id", row.empId);
+        }
+        // 계정상태 변경 (ban/unban)
+        if (row.newStatus && row.newStatus !== row.oldStatus) {
+          if (row.newStatus === "banned" && row.oldStatus !== "banned") {
+            const { error: banErr } = await callAdminApi("ban_user", { userId: row.authId });
+            if (banErr) throw new Error(banErr);
+            await supabase.from("employees").update({ account_status: "banned" }).eq("id", row.empId);
+          } else if (row.newStatus === "active" && row.oldStatus === "banned") {
+            const { error: unbanErr } = await callAdminApi("unban_user", { userId: row.authId });
+            if (unbanErr) throw new Error(unbanErr);
+            await supabase.from("employees").update({ account_status: "active" }).eq("id", row.empId);
+          }
+        }
+        results.push({ ...row, ok: true, error: "" });
+      } catch (e) {
+        results.push({ ...row, ok: false, error: e.message || "처리 실패" });
       }
-      results.push({ ...row, ok: !err, error: err || "" });
     }
     setBulkEditResults(results); setBulkEditDone(true); setBulkEditing(false);
     if (onReload) await onReload(); await reloadAuth();
@@ -2435,8 +2457,8 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                             <input value={accountForm.email} onChange={e => setAccountForm(p => ({ ...p, email: e.target.value }))} placeholder="사번@mepark.internal" style={inputStyle} />
                           </div>
                           <div>
-                            <label style={labelSt}>비밀번호 <span style={{ fontWeight: 400, color: C.gray }}>(전화번호 뒷4자리)</span></label>
-                            <input type="password" value={accountForm.password} onChange={e => setAccountForm(p => ({ ...p, password: e.target.value }))} placeholder="6자 이상 (뒷4자리 자동)" style={inputStyle} />
+                            <label style={labelSt}>비밀번호 <span style={{ fontWeight: 400, color: C.gray }}>(mp + 전화뒷4자리)</span></label>
+                            <input type="password" value={accountForm.password} onChange={e => setAccountForm(p => ({ ...p, password: e.target.value }))} placeholder="6자 이상 (mp+뒷4자리 자동)" style={inputStyle} />
                             {accountForm.password && accountForm.password.length < 6 && <div style={{ fontSize: 10, color: C.error, marginTop: 2 }}>⚠️ 6자 미만 — 전화번호가 등록되지 않았거나 짧습니다. 직접 입력하세요.</div>}
                           </div>
                           <div>
@@ -2787,7 +2809,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                   <div style={{ background: "#FFF8EE", border: "1px solid #FFD8A0", borderRadius: 10, padding: 14, marginBottom: 18, fontSize: 12, color: "#7A4500", lineHeight: 1.8 }}>
                     <div style={{ fontWeight: 800, marginBottom: 6 }}>📌 작성 규칙</div>
                     <div>• <b>아이디</b> = 사번@mepark.internal (자동 생성)</div>
-                    <div>• <b>비밀번호</b> = 전화번호 뒷 4자리 (자동 추출)</div>
+                    <div>• <b>비밀번호</b> = mp + 전화번호 뒷 4자리 (자동 생성)</div>
                     <div>• <b>역할</b>: admin 또는 crew</div>
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 18 }}>
