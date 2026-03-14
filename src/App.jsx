@@ -9998,7 +9998,6 @@ function MainApp() {
   const hrNavItems = isCrewRole ? [] : [
     { key: "dashboard", icon: "📊", label: "HR 대시보드" },
     { key: "employees", icon: "👥", label: "직원현황" },
-    { key: "contract", icon: "📝", label: "계약서" },
     { key: "history", icon: "📋", label: "계약 이력" },
     ...(can("settings") ? [{ key: "settings", icon: "⚙️", label: "계약서 조항변경" }] : []),
   ];
