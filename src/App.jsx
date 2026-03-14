@@ -8804,17 +8804,17 @@ function PayrollPage({ employees, profitState }) {
       if (mErr) throw mErr;
 
       // 2. 재직 직원 기준 레코드 생성
-      const activeEmps = employees.filter(e => e.is_active !== false);
+      const activeEmps = employees.filter(e => e.status === "재직");
       const records = activeEmps.map(e => ({
         month_id: newMonth.id,
         employee_id: e.id,
-        site_code: e.site_code || "V000",
+        site_code: e.site_code_1 || "V000",
         work_type: e.work_code || e.work_type || "",
-        basic_pay: e.weekday_pay || 0,
-        meal: e.meal || 200000,
-        childcare: e.childcare || 0,
-        car_allow: e.car_allowance || 0,
-        team_allow: e.team_allowance || 0,
+        basic_pay: e.base_salary || 0,
+        meal: e.meal_allow || 200000,
+        childcare: e.childcare_allow || 0,
+        car_allow: e.car_allow || 0,
+        team_allow: e.leader_allow || 0,
         holiday_bonus: e.holiday_bonus || 0,
         incentive: e.incentive || 0,
         extra1: e.extra1 || 0,
@@ -10630,7 +10630,7 @@ function FullCalendarPage({ employees }) {
   const activeSites = useMemo(() => {
     const codes = new Set();
     employees.filter(e => e.status === "재직").forEach(e => {
-      const sc = e.site_code_1 || e.site_code;
+      const sc = e.site_code_1;
       if (sc && sc !== "V000") codes.add(sc);
     });
     return SITES.filter(s => codes.has(s.code) && s.code !== "V000");
@@ -10638,7 +10638,7 @@ function FullCalendarPage({ employees }) {
 
   // 활성 근무자 (재직, V000 제외)
   const activeWorkers = useMemo(() => {
-    let list = employees.filter(e => e.status === "재직" && (e.site_code_1 || e.site_code) !== "V000" && e.site_code !== "V000");
+    let list = employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000");
     if (empSearch) {
       const q = empSearch.toLowerCase();
       list = list.filter(e => (e.name || "").includes(q) || (e.emp_no || "").toLowerCase().includes(q));
@@ -11191,11 +11191,11 @@ function AttendancePage({ employees }) {
   };
 
   // 사업장별 직원 그룹
-  const activeEmps = employees.filter(e => e.status === "재직" && e.site_code !== "V000" && e.site_code_1 !== "V000");
+  const activeEmps = employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000");
   const siteGroups = useMemo(() => {
     const groups = {};
     activeEmps.forEach(e => {
-      const sc = e.site_code_1 || e.site_code || "V000";
+      const sc = e.site_code_1 || "V000";
       if (sc === "V000") return;
       if (siteFilter !== "all" && sc !== siteFilter) return;
       if (empSearch && !e.name.includes(empSearch) && !(e.emp_no || "").toLowerCase().includes(empSearch.toLowerCase())) return;
@@ -11276,7 +11276,7 @@ function AttendancePage({ employees }) {
 
     // Sheet 3: 매장별 집계
     const siteRows = siteGroups.map(g => {
-      const gEmps = empStats.filter(e => (e.site_code_1 || e.site_code) === g.code);
+      const gEmps = empStats.filter(e => e.site_code_1 === g.code);
       const gAtt = gEmps.reduce((s, e) => s + e.att, 0);
       const gExtra = gEmps.reduce((s, e) => s + e.extra, 0);
       const gLate = gEmps.reduce((s, e) => s + e.late, 0);
@@ -11335,7 +11335,7 @@ function AttendancePage({ employees }) {
   }, [popup]);
 
   // 사업장 필터 옵션
-  const siteFilterOptions = SITES.filter(s => s.code !== "V000" && activeEmps.some(e => (e.site_code_1 || e.site_code) === s.code));
+  const siteFilterOptions = SITES.filter(s => s.code !== "V000" && activeEmps.some(e => e.site_code_1 === s.code));
 
   return (
     <div style={{ padding: "24px 28px", maxWidth: 1400, margin: "0 auto" }}>
@@ -11378,7 +11378,7 @@ function AttendancePage({ employees }) {
           <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, fontWeight: 600, background: "#fff" }}>
             <option value="all">전체 ({activeEmps.length}명)</option>
             {siteFilterOptions.map(s => {
-              const cnt = activeEmps.filter(e => (e.site_code_1 || e.site_code) === s.code).length;
+              const cnt = activeEmps.filter(e => e.site_code_1 === s.code).length;
               return <option key={s.code} value={s.code}>{s.name} ({cnt}명)</option>;
             })}
           </select>
@@ -11430,7 +11430,7 @@ function AttendancePage({ employees }) {
                 🏢 {group.name} <span style={{ color: C.gray, fontWeight: 600 }}>({group.code}) · {group.emps.length}명</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280, 1fr))", gap: 10 }}>
-                {empStats.filter(e => (e.site_code_1 || e.site_code) === group.code).map(emp => {
+                {empStats.filter(e => e.site_code_1 === group.code).map(emp => {
                   const rateColor = emp.rate >= 80 ? C.success : emp.rate >= 60 ? C.orange : C.error;
                   return (
                     <div key={emp.id} style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, padding: "16px 18px", transition: "box-shadow 0.15s" }}
