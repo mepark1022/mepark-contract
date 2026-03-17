@@ -2240,7 +2240,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${C.border}` }}>
           <thead>
             <tr style={{ background: C.navy }}>
-              {["사번", "이름", "직위", "사업장", "근무형태", "기본급", "일당", "계정", "상태", "액션"].map(h => (
+              {["사번", "이름", "직위", "사업장", "근무형태", "기본급", "일당", "연락처", "계정", "상태", "액션"].map(h => (
                 <th key={h} style={{ padding: "10px 8px", color: C.white, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -2266,6 +2266,9 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                 </td>
                 <td style={{ padding: "8px", textAlign: "right", fontFamily: FONT }}>{e.base_salary ? fmt(e.base_salary) + "원" : "−"}</td>
                 <td style={{ padding: "8px", textAlign: "right", fontFamily: FONT }}>{e.weekend_daily ? fmt(e.weekend_daily) + "원" : "−"}</td>
+                <td style={{ padding: "8px", textAlign: "center", fontFamily: FONT, fontSize: 11, color: e.phone ? "#333" : "#bbb", letterSpacing: "0.5px" }}>
+                  {e.phone ? e.phone.replace(/(\d{3})(\d{3,4})(\d{4})/, "$1-$2-$3") : "—"}
+                </td>
                 <td style={{ padding: "8px", textAlign: "center" }}>
                   {e.auth_id ? (
                     <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 700,
@@ -2294,7 +2297,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
               </tr>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={10} style={{ padding: 40, textAlign: "center", color: C.gray }}>
+              <tr><td colSpan={11} style={{ padding: 40, textAlign: "center", color: C.gray }}>
                 <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
                 <div>조건에 맞는 직원이 없습니다.</div>
                 {activeFilterCount > 0 && <div style={{ marginTop: 8, fontSize: 11 }}>필터 {activeFilterCount}개 적용 중 — <span onClick={() => setFilter({ site: "", cat: "", status: "재직", tax: "", search: "", account: "", role: "" })} style={{ color: C.navy, fontWeight: 700, cursor: "pointer", textDecoration: "underline" }}>초기화</span></div>}
