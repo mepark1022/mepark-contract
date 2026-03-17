@@ -7906,12 +7906,32 @@ function DailyReportPage({ employees, onDataChange }) {
         <>
           {/* ── 날짜 네비게이션 ── */}
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: "10px 16px" }}>
-            <button onClick={() => { setSelMonth(selMonth < "9999-12" ? (() => { const [y,m] = selMonth.split("-").map(Number); return m===1 ? `${y-1}-12` : `${y}-${String(m-1).padStart(2,"0")}`; })() : selMonth); }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>◀ 월</button>
+            <button onClick={() => {
+              const [y, m] = selMonth.split("-").map(Number);
+              const ny = m === 1 ? y - 1 : y;
+              const nm = m === 1 ? 12 : m - 1;
+              const newMonth = `${ny}-${String(nm).padStart(2, "0")}`;
+              const [, , dd] = selDate.split("-").map(Number);
+              const maxDay = new Date(ny, nm, 0).getDate();
+              const newDay = Math.min(dd, maxDay);
+              const newDate = `${newMonth}-${String(newDay).padStart(2, "0")}`;
+              setSelMonth(newMonth); setSelDate(newDate);
+            }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>◀ 월</button>
             <button onClick={prevDay} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>◀ 일</button>
             <input type="date" value={selDate} onChange={e => { setSelDate(e.target.value); setSelMonth(e.target.value.slice(0,7)); }}
               style={{ ...inputStyle, width: 140, fontSize: 13, fontWeight: 700, color: C.navy, textAlign: "center", padding: "6px 10px" }} />
             <button onClick={nextDay} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>일 ▶</button>
-            <button onClick={() => { const [y,m] = selMonth.split("-").map(Number); const nm = m===12?1:m+1; const ny=m===12?y+1:y; setSelMonth(`${ny}-${String(nm).padStart(2,"0")}`); }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>월 ▶</button>
+            <button onClick={() => {
+              const [y, m] = selMonth.split("-").map(Number);
+              const ny = m === 12 ? y + 1 : y;
+              const nm = m === 12 ? 1 : m + 1;
+              const newMonth = `${ny}-${String(nm).padStart(2, "0")}`;
+              const [, , dd] = selDate.split("-").map(Number);
+              const maxDay = new Date(ny, nm, 0).getDate();
+              const newDay = Math.min(dd, maxDay);
+              const newDate = `${newMonth}-${String(newDay).padStart(2, "0")}`;
+              setSelMonth(newMonth); setSelDate(newDate);
+            }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: C.lightGray, color: C.dark }}>월 ▶</button>
             {selDate !== todayStr && (
               <button onClick={() => { setSelDate(todayStr); setSelMonth(todayStr.slice(0,7)); }} style={{ ...btnSmall, padding: "4px 10px", fontSize: 11, background: "#E3F2FD", color: C.navy }}>오늘</button>
             )}
