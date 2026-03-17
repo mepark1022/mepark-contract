@@ -9813,6 +9813,306 @@ function PayrollPage({ employees, profitState }) {
   );
 }
 
+// ── 16-7. 오류 보고 시스템 ────────────────────────────
+const BUG_CATEGORIES = [
+  { key: "ui",          label: "🖥️ UI/화면 오류" },
+  { key: "data",        label: "📊 데이터 오류" },
+  { key: "login",       label: "🔐 로그인/권한" },
+  { key: "performance", label: "⚡ 속도/성능" },
+  { key: "suggestion",  label: "💡 기능 건의" },
+  { key: "other",       label: "🔧 기타" },
+];
+const BUG_STATUS = {
+  open:        { label: "접수",    bg: "#fee2e2", color: "#DC2626" },
+  in_progress: { label: "처리중",  bg: "#ffedd5", color: "#EA580C" },
+  resolved:    { label: "해결완료", bg: "#dcfce7", color: "#16A34A" },
+  closed:      { label: "종료",    bg: "#E8E8E8", color: "#666" },
+};
+const BUG_PRIORITY = {
+  low:      { label: "낮음",   color: "#666" },
+  medium:   { label: "보통",   color: "#EA580C" },
+  high:     { label: "높음",   color: "#DC2626" },
+  critical: { label: "긴급",   color: "#7C3AED" },
+};
+
+function BugReportFAB({ currentPage, reporterName, reporterEmpNo, reporterRole }) {
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState({ title: "", category: "ui", description: "", priority: "medium" });
+  const [loading, setLoading] = useState(false);
+  const [done, setDone] = useState(false);
+
+  const handleSubmit = async () => {
+    if (!form.title.trim() || !form.description.trim()) { alert("제목과 내용을 입력해주세요."); return; }
+    setLoading(true);
+    try {
+      const { error } = await supabase.from("bug_reports").insert({
+        app: "erp",
+        reporter_name: reporterName || "알 수 없음",
+        reporter_emp_no: reporterEmpNo || "",
+        reporter_role: reporterRole || "",
+        page: currentPage || "",
+        category: form.category,
+        title: form.title.trim(),
+        description: form.description.trim(),
+        priority: form.priority,
+        status: "open",
+      });
+      if (error) throw error;
+      setDone(true);
+      setTimeout(() => { setOpen(false); setDone(false); setForm({ title: "", category: "ui", description: "", priority: "medium" }); }, 1800);
+    } catch (e) { alert("제출 실패: " + e.message); }
+    finally { setLoading(false); }
+  };
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} title="오류 보고" style={{
+        position: "fixed", bottom: 28, right: 28, zIndex: 1200,
+        width: 52, height: 52, borderRadius: "50%",
+        background: C.navy, border: `3px solid ${C.gold}`,
+        color: "#fff", fontSize: 22, cursor: "pointer",
+        boxShadow: "0 4px 16px rgba(20,40,160,0.35)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+      }}>🐛</button>
+
+      {open && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", borderRadius: 16, width: 480, maxWidth: "95vw", overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,0.25)" }}>
+            <div style={{ background: C.navy, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ color: "#fff", fontWeight: 800, fontSize: 15, fontFamily: FONT }}>🐛 오류 / 건의사항 보고</span>
+              <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 20, cursor: "pointer" }}>×</button>
+            </div>
+            <div style={{ padding: 20 }}>
+              {done ? (
+                <div style={{ textAlign: "center", padding: "32px 0" }}>
+                  <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
+                  <div style={{ fontWeight: 800, fontSize: 16, color: C.navy, fontFamily: FONT }}>접수 완료!</div>
+                  <div style={{ color: "#666", fontSize: 13, marginTop: 6 }}>빠르게 확인하겠습니다.</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ background: "#f8f9ff", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12, color: "#666", fontFamily: FONT }}>
+                    📍 현재 화면: <strong style={{ color: C.navy }}>{currentPage || "알 수 없음"}</strong> · 보고자: <strong style={{ color: C.navy }}>{reporterName}</strong>
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>분류</label>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {BUG_CATEGORIES.map(c => (
+                        <button key={c.key} onClick={() => setForm(f => ({ ...f, category: c.key }))} style={{
+                          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                          border: `2px solid ${form.category === c.key ? C.navy : C.border}`,
+                          background: form.category === c.key ? C.navy : "#fff",
+                          color: form.category === c.key ? "#fff" : "#666",
+                        }}>{c.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>심각도</label>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      {Object.entries(BUG_PRIORITY).map(([k, v]) => (
+                        <button key={k} onClick={() => setForm(f => ({ ...f, priority: k }))} style={{
+                          flex: 1, padding: "6px 0", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                          border: `2px solid ${form.priority === k ? v.color : C.border}`,
+                          background: form.priority === k ? v.color : "#fff",
+                          color: form.priority === k ? "#fff" : "#666",
+                        }}>{v.label}</button>
+                      ))}
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 12 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>제목 *</label>
+                    <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="오류 제목을 간단히 입력하세요" style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: FONT, boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>상세 내용 *</label>
+                    <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="어떤 상황에서 발생했는지 자세히 적어주세요" rows={4} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: FONT, resize: "vertical", boxSizing: "border-box" }} />
+                  </div>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button onClick={() => setOpen(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, color: "#666" }}>취소</button>
+                    <button onClick={handleSubmit} disabled={loading} style={{ flex: 2, padding: "10px 0", borderRadius: 8, border: "none", background: loading ? "#999" : C.navy, color: "#fff", fontSize: 13, fontWeight: 800, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
+                      {loading ? "제출 중..." : "🐛 접수하기"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function BugReportDashboard() {
+  const [reports, setReports] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filterStatus, setFilterStatus] = useState("all");
+  const [filterApp, setFilterApp] = useState("all");
+  const [filterPriority, setFilterPriority] = useState("all");
+  const [selected, setSelected] = useState(null);
+  const [memo, setMemo] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const load = async () => {
+    setLoading(true);
+    const { data } = await supabase.from("bug_reports").select("*").order("created_at", { ascending: false });
+    setReports(data || []);
+    setLoading(false);
+  };
+  useEffect(() => { load(); }, []);
+
+  const filtered = reports.filter(r =>
+    (filterStatus === "all" || r.status === filterStatus) &&
+    (filterApp === "all" || r.app === filterApp) &&
+    (filterPriority === "all" || r.priority === filterPriority)
+  );
+
+  const updateStatus = async (id, status) => {
+    await supabase.from("bug_reports").update({ status, updated_at: new Date().toISOString(), ...(status === "resolved" ? { resolved_at: new Date().toISOString() } : {}) }).eq("id", id);
+    setReports(prev => prev.map(r => r.id === id ? { ...r, status } : r));
+    if (selected?.id === id) setSelected(prev => ({ ...prev, status }));
+  };
+  const saveMemo = async () => {
+    if (!selected) return;
+    setSaving(true);
+    await supabase.from("bug_reports").update({ admin_memo: memo, updated_at: new Date().toISOString() }).eq("id", selected.id);
+    setReports(prev => prev.map(r => r.id === selected.id ? { ...r, admin_memo: memo } : r));
+    setSaving(false);
+    alert("저장 완료");
+  };
+  const deleteReport = async (id) => {
+    if (!window.confirm("삭제하시겠습니까?")) return;
+    await supabase.from("bug_reports").delete().eq("id", id);
+    setReports(prev => prev.filter(r => r.id !== id));
+    if (selected?.id === id) setSelected(null);
+  };
+
+  const kpi = {
+    total: reports.length,
+    open: reports.filter(r => r.status === "open").length,
+    inProgress: reports.filter(r => r.status === "in_progress").length,
+    resolved: reports.filter(r => r.status === "resolved").length,
+  };
+  const fmtDate = (d) => d ? new Date(d).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "-";
+
+  return (
+    <div style={{ fontFamily: FONT }}>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ fontSize: 20, fontWeight: 900, color: C.navy, margin: 0, marginBottom: 4 }}>🐛 오류 보고 관리</h2>
+        <p style={{ color: "#666", fontSize: 13, margin: 0 }}>ERP · 현장앱에서 접수된 오류 및 건의사항</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
+        {[
+          { label: "전체", value: kpi.total, color: C.navy },
+          { label: "접수", value: kpi.open, color: "#DC2626" },
+          { label: "처리중", value: kpi.inProgress, color: "#EA580C" },
+          { label: "해결완료", value: kpi.resolved, color: "#16A34A" },
+        ].map(k => (
+          <div key={k.label} style={{ background: "#fff", border: `1px solid ${C.border}`, borderLeft: `4px solid ${k.color}`, borderRadius: 10, padding: "14px 16px" }}>
+            <div style={{ fontSize: 24, fontWeight: 900, color: k.color, fontFamily: FONT }}>{k.value}</div>
+            <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{k.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+        <div style={{ flex: 1, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            {[["all","전체"],["open","접수"],["in_progress","처리중"],["resolved","해결완료"],["closed","종료"]].map(([k, v]) => (
+              <button key={k} onClick={() => setFilterStatus(k)} style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${filterStatus === k ? C.navy : C.border}`, background: filterStatus === k ? C.navy : "#fff", color: filterStatus === k ? "#fff" : "#666", fontFamily: FONT }}>{v}</button>
+            ))}
+            <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+              <select value={filterApp} onChange={e => setFilterApp(e.target.value)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: FONT }}>
+                <option value="all">전체 앱</option>
+                <option value="erp">ERP</option>
+                <option value="field">현장앱</option>
+              </select>
+              <select value={filterPriority} onChange={e => setFilterPriority(e.target.value)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: FONT }}>
+                <option value="all">전체 심각도</option>
+                <option value="critical">긴급</option>
+                <option value="high">높음</option>
+                <option value="medium">보통</option>
+                <option value="low">낮음</option>
+              </select>
+            </div>
+          </div>
+          {loading ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#999", fontSize: 13 }}>불러오는 중...</div>
+          ) : filtered.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: "#999", fontSize: 13 }}>접수된 오류가 없습니다 🎉</div>
+          ) : (
+            <div style={{ maxHeight: 520, overflowY: "auto" }}>
+              {filtered.map(r => {
+                const st = BUG_STATUS[r.status] || BUG_STATUS.open;
+                const pr = BUG_PRIORITY[r.priority] || BUG_PRIORITY.medium;
+                const cat = BUG_CATEGORIES.find(c => c.key === r.category);
+                return (
+                  <div key={r.id} onClick={() => { setSelected(r); setMemo(r.admin_memo || ""); }} style={{
+                    padding: "12px 16px", borderBottom: `1px solid ${C.lightGray}`, cursor: "pointer",
+                    background: selected?.id === r.id ? "#f0f4ff" : "#fff",
+                    borderLeft: selected?.id === r.id ? `3px solid ${C.navy}` : "3px solid transparent",
+                  }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: st.bg, color: st.color }}>{st.label}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: pr.color }}>● {pr.label}</span>
+                      <span style={{ fontSize: 10, color: "#999", marginLeft: "auto" }}>{r.app === "erp" ? "ERP" : "현장앱"} · {fmtDate(r.created_at)}</span>
+                    </div>
+                    <div style={{ fontWeight: 700, fontSize: 13, color: "#222", marginBottom: 2 }}>{r.title}</div>
+                    <div style={{ fontSize: 11, color: "#888" }}>{cat?.label || r.category} · {r.reporter_name} ({r.reporter_role})</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {selected && (
+          <div style={{ width: 300, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, flexShrink: 0 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
+              <span style={{ fontWeight: 900, fontSize: 14, color: C.navy, fontFamily: FONT }}>상세 정보</span>
+              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#999", fontSize: 18, cursor: "pointer" }}>×</button>
+            </div>
+            <div style={{ fontSize: 12, color: "#666", marginBottom: 10, lineHeight: 1.8 }}>
+              <div><strong>제목:</strong> {selected.title}</div>
+              <div><strong>앱:</strong> {selected.app === "erp" ? "ERP" : "현장앱"} / {selected.page}</div>
+              <div><strong>보고자:</strong> {selected.reporter_name} ({selected.reporter_emp_no})</div>
+              <div><strong>분류:</strong> {BUG_CATEGORIES.find(c => c.key === selected.category)?.label}</div>
+              <div><strong>심각도:</strong> <span style={{ color: BUG_PRIORITY[selected.priority]?.color, fontWeight: 700 }}>{BUG_PRIORITY[selected.priority]?.label}</span></div>
+              <div><strong>접수일:</strong> {fmtDate(selected.created_at)}</div>
+              {selected.resolved_at && <div><strong>해결일:</strong> {fmtDate(selected.resolved_at)}</div>}
+            </div>
+            <div style={{ background: "#f8f9ff", borderRadius: 8, padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#333", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
+              {selected.description}
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>상태 변경</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                {Object.entries(BUG_STATUS).map(([k, v]) => (
+                  <button key={k} onClick={() => updateStatus(selected.id, k)} style={{
+                    padding: "6px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                    border: `1.5px solid ${selected.status === k ? v.color : C.border}`,
+                    background: selected.status === k ? v.bg : "#fff",
+                    color: selected.status === k ? v.color : "#666",
+                  }}>{v.label}</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>관리자 메모</div>
+              <textarea value={memo} onChange={e => setMemo(e.target.value)} rows={3} placeholder="처리 내용, 참고사항 등..." style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: FONT, resize: "vertical", boxSizing: "border-box" }} />
+              <button onClick={saveMemo} disabled={saving} style={{ width: "100%", marginTop: 6, padding: "7px 0", borderRadius: 8, border: "none", background: C.navy, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                {saving ? "저장 중..." : "💾 메모 저장"}
+              </button>
+            </div>
+            <button onClick={() => deleteReport(selected.id)} style={{ width: "100%", padding: "7px 0", borderRadius: 8, border: `1px solid #DC2626`, background: "#fff", color: "#DC2626", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+              🗑️ 삭제
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
   const { profile, signOut, can, isCrewRole } = useAuth();
@@ -10037,6 +10337,9 @@ function MainApp() {
   const calcNavItems = isCrewRole ? [] : [
     { key: "salary_calc", icon: "📋", label: "인건비 견적" },
   ];
+  const bugNavItems = (profile?.role === "super_admin" || profile?.role === "admin")
+    ? [{ key: "bug_reports", icon: "🐛", label: "오류 보고" }]
+    : [];
 
   // 아코디언: 페이지 변경 시 해당 섹션 자동 펼침
   const sectionKeyMap = { hr: hrNavItems, site: siteNavItems, profit: profitNavItems, calc: calcNavItems };
@@ -10165,6 +10468,21 @@ function MainApp() {
           ))}
         </nav>
 
+        {/* 오류보고 메뉴 (admin 이상) */}
+        {bugNavItems.length > 0 && (
+          <div style={{ padding: "8px 10px", borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+            <button onClick={() => setPage("bug_reports")} style={{
+              display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "8px 10px",
+              borderRadius: 8, border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
+              background: page === "bug_reports" ? "rgba(255,255,255,0.15)" : "transparent",
+              color: page === "bug_reports" ? C.white : "rgba(255,255,255,0.65)",
+              fontFamily: FONT,
+            }}>
+              <span style={{ fontSize: 15 }}>🐛</span> 오류 보고
+            </button>
+          </div>
+        )}
+
         {/* 유저 정보 */}
         <div style={{ padding: "12px 14px", borderTop: "1px solid rgba(255,255,255,0.1)" }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: C.white, marginBottom: 2 }}>{profile?.name}</div>
@@ -10202,7 +10520,16 @@ function MainApp() {
         {page === "attendance" && <AttendancePage employees={employees} />}
         {page === "full_calendar" && <FullCalendarPage employees={employees} />}
         {page === "salary_calc" && <SalaryCalculatorPage />}
+        {page === "bug_reports" && <BugReportDashboard />}
       </main>
+
+      {/* 오류보고 FAB — 모든 로그인 사용자 */}
+      <BugReportFAB
+        currentPage={page}
+        reporterName={profile?.name || ""}
+        reporterEmpNo={profile?.emp_no || ""}
+        reporterRole={profile?.role || ""}
+      />
     </div>
   );
 }
