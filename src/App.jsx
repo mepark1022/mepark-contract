@@ -7213,13 +7213,15 @@ function DailyReportPage({ employees, onDataChange }) {
 
   // ── 날짜 앞뒤 이동 ──
   const prevDay = () => {
-    const d = new Date(selDate + "T00:00:00"); d.setDate(d.getDate() - 1);
-    const s = d.toISOString().slice(0, 10);
+    const [y, m, d] = selDate.split("-").map(Number);
+    const dt = new Date(y, m - 1, d - 1);
+    const s = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
     setSelDate(s); setSelMonth(s.slice(0, 7));
   };
   const nextDay = () => {
-    const d = new Date(selDate + "T00:00:00"); d.setDate(d.getDate() + 1);
-    const s = d.toISOString().slice(0, 10);
+    const [y, m, d] = selDate.split("-").map(Number);
+    const dt = new Date(y, m - 1, d + 1);
+    const s = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
     setSelDate(s); setSelMonth(s.slice(0, 7));
   };
 
