@@ -9813,33 +9813,124 @@ function PayrollPage({ employees, profitState }) {
   );
 }
 
-// ── 16-7. 오류 보고 시스템 ────────────────────────────
+// ── 16-7. 오류 보고 시스템 v2 (미팍티켓 동일) ───────────
 const BUG_CATEGORIES = [
-  { key: "ui",          label: "🖥️ UI/화면 오류" },
-  { key: "data",        label: "📊 데이터 오류" },
-  { key: "login",       label: "🔐 로그인/권한" },
-  { key: "performance", label: "⚡ 속도/성능" },
-  { key: "suggestion",  label: "💡 기능 건의" },
-  { key: "other",       label: "🔧 기타" },
+  { key: "ui",          label: "🖥️ UI 깨짐",   emoji: "🖥️" },
+  { key: "feature",     label: "⚙️ 기능 오류",  emoji: "⚙️" },
+  { key: "data",        label: "📊 데이터 이상", emoji: "📊" },
+  { key: "performance", label: "🐌 느림/멈춤",  emoji: "🐌" },
+  { key: "suggestion",  label: "💡 기타",       emoji: "💡" },
 ];
 const BUG_STATUS = {
-  open:        { label: "접수",    bg: "#fee2e2", color: "#DC2626" },
-  in_progress: { label: "처리중",  bg: "#ffedd5", color: "#EA580C" },
-  resolved:    { label: "해결완료", bg: "#dcfce7", color: "#16A34A" },
-  closed:      { label: "종료",    bg: "#E8E8E8", color: "#666" },
+  open:        { label: "접수",     bg: "#fee2e2", color: "#DC2626" },
+  in_progress: { label: "확인중",   bg: "#ffedd5", color: "#EA580C" },
+  resolved:    { label: "해결됨",   bg: "#dcfce7", color: "#16A34A" },
+  closed:      { label: "종료",     bg: "#E8E8E8", color: "#666" },
 };
 const BUG_PRIORITY = {
-  low:      { label: "낮음",   color: "#666" },
-  medium:   { label: "보통",   color: "#EA580C" },
-  high:     { label: "높음",   color: "#DC2626" },
-  critical: { label: "긴급",   color: "#7C3AED" },
+  low:      { label: "낮음", color: "#666",    bg: "#f3f4f6" },
+  medium:   { label: "보통", color: "#EA580C", bg: "#fff7ed" },
+  high:     { label: "높음", color: "#DC2626", bg: "#fef2f2" },
+  critical: { label: "긴급", color: "#7C3AED", bg: "#f5f3ff" },
 };
+const PAGE_LABELS = {
+  main_dashboard: "메인 대시보드", dashboard: "HR 대시보드", employees: "직원현황",
+  contract: "계약서", history: "계약이력", settings: "계약서 조항변경",
+  profit_summary: "전체 요약", profit_site_pl: "사업장 PL", profit_cost_input: "비용 입력",
+  payroll: "급여대장", monthly_parking: "월주차 관리", profit_comparison: "비교 분석",
+  profit_alloc: "배부 설정", profit_import: "데이터 Import",
+  site_management: "사업장 관리", daily_report: "현장 일보",
+  closing_report: "마감보고현황", attendance: "근태현황", full_calendar: "전체 캘린더",
+  salary_calc: "인건비 견적", bug_reports: "오류 보고",
+};
+
+// 스크린샷 → base64
+async function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
+
+// Claude API AI 분류
+async function aiClassifyBug(title, description) {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 200,
+        messages: [{
+          role: "user",
+          content: `다음 오류 보고를 분석해서 JSON으로만 응답하세요 (다른 텍스트 없이):
+제목: ${title}
+내용: ${description}
+
+응답 형식:
+{"category": "ui|feature|data|performance|suggestion", "priority": "low|medium|high|critical", "summary": "한줄 요약(30자 이내)"}`
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || "";
+    return JSON.parse(text.replace(/```json|```/g, "").trim());
+  } catch { return null; }
+}
 
 function BugReportFAB({ currentPage, reporterName, reporterEmpNo, reporterRole }) {
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ title: "", category: "ui", description: "", priority: "medium" });
+  const [form, setForm] = useState({
+    title: "", category: "", description: "",
+    priority: "medium", repro: "", screenshots: [],
+  });
+  const [aiResult, setAiResult] = useState(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
+  const fileInputRef = useRef(null);
+  const pasteAreaRef = useRef(null);
+
+  // 클립보드 붙여넣기
+  useEffect(() => {
+    if (!open) return;
+    const handler = async (e) => {
+      const items = Array.from(e.clipboardData?.items || []);
+      const imgItems = items.filter(i => i.type.startsWith("image/"));
+      if (imgItems.length === 0) return;
+      e.preventDefault();
+      const files = imgItems.map(i => i.getAsFile()).filter(Boolean);
+      await addScreenshots(files);
+    };
+    window.addEventListener("paste", handler);
+    return () => window.removeEventListener("paste", handler);
+  }, [open, form.screenshots]);
+
+  const addScreenshots = async (files) => {
+    const remaining = 3 - form.screenshots.length;
+    const toAdd = files.slice(0, remaining);
+    const b64s = await Promise.all(toAdd.map(fileToBase64));
+    setForm(f => ({ ...f, screenshots: [...f.screenshots, ...b64s] }));
+  };
+  const removeScreenshot = (i) => setForm(f => ({ ...f, screenshots: f.screenshots.filter((_, j) => j !== i) }));
+
+  // AI 분류 (제목+내용 입력 완료 시)
+  const runAI = async () => {
+    if (!form.title || !form.description) return;
+    setAiLoading(true);
+    const result = await aiClassifyBug(form.title, form.description);
+    if (result) {
+      setAiResult(result);
+      setForm(f => ({
+        ...f,
+        category: f.category || result.category,
+        priority: result.priority || f.priority,
+      }));
+    }
+    setAiLoading(false);
+  };
 
   const handleSubmit = async () => {
     if (!form.title.trim() || !form.description.trim()) { alert("제목과 내용을 입력해주세요."); return; }
@@ -9851,22 +9942,31 @@ function BugReportFAB({ currentPage, reporterName, reporterEmpNo, reporterRole }
         reporter_emp_no: reporterEmpNo || "",
         reporter_role: reporterRole || "",
         page: currentPage || "",
-        category: form.category,
+        page_label: PAGE_LABELS[currentPage] || currentPage || "",
+        category: form.category || "suggestion",
         title: form.title.trim(),
         description: form.description.trim(),
+        repro_steps: form.repro.trim(),
         priority: form.priority,
         status: "open",
+        screenshots: form.screenshots,
+        ai_summary: aiResult?.summary || null,
       });
       if (error) throw error;
       setDone(true);
-      setTimeout(() => { setOpen(false); setDone(false); setForm({ title: "", category: "ui", description: "", priority: "medium" }); }, 1800);
+      setTimeout(() => {
+        setOpen(false); setDone(false); setAiResult(null);
+        setForm({ title: "", category: "", description: "", priority: "medium", repro: "", screenshots: [] });
+      }, 1800);
     } catch (e) { alert("제출 실패: " + e.message); }
     finally { setLoading(false); }
   };
 
+  const pageLabel = PAGE_LABELS[currentPage] || currentPage || "알 수 없음";
+
   return (
     <>
-      <button onClick={() => setOpen(true)} title="오류 보고" style={{
+      <button onClick={() => setOpen(true)} title="오류 제보" style={{
         position: "fixed", bottom: 28, right: 28, zIndex: 1200,
         width: 52, height: 52, borderRadius: "50%",
         background: C.navy, border: `3px solid ${C.gold}`,
@@ -9876,62 +9976,170 @@ function BugReportFAB({ currentPage, reporterName, reporterEmpNo, reporterRole }
       }}>🐛</button>
 
       {open && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center" }}>
-          <div style={{ background: "#fff", borderRadius: 16, width: 480, maxWidth: "95vw", overflow: "hidden", boxShadow: "0 8px 40px rgba(0,0,0,0.25)" }}>
-            <div style={{ background: C.navy, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <span style={{ color: "#fff", fontWeight: 800, fontSize: 15, fontFamily: FONT }}>🐛 오류 / 건의사항 보고</span>
-              <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 20, cursor: "pointer" }}>×</button>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 2000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+          <div style={{ background: "#fff", borderRadius: 16, width: 520, maxWidth: "100%", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 8px 40px rgba(0,0,0,0.25)" }}>
+            {/* 헤더 */}
+            <div style={{ position: "sticky", top: 0, zIndex: 10, background: "#fff", borderBottom: `1px solid #eee`, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", borderRadius: "16px 16px 0 0" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {/* 미팍 로고 인라인 */}
+                <div style={{ width: 32, height: 32, borderRadius: 8, background: "#fff", border: "2px solid #1A1D2B", position: "relative", overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 8, background: C.gold }} />
+                  <span style={{ fontWeight: 900, fontSize: 16, color: "#1A1D2B", position: "relative", zIndex: 1, marginTop: -3 }}>P</span>
+                </div>
+                <span style={{ fontWeight: 900, fontSize: 15, color: "#1A1D2B", fontFamily: FONT }}>미팍<span style={{ color: C.gold }}>Ticket</span></span>
+                <span style={{ fontSize: 12, background: "#fee2e2", color: "#DC2626", fontWeight: 700, padding: "2px 10px", borderRadius: 20, fontFamily: FONT }}>🐛 오류 제보</span>
+              </div>
+              <button onClick={() => setOpen(false)} style={{ background: "none", border: "none", fontSize: 22, cursor: "pointer", color: "#999", padding: 0, lineHeight: 1 }}>×</button>
             </div>
-            <div style={{ padding: 20 }}>
+
+            <div style={{ padding: "20px 20px 4px" }}>
               {done ? (
-                <div style={{ textAlign: "center", padding: "32px 0" }}>
-                  <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
-                  <div style={{ fontWeight: 800, fontSize: 16, color: C.navy, fontFamily: FONT }}>접수 완료!</div>
-                  <div style={{ color: "#666", fontSize: 13, marginTop: 6 }}>빠르게 확인하겠습니다.</div>
+                <div style={{ textAlign: "center", padding: "48px 0" }}>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>✅</div>
+                  <div style={{ fontWeight: 900, fontSize: 18, color: C.navy, fontFamily: FONT }}>접수 완료!</div>
+                  <div style={{ color: "#666", fontSize: 13, marginTop: 8 }}>빠르게 확인하겠습니다.</div>
                 </div>
               ) : (
                 <>
-                  <div style={{ background: "#f8f9ff", border: `1px solid ${C.border}`, borderRadius: 8, padding: "8px 12px", marginBottom: 14, fontSize: 12, color: "#666", fontFamily: FONT }}>
-                    📍 현재 화면: <strong style={{ color: C.navy }}>{currentPage || "알 수 없음"}</strong> · 보고자: <strong style={{ color: C.navy }}>{reporterName}</strong>
+                  {/* AI 분석 결과 */}
+                  {aiResult && (
+                    <div style={{ background: "#f0f4ff", border: `1px solid ${C.navy}22`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
+                      <span style={{ fontSize: 16 }}>🤖</span>
+                      <div style={{ flex: 1, fontSize: 12, color: "#444", fontFamily: FONT }}>
+                        <strong style={{ color: C.navy }}>AI 분류 제안:</strong> {BUG_CATEGORIES.find(c => c.key === aiResult.category)?.label} · {BUG_PRIORITY[aiResult.priority]?.label}
+                        {aiResult.summary && <span style={{ color: "#666" }}> · {aiResult.summary}</span>}
+                      </div>
+                      <span style={{ fontSize: 10, color: "#999", whiteSpace: "nowrap" }}>자동 적용됨</span>
+                    </div>
+                  )}
+
+                  {/* 제목 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 6, fontFamily: FONT }}>제목 <span style={{ color: "#DC2626" }}>*</span></label>
+                    <input
+                      value={form.title}
+                      onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+                      onBlur={runAI}
+                      placeholder="어떤 문제가 발생했나요?"
+                      style={{ width: "100%", padding: "10px 14px", border: "1.5px solid #DDD", borderRadius: 10, fontSize: 14, fontFamily: FONT, boxSizing: "border-box", outline: "none" }}
+                    />
                   </div>
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>분류</label>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+
+                  {/* 카테고리 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 8, fontFamily: FONT }}>카테고리 <span style={{ color: "#DC2626" }}>*</span></label>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                       {BUG_CATEGORIES.map(c => (
                         <button key={c.key} onClick={() => setForm(f => ({ ...f, category: c.key }))} style={{
-                          padding: "5px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-                          border: `2px solid ${form.category === c.key ? C.navy : C.border}`,
-                          background: form.category === c.key ? C.navy : "#fff",
-                          color: form.category === c.key ? "#fff" : "#666",
+                          padding: "7px 14px", borderRadius: 20, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                          border: `1.5px solid ${form.category === c.key ? C.navy : "#DDD"}`,
+                          background: form.category === c.key ? "#EEF2FF" : "#fff",
+                          color: form.category === c.key ? C.navy : "#666",
                         }}>{c.label}</button>
                       ))}
                     </div>
                   </div>
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>심각도</label>
-                    <div style={{ display: "flex", gap: 6 }}>
+
+                  {/* 심각도 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 8, fontFamily: FONT }}>심각도</label>
+                    <div style={{ display: "flex", gap: 8 }}>
                       {Object.entries(BUG_PRIORITY).map(([k, v]) => (
                         <button key={k} onClick={() => setForm(f => ({ ...f, priority: k }))} style={{
-                          flex: 1, padding: "6px 0", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-                          border: `2px solid ${form.priority === k ? v.color : C.border}`,
-                          background: form.priority === k ? v.color : "#fff",
-                          color: form.priority === k ? "#fff" : "#666",
+                          flex: 1, padding: "8px 0", borderRadius: 8, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                          border: `1.5px solid ${form.priority === k ? v.color : "#DDD"}`,
+                          background: form.priority === k ? v.bg : "#fff",
+                          color: form.priority === k ? v.color : "#999",
                         }}>{v.label}</button>
                       ))}
                     </div>
                   </div>
-                  <div style={{ marginBottom: 12 }}>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>제목 *</label>
-                    <input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} placeholder="오류 제목을 간단히 입력하세요" style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: FONT, boxSizing: "border-box" }} />
-                  </div>
+
+                  {/* 발생 페이지 */}
                   <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 700, color: "#666", marginBottom: 6, fontFamily: FONT }}>상세 내용 *</label>
-                    <textarea value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="어떤 상황에서 발생했는지 자세히 적어주세요" rows={4} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontFamily: FONT, resize: "vertical", boxSizing: "border-box" }} />
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 6, fontFamily: FONT }}>발생 페이지</label>
+                    <select
+                      value={currentPage || ""}
+                      disabled
+                      style={{ width: "100%", padding: "10px 14px", border: "1.5px solid #DDD", borderRadius: 10, fontSize: 13, fontFamily: FONT, background: "#f9f9f9", color: "#444", boxSizing: "border-box" }}
+                    >
+                      <option value={currentPage}>{pageLabel}</option>
+                    </select>
                   </div>
-                  <div style={{ display: "flex", gap: 8 }}>
-                    <button onClick={() => setOpen(false)} style={{ flex: 1, padding: "10px 0", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT, color: "#666" }}>취소</button>
-                    <button onClick={handleSubmit} disabled={loading} style={{ flex: 2, padding: "10px 0", borderRadius: 8, border: "none", background: loading ? "#999" : C.navy, color: "#fff", fontSize: 13, fontWeight: 800, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT }}>
-                      {loading ? "제출 중..." : "🐛 접수하기"}
+
+                  {/* 상세 설명 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 6, fontFamily: FONT }}>상세 설명 <span style={{ color: "#DC2626" }}>*</span></label>
+                    <textarea
+                      value={form.description}
+                      onChange={e => setForm(f => ({ ...f, description: e.target.value }))}
+                      onBlur={runAI}
+                      placeholder="어떤 상황에서 발생했는지 자세히 적어주세요..."
+                      rows={4}
+                      style={{ width: "100%", padding: "10px 14px", border: "1.5px solid #DDD", borderRadius: 10, fontSize: 13, fontFamily: FONT, resize: "vertical", boxSizing: "border-box", outline: "none" }}
+                    />
+                    {aiLoading && <div style={{ fontSize: 11, color: C.navy, marginTop: 4, fontFamily: FONT }}>🤖 AI가 분류 중...</div>}
+                  </div>
+
+                  {/* 재현 방법 */}
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 6, fontFamily: FONT }}>재현 방법 <span style={{ color: "#999", fontWeight: 400 }}>(선택)</span></label>
+                    <textarea
+                      value={form.repro}
+                      onChange={e => setForm(f => ({ ...f, repro: e.target.value }))}
+                      placeholder={"1. 대시보드 접속 2. 매장 선택 클릭 3. 에러 발생"}
+                      rows={3}
+                      style={{ width: "100%", padding: "10px 14px", border: "1.5px solid #DDD", borderRadius: 10, fontSize: 13, fontFamily: FONT, resize: "vertical", boxSizing: "border-box", outline: "none" }}
+                    />
+                  </div>
+
+                  {/* 스크린샷 첨부 */}
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#333", marginBottom: 8, fontFamily: FONT }}>
+                      스크린샷 <span style={{ color: "#999", fontWeight: 400 }}>(선택, 최대 3장)</span>
+                    </label>
+                    <input ref={fileInputRef} type="file" accept="image/*" multiple style={{ display: "none" }} onChange={async e => { await addScreenshots(Array.from(e.target.files || [])); e.target.value = ""; }} />
+                    {/* 첨부 버튼 */}
+                    {form.screenshots.length < 3 && (
+                      <div style={{ display: "flex", gap: 8, marginBottom: form.screenshots.length > 0 ? 10 : 0 }}>
+                        <button onClick={() => fileInputRef.current?.click()} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "1.5px dashed #CCC", background: "#FAFAFA", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, color: "#555" }}>🖼 갤러리</button>
+                        <button onClick={() => fileInputRef.current?.click()} style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "1.5px dashed #CCC", background: "#FAFAFA", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, color: "#555" }}>📷 촬영</button>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const items = await navigator.clipboard.read();
+                              for (const item of items) {
+                                const imgType = item.types.find(t => t.startsWith("image/"));
+                                if (imgType) { const blob = await item.getType(imgType); await addScreenshots([new File([blob], "paste.png", { type: imgType })]); }
+                              }
+                            } catch { alert("Ctrl+V로 이미지를 붙여넣을 수도 있습니다."); }
+                          }}
+                          style={{ flex: 1, padding: "9px 0", borderRadius: 10, border: "1.5px dashed #CCC", background: "#FAFAFA", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT, color: "#555" }}>📋 붙여넣기</button>
+                      </div>
+                    )}
+                    <div style={{ fontSize: 11, color: "#999", marginBottom: form.screenshots.length > 0 ? 8 : 0, fontFamily: FONT }}>Ctrl+V로 스크린샷을 붙여넣을 수 있습니다</div>
+                    {/* 미리보기 */}
+                    {form.screenshots.length > 0 && (
+                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                        {form.screenshots.map((s, i) => (
+                          <div key={i} style={{ position: "relative", width: 80, height: 80 }}>
+                            <img src={s} alt={`screenshot${i+1}`} style={{ width: 80, height: 80, objectFit: "cover", borderRadius: 8, border: "1px solid #DDD" }} />
+                            <button onClick={() => removeScreenshot(i)} style={{ position: "absolute", top: -6, right: -6, width: 20, height: 20, borderRadius: "50%", background: "#DC2626", border: "none", color: "#fff", fontSize: 11, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", padding: 0, lineHeight: 1 }}>×</button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 제출 */}
+                  <div style={{ marginBottom: 20 }}>
+                    <button onClick={handleSubmit} disabled={loading} style={{
+                      width: "100%", padding: "14px 0", borderRadius: 12, border: "none",
+                      background: loading ? "#999" : "#DC2626",
+                      color: "#fff", fontSize: 15, fontWeight: 800, cursor: loading ? "not-allowed" : "pointer", fontFamily: FONT,
+                      display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                    }}>
+                      {loading ? "제출 중..." : "🐛 오류 제보 전송"}
                     </button>
                   </div>
                 </>
@@ -10002,24 +10210,34 @@ function BugReportDashboard() {
         <h2 style={{ fontSize: 20, fontWeight: 900, color: C.navy, margin: 0, marginBottom: 4 }}>🐛 오류 보고 관리</h2>
         <p style={{ color: "#666", fontSize: 13, margin: 0 }}>ERP · 현장앱에서 접수된 오류 및 건의사항</p>
       </div>
+
+      {/* KPI */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12, marginBottom: 20 }}>
         {[
           { label: "전체", value: kpi.total, color: C.navy },
           { label: "접수", value: kpi.open, color: "#DC2626" },
-          { label: "처리중", value: kpi.inProgress, color: "#EA580C" },
-          { label: "해결완료", value: kpi.resolved, color: "#16A34A" },
+          { label: "확인중", value: kpi.inProgress, color: "#EA580C" },
+          { label: "해결됨", value: kpi.resolved, color: "#16A34A" },
         ].map(k => (
           <div key={k.label} style={{ background: "#fff", border: `1px solid ${C.border}`, borderLeft: `4px solid ${k.color}`, borderRadius: 10, padding: "14px 16px" }}>
-            <div style={{ fontSize: 24, fontWeight: 900, color: k.color, fontFamily: FONT }}>{k.value}</div>
+            <div style={{ fontSize: 26, fontWeight: 900, color: k.color }}>{k.value}</div>
             <div style={{ fontSize: 12, color: "#666", marginTop: 2 }}>{k.label}</div>
           </div>
         ))}
       </div>
+
       <div style={{ display: "flex", gap: 16, alignItems: "flex-start" }}>
+        {/* 목록 */}
         <div style={{ flex: 1, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden" }}>
-          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-            {[["all","전체"],["open","접수"],["in_progress","처리중"],["resolved","해결완료"],["closed","종료"]].map(([k, v]) => (
-              <button key={k} onClick={() => setFilterStatus(k)} style={{ padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${filterStatus === k ? C.navy : C.border}`, background: filterStatus === k ? C.navy : "#fff", color: filterStatus === k ? "#fff" : "#666", fontFamily: FONT }}>{v}</button>
+          {/* 필터 */}
+          <div style={{ padding: "12px 16px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+            {[["all","전체"],["open","접수"],["in_progress","확인중"],["resolved","해결됨"],["closed","종료"]].map(([k, v]) => (
+              <button key={k} onClick={() => setFilterStatus(k)} style={{
+                padding: "4px 12px", borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: "pointer",
+                border: `1.5px solid ${filterStatus === k ? C.navy : C.border}`,
+                background: filterStatus === k ? C.navy : "#fff",
+                color: filterStatus === k ? "#fff" : "#666", fontFamily: FONT,
+              }}>{v}</button>
             ))}
             <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
               <select value={filterApp} onChange={e => setFilterApp(e.target.value)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${C.border}`, fontSize: 12, fontFamily: FONT }}>
@@ -10034,78 +10252,130 @@ function BugReportDashboard() {
                 <option value="medium">보통</option>
                 <option value="low">낮음</option>
               </select>
+              <button onClick={load} style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, cursor: "pointer", fontFamily: FONT }}>새로고침</button>
             </div>
           </div>
+
+          {/* 목록 */}
           {loading ? (
             <div style={{ padding: 40, textAlign: "center", color: "#999", fontSize: 13 }}>불러오는 중...</div>
           ) : filtered.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: "#999", fontSize: 13 }}>접수된 오류가 없습니다 🎉</div>
           ) : (
-            <div style={{ maxHeight: 520, overflowY: "auto" }}>
+            <div style={{ maxHeight: 560, overflowY: "auto" }}>
               {filtered.map(r => {
                 const st = BUG_STATUS[r.status] || BUG_STATUS.open;
                 const pr = BUG_PRIORITY[r.priority] || BUG_PRIORITY.medium;
                 const cat = BUG_CATEGORIES.find(c => c.key === r.category);
                 return (
                   <div key={r.id} onClick={() => { setSelected(r); setMemo(r.admin_memo || ""); }} style={{
-                    padding: "12px 16px", borderBottom: `1px solid ${C.lightGray}`, cursor: "pointer",
+                    padding: "14px 16px", borderBottom: `1px solid ${C.lightGray}`, cursor: "pointer",
                     background: selected?.id === r.id ? "#f0f4ff" : "#fff",
                     borderLeft: selected?.id === r.id ? `3px solid ${C.navy}` : "3px solid transparent",
                   }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: st.bg, color: st.color }}>{st.label}</span>
-                      <span style={{ fontSize: 10, fontWeight: 700, color: pr.color }}>● {pr.label}</span>
-                      <span style={{ fontSize: 10, color: "#999", marginLeft: "auto" }}>{r.app === "erp" ? "ERP" : "현장앱"} · {fmtDate(r.created_at)}</span>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
+                      <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: pr.bg, color: pr.color, flexShrink: 0 }}>{pr.label}</span>
+                      {cat && <span style={{ fontSize: 11, color: "#666", background: "#f3f4f6", padding: "2px 8px", borderRadius: 10 }}>{cat.label}</span>}
+                      {r.ai_summary && <span style={{ fontSize: 10, color: C.navy, background: "#EEF2FF", padding: "2px 8px", borderRadius: 10, flexShrink: 0 }}>🤖 AI 분류</span>}
+                      <span style={{ fontSize: 11, color: "#999", marginLeft: "auto", flexShrink: 0 }}>{r.app === "erp" ? "ERP" : "현장앱"} · {fmtDate(r.created_at)}</span>
                     </div>
-                    <div style={{ fontWeight: 700, fontSize: 13, color: "#222", marginBottom: 2 }}>{r.title}</div>
-                    <div style={{ fontSize: 11, color: "#888" }}>{cat?.label || r.category} · {r.reporter_name} ({r.reporter_role})</div>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#222", marginBottom: 4 }}>{r.title}</div>
+                    <div style={{ fontSize: 12, color: "#888", display: "flex", alignItems: "center", gap: 8 }}>
+                      <span>{r.page_label || r.page || "-"} · {r.reporter_name}</span>
+                      {r.screenshots?.length > 0 && <span style={{ color: "#999" }}>📷 {r.screenshots.length}장</span>}
+                    </div>
+                    {r.ai_summary && <div style={{ fontSize: 11, color: "#666", marginTop: 4, background: "#f8f9ff", padding: "4px 8px", borderRadius: 6, borderLeft: `2px solid ${C.navy}` }}>💬 {r.ai_summary}</div>}
                   </div>
                 );
               })}
             </div>
           )}
         </div>
+
+        {/* 상세 패널 */}
         {selected && (
-          <div style={{ width: 300, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: 16, flexShrink: 0 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
-              <span style={{ fontWeight: 900, fontSize: 14, color: C.navy, fontFamily: FONT }}>상세 정보</span>
-              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "#999", fontSize: 18, cursor: "pointer" }}>×</button>
+          <div style={{ width: 320, background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, overflow: "hidden", flexShrink: 0 }}>
+            <div style={{ background: C.navy, padding: "12px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontWeight: 800, fontSize: 14, color: "#fff", fontFamily: FONT }}>상세 정보</span>
+              <button onClick={() => setSelected(null)} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.7)", fontSize: 18, cursor: "pointer" }}>×</button>
             </div>
-            <div style={{ fontSize: 12, color: "#666", marginBottom: 10, lineHeight: 1.8 }}>
-              <div><strong>제목:</strong> {selected.title}</div>
-              <div><strong>앱:</strong> {selected.app === "erp" ? "ERP" : "현장앱"} / {selected.page}</div>
-              <div><strong>보고자:</strong> {selected.reporter_name} ({selected.reporter_emp_no})</div>
-              <div><strong>분류:</strong> {BUG_CATEGORIES.find(c => c.key === selected.category)?.label}</div>
-              <div><strong>심각도:</strong> <span style={{ color: BUG_PRIORITY[selected.priority]?.color, fontWeight: 700 }}>{BUG_PRIORITY[selected.priority]?.label}</span></div>
-              <div><strong>접수일:</strong> {fmtDate(selected.created_at)}</div>
-              {selected.resolved_at && <div><strong>해결일:</strong> {fmtDate(selected.resolved_at)}</div>}
-            </div>
-            <div style={{ background: "#f8f9ff", borderRadius: 8, padding: "10px 12px", marginBottom: 12, fontSize: 12, color: "#333", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>
-              {selected.description}
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>상태 변경</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
-                {Object.entries(BUG_STATUS).map(([k, v]) => (
-                  <button key={k} onClick={() => updateStatus(selected.id, k)} style={{
-                    padding: "6px 0", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-                    border: `1.5px solid ${selected.status === k ? v.color : C.border}`,
-                    background: selected.status === k ? v.bg : "#fff",
-                    color: selected.status === k ? v.color : "#666",
-                  }}>{v.label}</button>
-                ))}
+            <div style={{ padding: 16, maxHeight: 640, overflowY: "auto" }}>
+              {/* 기본 정보 */}
+              <div style={{ fontSize: 12, color: "#444", marginBottom: 12, lineHeight: 2, background: "#f9f9f9", borderRadius: 8, padding: "10px 12px" }}>
+                <div><strong>제목:</strong> {selected.title}</div>
+                <div><strong>앱:</strong> {selected.app === "erp" ? "ERP" : "현장앱"}</div>
+                <div><strong>발생 화면:</strong> {selected.page_label || selected.page || "-"}</div>
+                <div><strong>보고자:</strong> {selected.reporter_name} ({selected.reporter_emp_no})</div>
+                <div><strong>분류:</strong> {BUG_CATEGORIES.find(c => c.key === selected.category)?.label || selected.category}</div>
+                <div><strong>심각도:</strong> <span style={{ color: BUG_PRIORITY[selected.priority]?.color, fontWeight: 700 }}>{BUG_PRIORITY[selected.priority]?.label}</span></div>
+                <div><strong>접수일:</strong> {fmtDate(selected.created_at)}</div>
+                {selected.resolved_at && <div><strong>해결일:</strong> {fmtDate(selected.resolved_at)}</div>}
               </div>
-            </div>
-            <div style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>관리자 메모</div>
-              <textarea value={memo} onChange={e => setMemo(e.target.value)} rows={3} placeholder="처리 내용, 참고사항 등..." style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: FONT, resize: "vertical", boxSizing: "border-box" }} />
-              <button onClick={saveMemo} disabled={saving} style={{ width: "100%", marginTop: 6, padding: "7px 0", borderRadius: 8, border: "none", background: C.navy, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                {saving ? "저장 중..." : "💾 메모 저장"}
+
+              {/* AI 요약 */}
+              {selected.ai_summary && (
+                <div style={{ background: "#EEF2FF", border: `1px solid ${C.navy}33`, borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: C.navy }}>
+                  🤖 <strong>AI 분석:</strong> {selected.ai_summary}
+                </div>
+              )}
+
+              {/* 상세 내용 */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 4 }}>상세 설명</div>
+                <div style={{ background: "#f8f9ff", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#333", lineHeight: 1.7, whiteSpace: "pre-wrap" }}>{selected.description}</div>
+              </div>
+
+              {/* 재현 방법 */}
+              {selected.repro_steps && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 4 }}>재현 방법</div>
+                  <div style={{ background: "#fffbeb", borderRadius: 8, padding: "10px 12px", fontSize: 12, color: "#333", lineHeight: 1.7, whiteSpace: "pre-wrap", border: "1px solid #fde68a" }}>{selected.repro_steps}</div>
+                </div>
+              )}
+
+              {/* 스크린샷 */}
+              {selected.screenshots?.length > 0 && (
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>스크린샷 ({selected.screenshots.length}장)</div>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    {selected.screenshots.map((s, i) => (
+                      <a key={i} href={s} target="_blank" rel="noopener noreferrer">
+                        <img src={s} alt={`스크린샷${i+1}`} style={{ width: 90, height: 70, objectFit: "cover", borderRadius: 8, border: "1px solid #DDD", cursor: "pointer" }} />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 상태 변경 */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>상태 변경</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 4 }}>
+                  {Object.entries(BUG_STATUS).map(([k, v]) => (
+                    <button key={k} onClick={() => updateStatus(selected.id, k)} style={{
+                      padding: "7px 0", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                      border: `1.5px solid ${selected.status === k ? v.color : C.border}`,
+                      background: selected.status === k ? v.bg : "#fff",
+                      color: selected.status === k ? v.color : "#666",
+                    }}>{v.label}</button>
+                  ))}
+                </div>
+              </div>
+
+              {/* 관리자 메모 */}
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>관리자 메모</div>
+                <textarea value={memo} onChange={e => setMemo(e.target.value)} rows={3} placeholder="처리 내용, 참고사항 등..." style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: FONT, resize: "vertical", boxSizing: "border-box" }} />
+                <button onClick={saveMemo} disabled={saving} style={{ width: "100%", marginTop: 6, padding: "8px 0", borderRadius: 8, border: "none", background: C.navy, color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                  {saving ? "저장 중..." : "💾 메모 저장"}
+                </button>
+              </div>
+
+              <button onClick={() => deleteReport(selected.id)} style={{ width: "100%", padding: "8px 0", borderRadius: 8, border: `1px solid #DC2626`, background: "#fff", color: "#DC2626", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                🗑️ 삭제
               </button>
             </div>
-            <button onClick={() => deleteReport(selected.id)} style={{ width: "100%", padding: "7px 0", borderRadius: 8, border: `1px solid #DC2626`, background: "#fff", color: "#DC2626", fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-              🗑️ 삭제
-            </button>
           </div>
         )}
       </div>
