@@ -12016,6 +12016,7 @@ function AttendancePage({ employees }) {
   }, [year, month, daysInMonth]);
 
   // 일보 기반 자동 출근 맵: { empId-date: "출근" | "추가" }
+  // staff_type: field앱 "extra"(비번투입) / ERP "substitute"(대근) 모두 "추가"로 처리
   const autoAttMap = useMemo(() => {
     const map = {};
     staffRows.forEach(s => {
@@ -12023,16 +12024,28 @@ function AttendancePage({ employees }) {
       const rep = reports.find(r => r.id === s.report_id);
       if (!rep) return;
       const key = `${s.employee_id}-${rep.report_date}`;
-      const isExtra = s.staff_type === "extra";
-      // site/hq 출근이 있으면 "출근" 우선, extra만 있으면 "추가"
+      const isExtra = s.staff_type === "extra" || s.staff_type === "substitute";
+      // site/hq/regular 출근이 있으면 "출근" 우선, extra/substitute만 있으면 "추가"
       if (!map[key]) {
         map[key] = isExtra ? "추가" : "출근";
       } else if (!isExtra) {
-        map[key] = "출근"; // site/hq가 추가되면 출근으로 승격
+        map[key] = "출근"; // 정규 출근이 추가되면 승격
       }
     });
     return map;
   }, [staffRows, reports]);
+
+  // 직원별 추가수당 합계 맵: { empId: totalAmount }
+  const extraAmountMap = useMemo(() => {
+    const map = {};
+    staffRows.forEach(s => {
+      if (!s.employee_id) return;
+      const amt = toNum(s.extra_amount);
+      if (!amt) return;
+      map[s.employee_id] = (map[s.employee_id] || 0) + amt;
+    });
+    return map;
+  }, [staffRows]);
 
   // 수동 기록 맵: { empId-date: status }
   const manualAttMap = useMemo(() => {
@@ -12094,6 +12107,7 @@ function AttendancePage({ employees }) {
   }, 0);
   const expectedTotal = totalEmps * totalWorkableDays;
   const overallAttRate = expectedTotal > 0 ? Math.round(((kpiAttCount + kpiExtraCount + kpiLateCount) / expectedTotal) * 100) : 0;
+  const kpiExtraAmount = allFilteredEmps.reduce((sum, emp) => sum + (extraAmountMap[emp.id] || 0), 0);
 
   // Per-employee stats (for card view)
   const empStats = useMemo(() => {
@@ -12105,9 +12119,10 @@ function AttendancePage({ employees }) {
       const leave = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "연차").length;
       const worked = att + extra + late;
       const rate = totalWorkableDays > 0 ? Math.round((worked / totalWorkableDays) * 100) : 0;
-      return { ...emp, att, extra, late, absent, leave, worked, rate };
+      const extraAmt = extraAmountMap[emp.id] || 0;
+      return { ...emp, att, extra, late, absent, leave, worked, rate, extraAmt };
     });
-  }, [allFilteredEmps, dates, getCellStatus, totalWorkableDays]);
+  }, [allFilteredEmps, dates, getCellStatus, totalWorkableDays, extraAmountMap]);
 
   // Excel Export
   const exportExcel = async () => {
@@ -12118,10 +12133,10 @@ function AttendancePage({ employees }) {
       "사번": e.emp_no || "", "이름": e.name, "사업장": getSiteName(e.site_code_1),
       "근무형태": getWorkLabel(e.work_code), "출근": e.att, "추가": e.extra,
       "지각": e.late, "결근": e.absent, "연차": e.leave, "근무일수": e.worked,
-      "출근률(%)": e.rate,
+      "출근률(%)": e.rate, "추가수당(원)": e.extraAmt,
     }));
     const ws1 = XLSX.utils.json_to_sheet(summaryRows);
-    ws1["!cols"] = [{ wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 10 }];
+    ws1["!cols"] = [{ wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 12 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 8 }, { wch: 10 }, { wch: 14 }];
     XLSX.utils.book_append_sheet(wb, ws1, "근태요약");
 
     // Sheet 2: 일별 상세
@@ -12142,12 +12157,13 @@ function AttendancePage({ employees }) {
       const gExtra = gEmps.reduce((s, e) => s + e.extra, 0);
       const gLate = gEmps.reduce((s, e) => s + e.late, 0);
       const gAbsent = gEmps.reduce((s, e) => s + e.absent, 0);
+      const gExtraAmt = gEmps.reduce((s, e) => s + e.extraAmt, 0);
       const gExpected = gEmps.length * totalWorkableDays;
       const gRate = gExpected > 0 ? Math.round(((gAtt + gExtra + gLate) / gExpected) * 100) : 0;
-      return { "사업장": `${g.code} ${g.name}`, "인원": gEmps.length, "출근": gAtt, "추가": gExtra, "지각": gLate, "결근": gAbsent, "출근률(%)": gRate };
+      return { "사업장": `${g.code} ${g.name}`, "인원": gEmps.length, "출근": gAtt, "추가": gExtra, "지각": gLate, "결근": gAbsent, "출근률(%)": gRate, "추가수당합계(원)": gExtraAmt };
     });
     const ws3 = XLSX.utils.json_to_sheet(siteRows);
-    ws3["!cols"] = [{ wch: 18 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 10 }];
+    ws3["!cols"] = [{ wch: 18 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 10 }, { wch: 16 }];
     XLSX.utils.book_append_sheet(wb, ws3, "매장별집계");
 
     const { saveAs } = await import("file-saver");
@@ -12262,13 +12278,14 @@ function AttendancePage({ employees }) {
         </div>
       </div>
 
-      {/* KPI 스트립 (7개) */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 10, marginBottom: 20 }}>
+      {/* KPI 스트립 (8개) */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(8, 1fr)", gap: 10, marginBottom: 20 }}>
         {[
           { icon: "👥", label: "표시 인원", value: `${totalEmps}명`, color: C.navy },
           { icon: "📊", label: "출근률", value: `${overallAttRate}%`, color: overallAttRate >= 80 ? C.success : overallAttRate >= 60 ? C.orange : C.error },
           { icon: "✅", label: "출근", value: `${kpiAttCount}건`, color: C.success },
           { icon: "💜", label: "추가근무", value: `${kpiExtraCount}건`, color: "#7C3AED" },
+          { icon: "💰", label: "추가수당합계", value: kpiExtraAmount > 0 ? `${pFmt(kpiExtraAmount)}원` : "0원", color: "#7C3AED" },
           { icon: "⏰", label: "지각", value: `${kpiLateCount}건`, color: "#F57F17" },
           { icon: "❌", label: "결근", value: `${kpiAbsentCount}건`, color: C.error },
           { icon: "🏖️", label: "연차", value: `${kpiLeaveCount}건`, color: "#6A1B9A" },
@@ -12327,6 +12344,13 @@ function AttendancePage({ employees }) {
                           </div>
                         ))}
                       </div>
+                      {/* 추가수당 뱃지 */}
+                      {emp.extraAmt > 0 && (
+                        <div style={{ marginTop: 8, background: "#F3EDFF", border: "1px solid #DDD0F5", borderRadius: 8, padding: "5px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#7C3AED" }}>💰 추가수당</span>
+                          <span style={{ fontSize: 12, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{fmt(emp.extraAmt)}원</span>
+                        </div>
+                      )}
                       {/* 미니 달력 도트 */}
                       <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 2 }}>
                         {dates.filter(d => d.dateStr <= todayStr).map(d => {
@@ -12473,6 +12497,7 @@ function AttendancePage({ employees }) {
             <span>📊 출근률 {overallAttRate}%</span>
             <span>✅ 출근 {kpiAttCount}건</span>
             <span>💜 추가 {kpiExtraCount}건</span>
+            {kpiExtraAmount > 0 && <span style={{ color: "#7C3AED", fontWeight: 700 }}>💰 추가수당 {fmt(kpiExtraAmount)}원</span>}
             <span>⏰ 지각 {kpiLateCount}건</span>
             <span>❌ 결근 {kpiAbsentCount}건</span>
             <span>🏖️ 연차 {kpiLeaveCount}건</span>
