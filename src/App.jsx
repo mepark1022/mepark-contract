@@ -12241,10 +12241,10 @@ function AttendancePage({ employees }) {
           </div>
         )}
         <div style={{ display: "flex", background: "#F0F2F8", borderRadius: 8, padding: 2, marginLeft: 8 }}>
-          {[["calendar", "📅 캘린더"], ["card", "🃏 카드"]].map(([k, v]) => (
+          {[["calendar", "📅 캘린더"], ["card", "🃏 카드"], ["extra", "💜 추가근무"]].map(([k, v]) => (
             <button key={k} onClick={() => setViewMode(k)} style={{
               padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
-              background: viewMode === k ? "#fff" : "transparent", color: viewMode === k ? C.navy : C.gray,
+              background: viewMode === k ? "#fff" : "transparent", color: viewMode === k ? (k === "extra" ? "#7C3AED" : C.navy) : C.gray,
               border: "none", boxShadow: viewMode === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
             }}>{v}</button>
           ))}
@@ -12297,6 +12297,93 @@ function AttendancePage({ employees }) {
           </div>
         ))}
       </div>
+
+      {/* ── 추가근무 탭 ── */}
+      {viewMode === "extra" && (() => {
+        // staffRows에서 extra_amount 또는 staff_type=extra/substitute 인 행만 추출
+        const extraRows = staffRows
+          .filter(s => s.employee_id && (toNum(s.extra_amount) > 0 || s.staff_type === "extra" || s.staff_type === "substitute"))
+          .map(s => {
+            const rep = reports.find(r => r.id === s.report_id);
+            const emp = employees.find(e => e.id === s.employee_id);
+            return { ...s, report_date: rep?.report_date || "", site_code: rep?.site_code || "", empName: emp?.name || s.name_raw || "?", empNo: emp?.emp_no || "" };
+          })
+          .filter(s => s.report_date)
+          .sort((a, b) => b.report_date.localeCompare(a.report_date));
+
+        const totalAmt = extraRows.reduce((s, r) => s + toNum(r.extra_amount), 0);
+
+        return (
+          <div>
+            {/* 헤더 요약 */}
+            <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+              <div style={{ background: "#F3EDFF", border: "1.5px solid #DDD0F5", borderRadius: 12, padding: "10px 20px", display: "flex", gap: 16, alignItems: "center" }}>
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{extraRows.length}건</div>
+                  <div style={{ fontSize: 11, color: C.gray }}>추가근무 총계</div>
+                </div>
+                <div style={{ width: 1, height: 36, background: "#DDD0F5" }} />
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ fontSize: 22, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{fmt(totalAmt)}원</div>
+                  <div style={{ fontSize: 11, color: C.gray }}>수당 합계</div>
+                </div>
+              </div>
+            </div>
+
+            {extraRows.length === 0 ? (
+              <div style={{ padding: 60, textAlign: "center", color: C.gray, fontSize: 14, background: "#fff", borderRadius: 14, border: "1.5px solid #E8ECF4" }}>
+                {loading ? "로딩 중..." : "이번 달 추가근무 내역이 없습니다"}
+              </div>
+            ) : (
+              <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
+                <table style={{ borderCollapse: "collapse", width: "100%" }}>
+                  <thead>
+                    <tr style={{ background: "#F4F6FB" }}>
+                      {[["날짜", 100], ["사업장", 140], ["사번", 90], ["이름", 80], ["구분", 90], ["추가수당유형", 130], ["수당(원)", 110]].map(([h, w]) => (
+                        <th key={h} style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, color: C.dark, textAlign: h === "수당(원)" ? "right" : "left", borderBottom: "2px solid #E8ECF4", minWidth: w }}>
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {extraRows.map((row, i) => {
+                      const typeLabel = row.staff_type === "extra" ? "비번투입" : row.staff_type === "substitute" ? "대근" : row.staff_type === "hq" ? "본사지원" : row.staff_type === "part" ? "알바지원" : "추가";
+                      const typeBg = row.staff_type === "extra" ? "#F3EDFF" : row.staff_type === "substitute" ? "#FFF3E0" : "#F0F4FF";
+                      const typeColor = row.staff_type === "extra" ? "#7C3AED" : row.staff_type === "substitute" ? "#E65100" : C.navy;
+                      const siteName = SITES.find(s => s.code === row.site_code)?.name || row.site_code || "—";
+                      const amt = toNum(row.extra_amount);
+                      return (
+                        <tr key={row.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#FAFBFC", borderBottom: "1px solid #F0F2F8" }}>
+                          <td style={{ padding: "8px 12px", fontSize: 12, fontWeight: 700, color: C.dark }}>{row.report_date}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 12, color: C.dark }}>
+                            <span style={{ fontSize: 10, color: C.gray, marginRight: 4 }}>{row.site_code}</span>{siteName}
+                          </td>
+                          <td style={{ padding: "8px 12px", fontSize: 11, color: C.gray }}>{row.empNo || "—"}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.dark }}>{row.empName}</td>
+                          <td style={{ padding: "8px 12px" }}>
+                            <span style={{ fontSize: 11, fontWeight: 700, background: typeBg, color: typeColor, borderRadius: 6, padding: "2px 8px" }}>{typeLabel}</span>
+                          </td>
+                          <td style={{ padding: "8px 12px", fontSize: 12, color: C.gray }}>{row.extra_type || "—"}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 13, fontWeight: 900, color: amt > 0 ? "#7C3AED" : C.gray, textAlign: "right", fontFamily: FONT }}>
+                            {amt > 0 ? `${fmt(amt)}원` : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: "#F3EDFF", borderTop: "2px solid #DDD0F5" }}>
+                      <td colSpan={6} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: "#7C3AED" }}>합계 ({extraRows.length}건)</td>
+                      <td style={{ padding: "8px 12px", fontSize: 14, fontWeight: 900, color: "#7C3AED", textAlign: "right", fontFamily: FONT }}>{fmt(totalAmt)}원</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* ── 카드 뷰 ── */}
       {viewMode === "card" && (
