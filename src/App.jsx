@@ -7212,18 +7212,17 @@ function DailyReportPage({ employees, onDataChange }) {
   const closePanel = () => { setPanelSiteCode(null); setSelSite("ALL"); setEditMode(false); };
 
   // ── 날짜 앞뒤 이동 ──
-  const prevDay = () => {
-    const [y, m, d] = selDate.split("-").map(Number);
-    const dt = new Date(y, m - 1, d - 1);
-    const s = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
-    setSelDate(s); setSelMonth(s.slice(0, 7));
+  const shiftDay = (delta) => {
+    setSelDate(prev => {
+      const dt = new Date(prev + "T00:00:00");
+      dt.setDate(dt.getDate() + delta);
+      const s = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
+      setSelMonth(s.slice(0, 7));
+      return s;
+    });
   };
-  const nextDay = () => {
-    const [y, m, d] = selDate.split("-").map(Number);
-    const dt = new Date(y, m - 1, d + 1);
-    const s = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,"0")}-${String(dt.getDate()).padStart(2,"0")}`;
-    setSelDate(s); setSelMonth(s.slice(0, 7));
-  };
+  const prevDay = () => shiftDay(-1);
+  const nextDay = () => shiftDay(1);
 
   // ── 패널 내 일보 (panelSiteCode 기준) ──
   const panelReport = panelSiteCode ? reports.find(r => r.report_date === selDate && r.site_code === panelSiteCode) : null;
