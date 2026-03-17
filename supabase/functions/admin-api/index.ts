@@ -1,5 +1,5 @@
 // ============================================================
-// 미팍ERP — admin-api Edge Function v2 (field_login 추가)
+// 미팍ERP — admin-api Edge Function v3 (컬럼명 교정 + field_login 수정)
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -16,15 +16,15 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // body를 최초 1회만 파싱
     const body = await req.json();
     const { action } = body;
 
     // ────────────────────────────────────────────────────────
     // ACTION: field_login — 현장앱 사번+PIN 로그인 (인증 불필요)
+    // 전화번호 로그인 흐름에서 Auth 계정 없는 field_member를 처리
     // ────────────────────────────────────────────────────────
     if (action === "field_login") {
-      const { emp_id, pin } = body;
+      const { emp_id, pin } = body; // emp_id = emp_no 값
       if (!emp_id || !pin) {
         return new Response(JSON.stringify({ error: "emp_id와 pin이 필요합니다." }), {
           status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -37,11 +37,11 @@ Deno.serve(async (req) => {
         { auth: { autoRefreshToken: false, persistSession: false } }
       );
 
-      // 1. employees 조회
+      // 1. employees 조회 — 정확한 컬럼명 사용 (emp_no, auth_id, system_role, site_code_1, work_code)
       const { data: emp, error: empErr } = await adminClient
         .from("employees")
-        .select("id, name, emp_id, site_code, work_type, field_pin, auth_user_id, status, field_role")
-        .eq("emp_id", emp_id.trim().toUpperCase())
+        .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status")
+        .eq("emp_no", emp_id.trim().toUpperCase())
         .single();
 
       if (empErr || !emp) {
@@ -49,35 +49,37 @@ Deno.serve(async (req) => {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (emp.status !== "active") {
-        return new Response(JSON.stringify({ error: "재직 중인 직원이 아닙니다." }), {
+
+      // 2. PIN 검증 — phone 뒤 4자리 (field_pin 컬럼 없음, 전화번호에서 파생)
+      const phoneDigits = (emp.phone || "").replace(/\D/g, "");
+      const pin4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : "";
+      if (!pin4) {
+        return new Response(JSON.stringify({ error: "전화번호가 등록되지 않았습니다. 관리자에게 문의하세요." }), {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
-      if (!emp.field_pin) {
-        return new Response(JSON.stringify({ error: "PIN이 설정되지 않았습니다. 관리자에게 문의하세요." }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (emp.field_pin !== pin) {
+      if (pin !== pin4) {
         return new Response(JSON.stringify({ error: "PIN이 올바르지 않습니다." }), {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // 2. Auth 계정 확인/생성
-      const email = `${emp_id.trim().toLowerCase()}@field.mepark.internal`;
-      const password = `MP_FIELD_${pin}_${emp.id.slice(0, 8)}`;
-      let authUserId = emp.auth_user_id;
+      // 3. Auth 계정 확인/생성 — 이메일: empNo@field.mepark.internal / 비밀번호: mp{pin4}
+      const email = `${emp.emp_no.toLowerCase()}@field.mepark.internal`;
+      const password = `mp${pin4}`;
+      let authId = emp.auth_id;
 
-      if (!authUserId) {
+      if (!authId) {
+        // 계정 신규 생성 시도
         const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
           email,
           password,
           email_confirm: true,
           user_metadata: {
-            emp_id: emp.emp_id, name: emp.name,
-            role: emp.field_role || "field_staff", site_code: emp.site_code,
+            emp_no: emp.emp_no,
+            name: emp.name,
+            role: emp.system_role || "field_member",
+            site_code: emp.site_code_1,
           },
         });
 
@@ -88,28 +90,33 @@ Deno.serve(async (req) => {
         }
 
         if (createErr) {
+          // 이미 존재하는 경우 listUsers로 탐색
           const { data: userList } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
           const existing = userList?.users?.find((u: any) => u.email === email);
-          authUserId = existing?.id;
+          authId = existing?.id ?? null;
         } else {
-          authUserId = newUser?.user?.id;
+          authId = newUser?.user?.id ?? null;
         }
 
-        if (authUserId) {
-          await adminClient.from("employees").update({ auth_user_id: authUserId }).eq("id", emp.id);
+        if (authId) {
+          // auth_id를 employees 테이블에 저장 (정확한 컬럼명: auth_id)
+          await adminClient.from("employees").update({ auth_id: authId }).eq("id", emp.id);
         }
       }
 
-      if (!authUserId) {
+      if (!authId) {
         return new Response(JSON.stringify({ error: "Auth 계정을 찾을 수 없습니다." }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
 
-      // 3. 비밀번호 최신화 (PIN 변경에 대응) → 로그인
-      await adminClient.auth.admin.updateUserById(authUserId, { password });
+      // 4. 비밀번호 최신화 (전화번호 변경에 대응) → signInWithPassword
+      await adminClient.auth.admin.updateUserById(authId, { password });
 
-      const { data: signInData, error: signInErr } = await adminClient.auth.signInWithPassword({ email, password });
+      const { data: signInData, error: signInErr } = await adminClient.auth.signInWithPassword({
+        email,
+        password,
+      });
       if (signInErr || !signInData?.session) {
         return new Response(JSON.stringify({ error: "세션 생성 실패: " + (signInErr?.message || "unknown") }), {
           status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -120,9 +127,13 @@ Deno.serve(async (req) => {
         access_token: signInData.session.access_token,
         refresh_token: signInData.session.refresh_token,
         employee: {
-          id: emp.id, name: emp.name, emp_id: emp.emp_id,
-          site_code: emp.site_code, work_type: emp.work_type,
-          field_role: emp.field_role || "field_staff",
+          id: emp.id,
+          name: emp.name,
+          emp_no: emp.emp_no,
+          emp_id: emp.emp_no,
+          site_code: emp.site_code_1,
+          work_type: emp.work_code,
+          role: emp.system_role || "field_member",
         },
       }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -295,7 +306,8 @@ Deno.serve(async (req) => {
     }
 
     // ────────────────────────────────────────────────────────
-    // ACTION: bulk_create_field
+    // ACTION: bulk_create_field — 현장 직원 계정 일괄 생성
+    // 이메일 형식: empNo@field.mepark.internal / 비밀번호: mp{pin4}
     // ────────────────────────────────────────────────────────
     if (action === "bulk_create_field") {
       const { accounts } = body;
@@ -312,27 +324,33 @@ Deno.serve(async (req) => {
 
       const results = [];
       for (const acc of accounts) {
-        const email = `${acc.emp_no.toLowerCase()}@field.mepark.app`;
-        const password = acc.pin || "0000";
+        // 이메일: empNo@field.mepark.internal (field_login과 동일 형식)
+        const email = `${acc.emp_no.toLowerCase()}@field.mepark.internal`;
+        // 비밀번호: mp + 전화번호 뒤 4자리
+        const phoneDigits = (acc.phone || "").replace(/\D/g, "");
+        const pin4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : acc.pin || "0000";
+        const password = `mp${pin4}`;
 
         try {
           const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
             email, password, email_confirm: true,
-            user_metadata: { name: acc.name },
+            user_metadata: { name: acc.name, emp_no: acc.emp_no },
           });
 
-          if (createError) {
+          if (createError && !createError.message.includes("already been registered")) {
             results.push({ emp_no: acc.emp_no, success: false, error: createError.message });
             continue;
           }
 
           const userId = newUser?.user?.id;
-          await supabaseAdmin.from("profiles").upsert({
-            id: userId, email, name: acc.name,
-            role: acc.role || "field_member",
-            site_code: acc.site_code, employee_id: acc.employee_id,
-            emp_no: acc.emp_no, created_at: new Date().toISOString(),
-          }, { onConflict: "id" });
+          if (userId) {
+            // employees.auth_id 업데이트
+            if (acc.employee_id) {
+              await supabaseAdmin.from("employees")
+                .update({ auth_id: userId })
+                .eq("id", acc.employee_id);
+            }
+          }
 
           results.push({ emp_no: acc.emp_no, success: true, userId });
         } catch (e: any) {
