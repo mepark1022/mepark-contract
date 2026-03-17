@@ -5967,6 +5967,199 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   return SummaryView();
 }
 
+// ── 16-2-0. 추가근무 설정 탭 컴포넌트 ──────────────────
+function SiteExtraConfigTab({ siteCode }) {
+  const [enabled, setEnabled] = useState(false);
+  const [types, setTypes] = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [editId, setEditId] = useState(null); // 편집 중인 유형 ID
+  const [form, setForm] = useState({ type_name: "", pay_kind: "fixed", fixed_min: 30, fixed_amount: 0, hourly_rate: 0, meal_trigger: null, meal_amount: null });
+  const [showAdd, setShowAdd] = useState(false);
+
+  const load = async () => {
+    const { data: cfg } = await supabase.from("site_extra_config").select("*").eq("site_code", siteCode).maybeSingle();
+    setEnabled(cfg?.is_enabled ?? false);
+    const { data: tp } = await supabase.from("site_extra_types").select("*").eq("site_code", siteCode).order("sort_order");
+    setTypes(tp || []);
+  };
+
+  useEffect(() => { load(); }, [siteCode]);
+
+  const toggleEnabled = async (val) => {
+    setEnabled(val);
+    await supabase.from("site_extra_config").upsert({ site_code: siteCode, is_enabled: val, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
+  };
+
+  const resetForm = () => setForm({ type_name: "", pay_kind: "fixed", fixed_min: 30, fixed_amount: 0, hourly_rate: 0, meal_trigger: null, meal_amount: null });
+
+  const handleAddType = async () => {
+    if (!form.type_name.trim()) { alert("유형명을 입력하세요"); return; }
+    setSaving(true);
+    const payload = {
+      site_code: siteCode,
+      sort_order: types.length,
+      type_name: form.type_name.trim(),
+      pay_kind: form.pay_kind,
+      fixed_min: form.pay_kind === "fixed" ? Number(form.fixed_min) : null,
+      fixed_amount: form.pay_kind === "fixed" ? Number(form.fixed_amount) : null,
+      hourly_rate: form.pay_kind === "hourly" ? Number(form.hourly_rate) : null,
+      meal_trigger: form.meal_trigger ? Number(form.meal_trigger) : null,
+      meal_amount: form.meal_trigger ? Number(form.meal_amount) : null,
+      updated_at: new Date().toISOString(),
+    };
+    if (editId) {
+      await supabase.from("site_extra_types").update(payload).eq("id", editId);
+      setEditId(null);
+    } else {
+      await supabase.from("site_extra_types").insert(payload);
+    }
+    resetForm(); setShowAdd(false); await load(); setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    await supabase.from("site_extra_types").delete().eq("id", id);
+    setTypes(p => p.filter(t => t.id !== id));
+  };
+
+  const handleEdit = (t) => {
+    setEditId(t.id);
+    setForm({
+      type_name: t.type_name, pay_kind: t.pay_kind,
+      fixed_min: t.fixed_min ?? 30, fixed_amount: t.fixed_amount ?? 0,
+      hourly_rate: t.hourly_rate ?? 0,
+      meal_trigger: t.meal_trigger ?? null, meal_amount: t.meal_amount ?? null,
+    });
+    setShowAdd(true);
+  };
+
+  const moveType = async (idx, dir) => {
+    const newTypes = [...types];
+    const target = idx + dir;
+    if (target < 0 || target >= newTypes.length) return;
+    [newTypes[idx], newTypes[target]] = [newTypes[target], newTypes[idx]];
+    setTypes(newTypes);
+    await Promise.all(newTypes.map((t, i) => supabase.from("site_extra_types").update({ sort_order: i }).eq("id", t.id)));
+  };
+
+  const PAY_KIND_LABEL = { fixed: "정액", hourly: "시급제" };
+  const PAY_KIND_COLOR = { fixed: { bg: "#DBEAFE", text: "#1D4ED8" }, hourly: { bg: "#EDE9FE", text: "#6D28D9" } };
+
+  return (
+    <div style={{ padding: "16px 0 8px" }}>
+      {/* ON/OFF 토글 */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, padding: "14px 16px", background: enabled ? "#EEF1FF" : C.lightGray, borderRadius: 14, border: enabled ? `2px solid ${C.navy}` : `1px solid ${C.border}` }}>
+        <div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: enabled ? C.navy : C.gray }}>추가근무 기능</div>
+          <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{enabled ? "현장앱에 추가근무 입력 항목이 표시됩니다" : "OFF 상태 — 현장앱에 표시 안 됨"}</div>
+        </div>
+        <button onClick={() => toggleEnabled(!enabled)} style={{
+          width: 52, height: 28, borderRadius: 14, border: "none", cursor: "pointer",
+          background: enabled ? C.navy : "#ccc", position: "relative", transition: "background 0.2s", flexShrink: 0,
+        }}>
+          <div style={{ width: 22, height: 22, background: "#fff", borderRadius: 11, position: "absolute", top: 3, left: enabled ? 27 : 3, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+        </button>
+      </div>
+
+      {enabled && (
+        <>
+          {/* 유형 목록 */}
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.navy, marginBottom: 10 }}>📋 추가근무 유형 ({types.length}개)</div>
+          {types.length === 0 && (
+            <div style={{ fontSize: 13, color: C.gray, textAlign: "center", padding: "16px 0", background: C.lightGray, borderRadius: 10, marginBottom: 10 }}>유형을 추가하세요</div>
+          )}
+          {types.map((t, idx) => (
+            <div key={t.id} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ width: 24, height: 24, background: C.navy, color: "#fff", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{idx + 1}</div>
+                <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.dark }}>{t.type_name}</div>
+                <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, fontWeight: 700, background: PAY_KIND_COLOR[t.pay_kind].bg, color: PAY_KIND_COLOR[t.pay_kind].text }}>{PAY_KIND_LABEL[t.pay_kind]}</span>
+              </div>
+              <div style={{ display: "flex", gap: 12, marginTop: 6, marginLeft: 32, fontSize: 11, color: C.gray, flexWrap: "wrap" }}>
+                {t.pay_kind === "fixed" && <span>⏱ {t.fixed_min}분 고정 &nbsp;💰 {fmt(t.fixed_amount)}원</span>}
+                {t.pay_kind === "hourly" && <span>⏱ 30분 단위 &nbsp;💰 {fmt(t.hourly_rate)}원/h</span>}
+                {t.meal_trigger && <span style={{ color: "#D97706", fontWeight: 700 }}>🍱 {t.meal_trigger}분 초과 시 +{fmt(t.meal_amount)}원</span>}
+              </div>
+              <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
+                <button onClick={() => moveType(idx, -1)} disabled={idx === 0} style={{ padding: "4px 8px", fontSize: 11, border: `1px solid ${C.border}`, borderRadius: 6, background: "#fff", cursor: idx === 0 ? "default" : "pointer", color: idx === 0 ? "#ccc" : C.gray, fontFamily: FONT }}>▲</button>
+                <button onClick={() => moveType(idx, 1)} disabled={idx === types.length - 1} style={{ padding: "4px 8px", fontSize: 11, border: `1px solid ${C.border}`, borderRadius: 6, background: "#fff", cursor: idx === types.length - 1 ? "default" : "pointer", color: idx === types.length - 1 ? "#ccc" : C.gray, fontFamily: FONT }}>▼</button>
+                <button onClick={() => handleEdit(t)} style={{ padding: "4px 10px", fontSize: 11, border: `1px solid ${C.navy}`, borderRadius: 6, background: "#fff", color: C.navy, cursor: "pointer", fontWeight: 700, fontFamily: FONT }}>수정</button>
+                <button onClick={() => handleDelete(t.id)} style={{ padding: "4px 10px", fontSize: 11, border: `1px solid ${C.error}`, borderRadius: 6, background: "#fff", color: C.error, cursor: "pointer", fontWeight: 700, fontFamily: FONT }}>삭제</button>
+              </div>
+            </div>
+          ))}
+
+          {/* 유형 추가/수정 폼 */}
+          {showAdd ? (
+            <div style={{ background: "#F0F3FF", border: `1.5px solid ${C.navy}`, borderRadius: 12, padding: 16, marginTop: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.navy, marginBottom: 12 }}>{editId ? "✏️ 유형 수정" : "➕ 유형 추가"}</div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>유형명</label>
+                <input value={form.type_name} onChange={e => setForm(p => ({ ...p, type_name: e.target.value }))} placeholder="예: 키전달, 연장근무 (1시간)" style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontWeight: 600, outline: "none", fontFamily: FONT }} />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>수당 방식</label>
+                <div style={{ display: "flex", gap: 8 }}>
+                  {[["fixed", "정액 (시간/금액 고정)"], ["hourly", "시급제 (시간 직접 입력)"]].map(([v, lbl]) => (
+                    <button key={v} onClick={() => setForm(p => ({ ...p, pay_kind: v }))} style={{
+                      flex: 1, padding: "9px 8px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                      background: form.pay_kind === v ? C.navy : "#fff", color: form.pay_kind === v ? "#fff" : C.gray,
+                      border: `1.5px solid ${form.pay_kind === v ? C.navy : C.border}`,
+                    }}>{lbl}</button>
+                  ))}
+                </div>
+              </div>
+              {form.pay_kind === "fixed" ? (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>고정 시간 (분)</label>
+                    <select value={form.fixed_min} onChange={e => setForm(p => ({ ...p, fixed_min: Number(e.target.value) }))} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: FONT, background: "#fff", outline: "none" }}>
+                      {[30, 60, 90, 120, 150, 180].map(m => <option key={m} value={m}>{m}분</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>지급 금액 (원)</label>
+                    <NumInput value={form.fixed_amount} onChange={v => setForm(p => ({ ...p, fixed_amount: v }))} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: FONT, textAlign: "right" }} />
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginBottom: 10 }}>
+                  <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>시급 (원/h)</label>
+                  <NumInput value={form.hourly_rate} onChange={v => setForm(p => ({ ...p, hourly_rate: v }))} style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontWeight: 600, fontFamily: FONT, textAlign: "right" }} />
+                </div>
+              )}
+              {/* 식대 설정 (시급제만) */}
+              {form.pay_kind === "hourly" && (
+                <div style={{ background: "#FFFBEB", border: "1px solid #FDE68A", borderRadius: 8, padding: 12, marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#D97706", marginBottom: 8 }}>🍱 식대 설정 (선택)</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>초과 기준 (분)</label>
+                      <select value={form.meal_trigger ?? ""} onChange={e => setForm(p => ({ ...p, meal_trigger: e.target.value === "" ? null : Number(e.target.value) }))} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: FONT, background: "#fff", outline: "none" }}>
+                        <option value="">없음</option>
+                        {[30, 60, 90, 120].map(m => <option key={m} value={m}>{m}분 초과 시</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>식대 금액 (원)</label>
+                      <NumInput value={form.meal_amount ?? 0} onChange={v => setForm(p => ({ ...p, meal_amount: v }))} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: FONT, textAlign: "right" }} />
+                    </div>
+                  </div>
+                </div>
+              )}
+              <div style={{ display: "flex", gap: 8 }}>
+                <button onClick={handleAddType} disabled={saving} style={{ flex: 1, padding: "11px", borderRadius: 10, border: "none", background: saving ? C.gray : C.navy, color: "#fff", fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT }}>{saving ? "저장 중..." : editId ? "수정 완료" : "추가"}</button>
+                <button onClick={() => { setShowAdd(false); setEditId(null); resetForm(); }} style={{ padding: "11px 16px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: "#fff", color: C.gray, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>취소</button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setShowAdd(true)} style={{ width: "100%", marginTop: 4, padding: "11px", borderRadius: 10, border: `2px dashed ${C.navy}`, background: "transparent", color: C.navy, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>+ 유형 추가</button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── 16-2. 사업장 현황 관리 ─────────────────────────────
 function SiteManagementPage({ employees, onSiteChange }) {
   const confirm = useConfirm();
@@ -5978,6 +6171,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
   const [newSiteName, setNewSiteName] = useState("");
   const [addError, setAddError] = useState("");
   const [customSites, setCustomSites] = useState([]);
+  const [siteTab, setSiteTab] = useState("basic"); // "basic" | "extra"
 
   useEffect(() => {
     (async () => {
@@ -6117,6 +6311,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
   const sel = selectedSite;
   const detail = sel ? (siteDetails[sel.code] || {}) : {};
   const parkings = sel ? (siteParking[sel.code] || []) : [];
+  const handleSelectSite = (site) => { setSelectedSite(site); setSiteTab("basic"); };
 
   const fld = { width: "100%", padding: "11px 14px", border: `2px solid ${C.border}`, borderRadius: 12, fontSize: 14, fontWeight: 600, color: C.dark, background: "#fff", outline: "none", fontFamily: FONT, transition: "border-color 0.2s" };
   const lbl = { fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 6 };
@@ -6169,7 +6364,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
             const weekdayStaff = toNum(d.weekday_staff);
             const weekendStaff = toNum(d.weekend_staff);
             return (
-              <div key={site.code} onClick={() => setSelectedSite(site)}
+              <div key={site.code} onClick={() => handleSelectSite(site)}
                 style={{
                   background: "#fff", borderRadius: 16, padding: "18px 20px",
                   border: isSel ? `2.5px solid ${C.navy}` : `1.5px solid ${C.border}`,
@@ -6245,8 +6440,23 @@ function SiteManagementPage({ employees, onSiteChange }) {
             </div>
           </div>
 
+          {/* 탭 네비게이션 */}
+          <div style={{ display: "flex", borderBottom: `2px solid ${C.lightGray}`, background: "#fff", flexShrink: 0 }}>
+            {[["basic", "📋 기본정보"], ["extra", "⏰ 추가근무 설정"]].map(([key, label]) => (
+              <button key={key} onClick={() => setSiteTab(key)} style={{
+                flex: 1, padding: "13px 8px", fontSize: 12, fontWeight: 800, cursor: "pointer",
+                border: "none", background: "none", fontFamily: FONT,
+                color: siteTab === key ? C.navy : C.gray,
+                borderBottom: siteTab === key ? `3px solid ${C.navy}` : "3px solid transparent",
+                marginBottom: -2, transition: "all 0.15s",
+              }}>{label}</button>
+            ))}
+          </div>
+
           {/* 폼 필드 */}
           <div style={{ padding: 24, flex: 1, overflowY: "auto" }}>
+            {/* ── 기본정보 탭 ── */}
+            {siteTab === "basic" && (<>
             {/* 사업장명 수정 (커스텀) */}
             {isCustomSite(sel.code) && (
               <div style={{ marginBottom: 18 }}>
@@ -6410,6 +6620,10 @@ function SiteManagementPage({ employees, onSiteChange }) {
                   }}>🗑</button>
               )}
             </div>
+            </>)}
+
+            {/* ── 추가근무 설정 탭 ── */}
+            {siteTab === "extra" && <SiteExtraConfigTab siteCode={sel.code} />}
           </div>
         </div>
       ) : (
