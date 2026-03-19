@@ -10089,73 +10089,37 @@ async function fileToBase64(file) {
   });
 }
 
-// Claude API AI 상세 분석 (미팍티켓 동일 스타일)
-const ERP_SYSTEM_CONTEXT = `미팍ERP 시스템 구조:
-- React + Vite 단일파일 (App.jsx ~12,000줄), Supabase 백엔드
-- 화면 구성: 메인대시보드, HR대시보드, 직원현황(계정관리통합), 계약서, 계약이력, 조항변경, 전체요약, 사업장PL, 비용입력, 급여대장(3탭:급여대장/은행이체/급여내역서), 월주차관리, 비교분석, 배부설정, 데이터Import, 사업장관리, 현장일보, 마감보고현황, 근태현황, 전체캘린더, 인건비견적, 오류보고
-- DB테이블: profiles, employees, contracts, financial_transactions, monthly_summary, site_revenue, site_overhead, site_details, site_parking, monthly_parking, payroll_records, payslips, daily_reports, daily_report_staff, daily_report_payment, daily_report_extra, attendance_records, bug_reports
-- 주요 컴포넌트: NumInput(숫자입력), MeParkCalendar(커스텀달력), BugReportFAB, LoginPage, EmployeeRoster(직원현황), ContractWriter(계약서), MainDashboard, DailyReportPage, PayrollPage, SiteManagementPage, ClosingReportPage, AttendancePage, FullCalendarPage, SalaryCalculatorPage
-- 인라인 스타일 사용 (Tailwind 미사용), Noto Sans KR 폰트
-- Edge Function: admin-api (계정관리), Supabase Auth 연동
-- 현장앱(mepark-field): 별도 레포, 사번+PIN 로그인, 일보 제출/급여내역서 조회`;
-
+// AI 분석 — Supabase Edge Function 프록시 (API 키 보안 유지)
 async function aiAnalyzeBug(title, description, pageName) {
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(`${supabaseUrl}/functions/v1/ai-analyze`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 600,
-        messages: [{
-          role: "user",
-          content: `${ERP_SYSTEM_CONTEXT}
-
-다음 오류 보고를 분석해서 JSON으로만 응답하세요 (마크다운이나 다른 텍스트 없이 순수 JSON만):
-발생화면: ${pageName || "알 수 없음"}
-제목: ${title}
-내용: ${description}
-
-응답 형식:
-{
-  "category": "ui|feature|data|performance|suggestion",
-  "priority": "low|medium|high|critical",
-  "summary": "한줄 요약(30자 이내)",
-  "cause": "추정 원인 (2~3문장, 시스템 구조 기반 분석)",
-  "fix_direction": "수정 방향 (구체적 해결 방법 2~3문장)",
-  "related_components": ["관련 컴포넌트나 화면 이름 배열 (최대 3개)"]
-}`
-        }]
-      })
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session?.access_token || ""}`,
+        "apikey": supabaseAnonKey,
+      },
+      body: JSON.stringify({ action: "analyze", title, description, page_name: pageName })
     });
-    const data = await res.json();
-    const text = data.content?.[0]?.text || "";
-    return JSON.parse(text.replace(/```json|```/g, "").trim());
+    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `HTTP ${res.status}`); }
+    return await res.json();
   } catch { return null; }
 }
-// 간이 분류 (폼 입력 중 실시간)
 async function aiClassifyBug(title, description) {
   try {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const { data: { session } } = await supabase.auth.getSession();
+    const res = await fetch(`${supabaseUrl}/functions/v1/ai-analyze`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 200,
-        messages: [{
-          role: "user",
-          content: `다음 오류 보고를 분석해서 JSON으로만 응답하세요 (다른 텍스트 없이):
-제목: ${title}
-내용: ${description}
-
-응답 형식:
-{"category": "ui|feature|data|performance|suggestion", "priority": "low|medium|high|critical", "summary": "한줄 요약(30자 이내)"}`
-        }]
-      })
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${session?.access_token || ""}`,
+        "apikey": supabaseAnonKey,
+      },
+      body: JSON.stringify({ action: "classify", title, description })
     });
-    const data = await res.json();
-    const text = data.content?.[0]?.text || "";
-    return JSON.parse(text.replace(/```json|```/g, "").trim());
+    if (!res.ok) return null;
+    return await res.json();
   } catch { return null; }
 }
 
