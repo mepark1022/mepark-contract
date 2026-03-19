@@ -10089,7 +10089,51 @@ async function fileToBase64(file) {
   });
 }
 
-// Claude API AI 분류
+// Claude API AI 상세 분석 (미팍티켓 동일 스타일)
+const ERP_SYSTEM_CONTEXT = `미팍ERP 시스템 구조:
+- React + Vite 단일파일 (App.jsx ~12,000줄), Supabase 백엔드
+- 화면 구성: 메인대시보드, HR대시보드, 직원현황(계정관리통합), 계약서, 계약이력, 조항변경, 전체요약, 사업장PL, 비용입력, 급여대장(3탭:급여대장/은행이체/급여내역서), 월주차관리, 비교분석, 배부설정, 데이터Import, 사업장관리, 현장일보, 마감보고현황, 근태현황, 전체캘린더, 인건비견적, 오류보고
+- DB테이블: profiles, employees, contracts, financial_transactions, monthly_summary, site_revenue, site_overhead, site_details, site_parking, monthly_parking, payroll_records, payslips, daily_reports, daily_report_staff, daily_report_payment, daily_report_extra, attendance_records, bug_reports
+- 주요 컴포넌트: NumInput(숫자입력), MeParkCalendar(커스텀달력), BugReportFAB, LoginPage, EmployeeRoster(직원현황), ContractWriter(계약서), MainDashboard, DailyReportPage, PayrollPage, SiteManagementPage, ClosingReportPage, AttendancePage, FullCalendarPage, SalaryCalculatorPage
+- 인라인 스타일 사용 (Tailwind 미사용), Noto Sans KR 폰트
+- Edge Function: admin-api (계정관리), Supabase Auth 연동
+- 현장앱(mepark-field): 별도 레포, 사번+PIN 로그인, 일보 제출/급여내역서 조회`;
+
+async function aiAnalyzeBug(title, description, pageName) {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 600,
+        messages: [{
+          role: "user",
+          content: `${ERP_SYSTEM_CONTEXT}
+
+다음 오류 보고를 분석해서 JSON으로만 응답하세요 (마크다운이나 다른 텍스트 없이 순수 JSON만):
+발생화면: ${pageName || "알 수 없음"}
+제목: ${title}
+내용: ${description}
+
+응답 형식:
+{
+  "category": "ui|feature|data|performance|suggestion",
+  "priority": "low|medium|high|critical",
+  "summary": "한줄 요약(30자 이내)",
+  "cause": "추정 원인 (2~3문장, 시스템 구조 기반 분석)",
+  "fix_direction": "수정 방향 (구체적 해결 방법 2~3문장)",
+  "related_components": ["관련 컴포넌트나 화면 이름 배열 (최대 3개)"]
+}`
+        }]
+      })
+    });
+    const data = await res.json();
+    const text = data.content?.[0]?.text || "";
+    return JSON.parse(text.replace(/```json|```/g, "").trim());
+  } catch { return null; }
+}
+// 간이 분류 (폼 입력 중 실시간)
 async function aiClassifyBug(title, description) {
   try {
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -10171,21 +10215,39 @@ function BugReportFAB({ currentPage, reporterName, reporterEmpNo, reporterRole }
     if (!form.title.trim() || !form.description.trim()) { alert("제목과 내용을 입력해주세요."); return; }
     setLoading(true);
     try {
+      // 제출 시 상세 AI 분석 실행
+      const pageLabel = PAGE_LABELS[currentPage] || currentPage || "";
+      let analysis = null;
+      try {
+        analysis = await aiAnalyzeBug(form.title.trim(), form.description.trim(), pageLabel);
+      } catch { /* AI 실패해도 제출은 진행 */ }
+
+      const finalCategory = form.category || analysis?.category || "suggestion";
+      const finalPriority = form.priority || analysis?.priority || "medium";
+
       const { error } = await supabase.from("bug_reports").insert({
         app: "erp",
         reporter_name: reporterName || "알 수 없음",
         reporter_emp_no: reporterEmpNo || "",
         reporter_role: reporterRole || "",
         page: currentPage || "",
-        page_label: PAGE_LABELS[currentPage] || currentPage || "",
-        category: form.category || "suggestion",
+        page_label: pageLabel,
+        category: finalCategory,
         title: form.title.trim(),
         description: form.description.trim(),
         repro_steps: form.repro.trim(),
-        priority: form.priority,
+        priority: finalPriority,
         status: "open",
         screenshots: form.screenshots,
-        ai_summary: aiResult?.summary || null,
+        ai_summary: analysis?.summary || aiResult?.summary || null,
+        ai_analysis: analysis ? {
+          cause: analysis.cause || null,
+          fix_direction: analysis.fix_direction || null,
+          related_components: analysis.related_components || [],
+          category: analysis.category,
+          priority: analysis.priority,
+          summary: analysis.summary,
+        } : null,
       });
       if (error) throw error;
       setDone(true);
@@ -10236,15 +10298,23 @@ function BugReportFAB({ currentPage, reporterName, reporterEmpNo, reporterRole }
                 </div>
               ) : (
                 <>
-                  {/* AI 분석 결과 */}
+                  {/* AI 분석 결과 — 미팍티켓 스타일 */}
                   {aiResult && (
-                    <div style={{ background: "#f0f4ff", border: `1px solid ${C.navy}22`, borderRadius: 10, padding: "10px 14px", marginBottom: 14, display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ fontSize: 16 }}>🤖</span>
-                      <div style={{ flex: 1, fontSize: 12, color: "#444", fontFamily: FONT }}>
-                        <strong style={{ color: C.navy }}>AI 분류 제안:</strong> {BUG_CATEGORIES.find(c => c.key === aiResult.category)?.label} · {BUG_PRIORITY[aiResult.priority]?.label}
-                        {aiResult.summary && <span style={{ color: "#666" }}> · {aiResult.summary}</span>}
+                    <div style={{ background: "#f0f4ff", border: `1px solid ${C.navy}22`, borderRadius: 12, padding: "14px 16px", marginBottom: 14 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
+                        <span style={{ fontSize: 16 }}>🤖</span>
+                        <span style={{ fontSize: 13, fontWeight: 900, color: C.navy, fontFamily: FONT }}>AI 분류 제안</span>
+                        <span style={{ fontSize: 10, color: "#999", marginLeft: "auto" }}>자동 적용됨</span>
                       </div>
-                      <span style={{ fontSize: 10, color: "#999", whiteSpace: "nowrap" }}>자동 적용됨</span>
+                      <div style={{ fontSize: 12, color: "#444", fontFamily: FONT, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                        {BUG_CATEGORIES.find(c => c.key === aiResult.category) && (
+                          <span style={{ background: "#EEF2FF", padding: "2px 10px", borderRadius: 12, fontWeight: 700, color: C.navy, fontSize: 11 }}>{BUG_CATEGORIES.find(c => c.key === aiResult.category)?.label}</span>
+                        )}
+                        {BUG_PRIORITY[aiResult.priority] && (
+                          <span style={{ background: BUG_PRIORITY[aiResult.priority].bg, padding: "2px 10px", borderRadius: 12, fontWeight: 700, color: BUG_PRIORITY[aiResult.priority].color, fontSize: 11 }}>{BUG_PRIORITY[aiResult.priority].label}</span>
+                        )}
+                        {aiResult.summary && <span style={{ color: "#666", fontSize: 11, padding: "2px 0" }}>· {aiResult.summary}</span>}
+                      </div>
                     </div>
                   )}
 
@@ -10396,6 +10466,7 @@ function BugReportDashboard() {
   const [selected, setSelected] = useState(null);
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
+  const [aiAnalyzing, setAiAnalyzing] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -10429,6 +10500,34 @@ function BugReportDashboard() {
     await supabase.from("bug_reports").delete().eq("id", id);
     setReports(prev => prev.filter(r => r.id !== id));
     if (selected?.id === id) setSelected(null);
+  };
+  const reAnalyze = async () => {
+    if (!selected) return;
+    setAiAnalyzing(true);
+    try {
+      const analysis = await aiAnalyzeBug(selected.title, selected.description, selected.page_label || selected.page);
+      if (analysis) {
+        const aiData = {
+          cause: analysis.cause || null,
+          fix_direction: analysis.fix_direction || null,
+          related_components: analysis.related_components || [],
+          category: analysis.category,
+          priority: analysis.priority,
+          summary: analysis.summary,
+        };
+        await supabase.from("bug_reports").update({
+          ai_analysis: aiData,
+          ai_summary: analysis.summary || null,
+          updated_at: new Date().toISOString(),
+        }).eq("id", selected.id);
+        const updated = { ...selected, ai_analysis: aiData, ai_summary: analysis.summary };
+        setSelected(updated);
+        setReports(prev => prev.map(r => r.id === selected.id ? updated : r));
+      } else {
+        alert("AI 분석에 실패했습니다. 다시 시도해주세요.");
+      }
+    } catch (e) { alert("AI 분석 오류: " + e.message); }
+    setAiAnalyzing(false);
   };
 
   const kpi = {
@@ -10512,7 +10611,8 @@ function BugReportDashboard() {
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: st.bg, color: st.color, flexShrink: 0 }}>{st.label}</span>
                       <span style={{ fontSize: 11, fontWeight: 700, padding: "2px 8px", borderRadius: 10, background: pr.bg, color: pr.color, flexShrink: 0 }}>{pr.label}</span>
                       {cat && <span style={{ fontSize: 11, color: "#666", background: "#f3f4f6", padding: "2px 8px", borderRadius: 10 }}>{cat.label}</span>}
-                      {r.ai_summary && <span style={{ fontSize: 10, color: C.navy, background: "#EEF2FF", padding: "2px 8px", borderRadius: 10, flexShrink: 0 }}>🤖 AI 분류</span>}
+                      {r.ai_analysis ? <span style={{ fontSize: 10, color: C.navy, background: "#EEF2FF", padding: "2px 8px", borderRadius: 10, flexShrink: 0, fontWeight: 700 }}>🤖 AI 분석</span>
+                       : r.ai_summary ? <span style={{ fontSize: 10, color: "#888", background: "#f3f4f6", padding: "2px 8px", borderRadius: 10, flexShrink: 0 }}>🤖 분류</span> : null}
                       <span style={{ fontSize: 11, color: "#999", marginLeft: "auto", flexShrink: 0 }}>{r.app === "erp" ? "ERP" : "현장앱"} · {fmtDate(r.created_at)}</span>
                     </div>
                     <div style={{ fontWeight: 700, fontSize: 14, color: "#222", marginBottom: 4 }}>{r.title}</div>
@@ -10548,12 +10648,56 @@ function BugReportDashboard() {
                 {selected.resolved_at && <div><strong>해결일:</strong> {fmtDate(selected.resolved_at)}</div>}
               </div>
 
-              {/* AI 요약 */}
-              {selected.ai_summary && (
-                <div style={{ background: "#EEF2FF", border: `1px solid ${C.navy}33`, borderRadius: 8, padding: "8px 12px", marginBottom: 12, fontSize: 12, color: C.navy }}>
-                  🤖 <strong>AI 분석:</strong> {selected.ai_summary}
+              {/* 🤖 AI 분석 결과 — 미팍티켓 스타일 */}
+              <div style={{ marginBottom: 12 }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: "#666", display: "flex", alignItems: "center", gap: 4 }}>🤖 AI 분석 결과</div>
+                  <button onClick={reAnalyze} disabled={aiAnalyzing} style={{
+                    padding: "3px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: aiAnalyzing ? "not-allowed" : "pointer",
+                    border: `1px solid ${C.navy}44`, background: aiAnalyzing ? "#f0f4ff" : "#fff", color: C.navy, fontFamily: FONT,
+                  }}>{aiAnalyzing ? "분석 중..." : "🔄 재분석"}</button>
                 </div>
-              )}
+                {aiAnalyzing ? (
+                  <div style={{ background: "#f0f4ff", borderRadius: 10, padding: "20px 14px", textAlign: "center" }}>
+                    <div style={{ fontSize: 24, marginBottom: 8 }}>🤖</div>
+                    <div style={{ fontSize: 12, color: C.navy, fontWeight: 700, fontFamily: FONT }}>AI가 분석 중입니다...</div>
+                    <div style={{ fontSize: 11, color: "#888", marginTop: 4 }}>시스템 구조 기반 원인 분석 진행 중</div>
+                  </div>
+                ) : selected.ai_analysis ? (
+                  <div style={{ background: "#f0f4ff", border: `1px solid ${C.navy}22`, borderRadius: 10, overflow: "hidden" }}>
+                    {/* 추정 원인 */}
+                    <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.navy}11` }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 4, fontFamily: FONT }}>추정 원인</div>
+                      <div style={{ fontSize: 12, color: "#444", lineHeight: 1.65, fontFamily: FONT }}>{selected.ai_analysis.cause || "분석 데이터 없음"}</div>
+                    </div>
+                    {/* 수정 방향 */}
+                    <div style={{ padding: "10px 14px", borderBottom: `1px solid ${C.navy}11` }}>
+                      <div style={{ fontSize: 11, fontWeight: 800, color: "#16A34A", marginBottom: 4, fontFamily: FONT }}>수정 방향</div>
+                      <div style={{ fontSize: 12, color: "#444", lineHeight: 1.65, fontFamily: FONT }}>{selected.ai_analysis.fix_direction || "분석 데이터 없음"}</div>
+                    </div>
+                    {/* 관련 컴포넌트 */}
+                    {selected.ai_analysis.related_components?.length > 0 && (
+                      <div style={{ padding: "10px 14px" }}>
+                        <div style={{ fontSize: 11, fontWeight: 800, color: "#7C3AED", marginBottom: 6, fontFamily: FONT }}>관련 파일</div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                          {selected.ai_analysis.related_components.map((comp, ci) => (
+                            <div key={ci} style={{ fontSize: 11, fontFamily: "monospace", background: "#e8ecff", color: "#333", padding: "5px 10px", borderRadius: 6 }}>{comp}</div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                ) : selected.ai_summary ? (
+                  <div style={{ background: "#EEF2FF", border: `1px solid ${C.navy}33`, borderRadius: 8, padding: "10px 12px", fontSize: 12, color: C.navy, fontFamily: FONT }}>
+                    🤖 {selected.ai_summary}
+                    <div style={{ marginTop: 6, fontSize: 11, color: "#888" }}>상세 분석은 "🔄 재분석" 버튼을 눌러주세요</div>
+                  </div>
+                ) : (
+                  <div style={{ background: "#f9f9f9", borderRadius: 8, padding: "14px 12px", textAlign: "center", fontSize: 12, color: "#999", fontFamily: FONT }}>
+                    AI 분석 없음 — "🔄 재분석" 버튼으로 실행하세요
+                  </div>
+                )}
+              </div>
 
               {/* 상세 내용 */}
               <div style={{ marginBottom: 12 }}>
