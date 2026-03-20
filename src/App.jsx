@@ -12576,7 +12576,7 @@ function AttendancePage({ employees }) {
                 {dates.map(d => {
                   const isRed = d.isWeekend || d.isHoliday;
                   return (
-                    <th key={d.day} title={d.holidayName || ""} style={{
+                    <th key={d.day} title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}`} style={{
                       padding: "4px 2px", fontSize: 10, fontWeight: 700, textAlign: "center",
                       borderBottom: "2px solid #E8ECF4", minWidth: 36,
                       background: d.isToday ? C.navy : d.isHoliday ? "#FFF3F3" : "#F4F6FB",
@@ -12655,7 +12655,7 @@ function AttendancePage({ employees }) {
                                 transition: "background 0.15s",
                                 position: "relative",
                               }}
-                              title={d.holidayName ? `${d.holidayName}${st ? ` · ${st}` : ""}` : (st || "")}
+                              title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}${st ? ` — ${st}` : ""}`}
                             >
                               {st && (
                                 <div style={{
