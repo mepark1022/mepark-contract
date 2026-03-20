@@ -200,9 +200,9 @@ const sectionHeader = (title) => ({
 // ── 3.5 커스텀 확인 모달 (ME.PARK 디자인) ─────────────
 const ConfirmCtx = createContext(null);
 function ConfirmProvider({ children }) {
-  const [state, setState] = useState(null); // { msg, sub, resolve }
-  const showConfirm = useCallback((msg, sub) => {
-    return new Promise(resolve => { setState({ msg, sub, resolve }); });
+  const [state, setState] = useState(null); // { msg, sub, resolve, okLabel, okColor }
+  const showConfirm = useCallback((msg, sub, opts) => {
+    return new Promise(resolve => { setState({ msg, sub, resolve, ...(opts || {}) }); });
   }, []);
   const handleOk = () => { state?.resolve(true); setState(null); };
   const handleCancel = () => { state?.resolve(false); setState(null); };
@@ -222,12 +222,12 @@ function ConfirmProvider({ children }) {
             {/* 본문 */}
             <div style={{ padding: "24px 24px 16px" }}>
               <div style={{ fontSize: 14, fontWeight: 700, color: C.dark, lineHeight: 1.6 }}>{state.msg}</div>
-              {state.sub && <div style={{ fontSize: 12, color: C.gray, marginTop: 8 }}>{state.sub}</div>}
+              {state.sub && <div style={{ fontSize: 12, color: C.gray, marginTop: 8, whiteSpace: "pre-line" }}>{state.sub}</div>}
             </div>
             {/* 버튼 */}
             <div style={{ display: "flex", gap: 10, padding: "8px 24px 20px", justifyContent: "flex-end" }}>
               <button onClick={handleCancel} style={{ padding: "10px 24px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer", color: C.gray }}>취소</button>
-              <button onClick={handleOk} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: C.error, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>삭제</button>
+              <button onClick={handleOk} style={{ padding: "10px 24px", borderRadius: 8, border: "none", background: state.okColor || C.navy, color: "#fff", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>{state.okLabel || "확인"}</button>
             </div>
           </div>
         </div>
@@ -1886,7 +1886,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   // ── v9.1: 계정 삭제 ──
   const handleDeleteAccount = async () => {
     if (!selectedEmp.auth_id) return;
-    const ok = await confirm(`${selectedEmp.name}님 계정을 삭제하시겠습니까?`, "삭제 후 복구 불가능합니다. 직원 데이터는 유지됩니다.");
+    const ok = await confirm(`${selectedEmp.name}님 계정을 삭제하시겠습니까?`, "삭제 후 복구 불가능합니다. 직원 데이터는 유지됩니다.", { okLabel: "삭제", okColor: C.error });
     if (!ok) return;
     setAccountLoading(true); setAccountMsg("");
     await removeAdmin(selectedEmp.auth_id);
@@ -2103,7 +2103,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   };
 
   const deleteEmp = async (id) => {
-    if (await confirm("정말 삭제하시겠습니까?", "직원 데이터가 삭제됩니다.")) await deleteEmployee(id);
+    if (await confirm("정말 삭제하시겠습니까?", "직원 데이터가 삭제됩니다.", { okLabel: "삭제", okColor: C.error })) await deleteEmployee(id);
   };
 
   return (
@@ -4111,7 +4111,7 @@ function ContractHistory({ employees, onEditContract, onNewContract }) {
 
   const deleteContract = async (id) => {
     if (!can("edit")) return;
-    if (!(await confirm("이 계약서 이력을 삭제하시겠습니까?", "삭제 후 복구할 수 없습니다."))) return;
+    if (!(await confirm("이 계약서 이력을 삭제하시겠습니까?", "삭제 후 복구할 수 없습니다.", { okLabel: "삭제", okColor: C.error }))) return;
     const { error } = await supabase.from("contracts").delete().eq("id", id);
     if (!error) loadContracts();
   };
@@ -5047,7 +5047,7 @@ function FinancialImportPage({ onImportComplete }) {
   };
 
   const handleDeleteBatch = async (batchId) => {
-    if (!(await confirm("이 Import 배치의 모든 데이터를 삭제하시겠습니까?", "삭제 후 복구할 수 없습니다."))) return;
+    if (!(await confirm("이 Import 배치의 모든 데이터를 삭제하시겠습니까?", "삭제 후 복구할 수 없습니다.", { okLabel: "삭제", okColor: C.error }))) return;
     await supabase.from("financial_transactions").delete().eq("import_batch", batchId);
     setImportHistory(h => h.filter(x => x.batch !== batchId));
   };
@@ -5470,7 +5470,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const removeOverheadItem = async (idx) => {
     const arr = [...(overheadData[currentMonth] || [])];
     const removed = arr[idx];
-    if (!(await confirm(`"${removed?.label || "항목"}" 간접비를 삭제하시겠습니까?`, "삭제 후 복구할 수 없습니다."))) return;
+    if (!(await confirm(`"${removed?.label || "항목"}" 간접비를 삭제하시겠습니까?`, "삭제 후 복구할 수 없습니다.", { okLabel: "삭제", okColor: C.error }))) return;
     arr.splice(idx, 1);
     setOverheadData(p => ({ ...p, [currentMonth]: arr }));
     // ★ Phase C: DB에서도 삭제
@@ -6244,7 +6244,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
 
   const handleDeleteSite = async (code) => {
     const siteName = allSites.find(s => s.code === code)?.name || code;
-    if (!(await confirm(`"${code} ${siteName}" 사업장을 삭제하시겠습니까?`, "⚠️ 계약정보, 외부주차장 데이터가 모두 삭제됩니다."))) return;
+    if (!(await confirm(`"${code} ${siteName}" 사업장을 삭제하시겠습니까?`, "⚠️ 계약정보, 외부주차장 데이터가 모두 삭제됩니다.", { okLabel: "삭제", okColor: C.error }))) return;
     setSaving(true);
     try {
       await supabase.from("site_parking").delete().eq("site_code", code);
@@ -6708,7 +6708,7 @@ function MonthlyParkingPage({ employees, onDataChange }) {
     }
   };
   const handleDelete = async (id) => {
-    if (!(await confirm("삭제하시겠습니까?", "월주차 계약 정보가 삭제됩니다."))) return;
+    if (!(await confirm("삭제하시겠습니까?", "월주차 계약 정보가 삭제됩니다.", { okLabel: "삭제", okColor: C.error }))) return;
     const { error } = await supabase.from("monthly_parking").delete().eq("id", id);
     if (error) { alert("삭제 실패: " + error.message); return; }
     setParkingList(p => p.filter(item => item.id !== id));
@@ -7229,7 +7229,7 @@ function DailyReportPage({ employees, onDataChange }) {
 
   // ── 삭제 (확정 일보 삭제 시 valet_fee 재계산) ──
   const handleDelete = async (reportId) => {
-    if (!(await confirm("일보를 삭제하시겠습니까?", "일보 데이터가 모두 삭제됩니다."))) return;
+    if (!(await confirm("일보를 삭제하시겠습니까?", "일보 데이터가 모두 삭제됩니다.", { okLabel: "삭제", okColor: C.error }))) return;
     const target = reports.find(r => r.id === reportId);
     await supabase.from("daily_reports").delete().eq("id", reportId);
     // 확정 일보 삭제 시 site_revenue.valet_fee 재계산
@@ -7258,7 +7258,8 @@ function DailyReportPage({ employees, onDataChange }) {
     const siteLabel = selSite === "ALL" ? "전체 사업장" : `${getSiteName(selSite)}`;
     if (!(await confirm(
       `${siteLabel} 미확정 일보 ${targetReports.length}건을 일괄 확정하시겠습니까?`,
-      `${selMonth} 기준 · 확정 시 발렛비가 수익성 분석에 반영됩니다.`
+      `${selMonth} 기준 · 확정 시 발렛비가 수익성 분석에 반영됩니다.`,
+      { okLabel: "확정", okColor: C.navy }
     ))) return;
     setSaving(true);
     try {
@@ -8970,6 +8971,7 @@ function PayrollPage({ employees, profitState }) {
   const [psSlips, setPsSlips] = useState([]);
   const [psLoading, setPsLoading] = useState(false);
   const [psSending, setPsSending] = useState(false);
+  const [psSelectedIds, setPsSelectedIds] = useState(new Set()); // employee_id Set
 
   // 급여내역서 로딩
   const loadPayslips = useCallback(async () => {
@@ -8982,47 +8984,57 @@ function PayrollPage({ employees, profitState }) {
 
   useEffect(() => { if (pyViewMode === "payslip") loadPayslips(); }, [pyViewMode, loadPayslips]);
 
-  // 급여내역서 일괄 발송 (payroll_records → payslips 복사)
-  const handleSendPayslips = async () => {
+  // 발송 대상 slip 생성 헬퍼
+  const buildSlip = (r) => {
+    const emp = empMap[r.employee_id];
+    const gross = PY_PAY_FIELDS.reduce((s, f) => s + (r[f.key] || 0), 0);
+    const totDed = (r.np || 0) + (r.hi || 0) + (r.lt || 0) + (r.ei || 0) +
+      (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
+    return {
+      year: pyYear, month: pyMonth,
+      employee_id: r.employee_id,
+      emp_no: emp?.emp_no || "", emp_name: emp?.name || "",
+      site_code: r.site_code || "",
+      basic_pay: r.basic_pay || 0, meal: r.meal || 0,
+      childcare: r.childcare || 0, car_allow: r.car_allow || 0,
+      team_allow: r.team_allow || 0, holiday_bonus: r.holiday_bonus || 0,
+      incentive: r.incentive || 0, extra_work: r.extra_work || 0,
+      manual_write: r.manual_write || 0, extra1: r.extra1 || 0,
+      gross_pay: gross,
+      tax_type: r.tax_type || "4대보험",
+      np: r.np || 0, hi: r.hi || 0, lt: r.lt || 0, ei: r.ei || 0,
+      income_tax: r.income_tax || 0, local_tax: r.local_tax || 0,
+      accident_deduct: r.accident_deduct || 0, prepaid: r.prepaid || 0,
+      total_deduct: totDed, net_pay: gross - totDed,
+      bank_name: emp?.bank_name || "", account_no: emp?.account_number || "",
+      account_holder: emp?.account_holder || "",
+      status: "sent", is_read: false, read_at: null,
+      sent_at: new Date().toISOString(),
+    };
+  };
+
+  // 급여내역서 발송 (선택 or 전체)
+  const handleSendPayslips = async (mode) => {
     if (!pyMonthData || pyMonthData.status !== "confirmed") {
       alert("급여가 확정된 후에만 내역서를 발송할 수 있습니다.");
       return;
     }
-    const ok = await confirm("급여내역서 발송", `${pyYear}년 ${pyMonth}월 급여내역서를 전 직원에게 발송하시겠습니까?\n\n대상: ${pyRecords.length}명\n기존 발송 내역이 있으면 덮어씁니다.`);
+    const targets = mode === "selected"
+      ? pyRecords.filter(r => psSelectedIds.has(r.employee_id))
+      : pyRecords;
+    if (targets.length === 0) { alert("발송 대상이 없습니다."); return; }
+    const label = mode === "selected" ? `선택한 ${targets.length}명` : `전 직원 ${targets.length}명`;
+    const ok = await confirm("급여내역서 발송",
+      `${pyYear}년 ${pyMonth}월 급여내역서를 ${label}에게 발송하시겠습니까?\n\n기존 발송 내역이 있으면 덮어씁니다.`,
+      { okLabel: "발송", okColor: C.navy });
     if (!ok) return;
     setPsSending(true);
     try {
-      const slips = pyRecords.map(r => {
-        const emp = empMap[r.employee_id];
-        const gross = PY_PAY_FIELDS.reduce((s, f) => s + (r[f.key] || 0), 0);
-        const totDed = (r.np || 0) + (r.hi || 0) + (r.lt || 0) + (r.ei || 0) +
-          (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
-        return {
-          year: pyYear, month: pyMonth,
-          employee_id: r.employee_id,
-          emp_no: emp?.emp_no || "", emp_name: emp?.name || "",
-          site_code: r.site_code || "",
-          basic_pay: r.basic_pay || 0, meal: r.meal || 0,
-          childcare: r.childcare || 0, car_allow: r.car_allow || 0,
-          team_allow: r.team_allow || 0, holiday_bonus: r.holiday_bonus || 0,
-          incentive: r.incentive || 0, extra_work: r.extra_work || 0,
-          manual_write: r.manual_write || 0, extra1: r.extra1 || 0,
-          gross_pay: gross,
-          tax_type: r.tax_type || "4대보험",
-          np: r.np || 0, hi: r.hi || 0, lt: r.lt || 0, ei: r.ei || 0,
-          income_tax: r.income_tax || 0, local_tax: r.local_tax || 0,
-          accident_deduct: r.accident_deduct || 0, prepaid: r.prepaid || 0,
-          total_deduct: totDed, net_pay: gross - totDed,
-          bank_name: emp?.bank_name || "", account_no: emp?.account_number || "",
-          account_holder: emp?.account_holder || "",
-          status: "sent", is_read: false, read_at: null,
-          sent_at: new Date().toISOString(),
-        };
-      });
-      // upsert (employee_id + year + month unique)
+      const slips = targets.map(buildSlip);
       const { error } = await supabase.from("payslips").upsert(slips, { onConflict: "employee_id,year,month" });
       if (error) throw error;
       await loadPayslips();
+      setPsSelectedIds(new Set());
       alert(`✅ ${slips.length}명에게 급여내역서가 발송되었습니다.`);
     } catch (err) { alert("발송 오류: " + err.message); }
     setPsSending(false);
@@ -9030,7 +9042,7 @@ function PayrollPage({ employees, profitState }) {
 
   // 개별 내역서 삭제
   const handleDeletePayslip = async (slipId) => {
-    const ok = await confirm("삭제", "이 급여내역서를 삭제하시겠습니까?");
+    const ok = await confirm("삭제", "이 급여내역서를 삭제하시겠습니까?", { okLabel: "삭제", okColor: C.error });
     if (!ok) return;
     await supabase.from("payslips").delete().eq("id", slipId);
     setPsSlips(prev => prev.filter(s => s.id !== slipId));
@@ -9057,7 +9069,7 @@ function PayrollPage({ employees, profitState }) {
 
   // 월 급여대장 생성 (재직 직원 기준 레코드 일괄 생성)
   const handleCreateMonth = async () => {
-    const ok = await confirm("급여대장 생성", `${pyYear}년 ${pyMonth}월 급여대장을 생성하시겠습니까?\n재직 직원 기준으로 레코드가 자동 생성됩니다.`);
+    const ok = await confirm("급여대장 생성", `${pyYear}년 ${pyMonth}월 급여대장을 생성하시겠습니까?\n재직 직원 기준으로 레코드가 자동 생성됩니다.`, { okLabel: "생성", okColor: C.navy });
     if (!ok) return;
     setPyBatchCreating(true);
     try {
@@ -9129,7 +9141,8 @@ function PayrollPage({ employees, profitState }) {
     const totalGross = pyRecords.reduce((s, r) => s + (r.gross_pay || 0), 0);
     const totalNet = pyRecords.reduce((s, r) => s + (r.net_pay || 0), 0);
     const ok = await confirm("급여 확정",
-      `${pyYear}년 ${pyMonth}월 급여를 확정하시겠습니까?\n\n총 ${pyRecords.length}명\n급여총계: ${fmt(totalGross)}원\n실입금합계: ${fmt(totalNet)}원\n\n확정 후 site_revenue.labor_fixed가 자동 업데이트됩니다.`);
+      `${pyYear}년 ${pyMonth}월 급여를 확정하시겠습니까?\n\n총 ${pyRecords.length}명\n급여총계: ${fmt(totalGross)}원\n실입금합계: ${fmt(totalNet)}원\n\n확정 후 site_revenue.labor_fixed가 자동 업데이트됩니다.`,
+      { okLabel: "확정", okColor: C.navy });
     if (!ok) return;
 
     try {
@@ -9926,15 +9939,26 @@ function PayrollPage({ employees, profitState }) {
           )}
 
           {/* ── 급여내역서 뷰 ── */}
-          {pyViewMode === "payslip" && (
+          {pyViewMode === "payslip" && (() => {
+            // psSlips를 employee_id로 매핑
+            const slipMap = {};
+            psSlips.forEach(s => { slipMap[s.employee_id] = s; });
+            const sentCount = psSlips.length;
+            const readCount = psSlips.filter(s => s.is_read).length;
+            const unsentCount = pyRecords.length - sentCount;
+            const allIds = pyRecords.map(r => r.employee_id);
+            const allSelected = allIds.length > 0 && allIds.every(id => psSelectedIds.has(id));
+            const selectedCount = psSelectedIds.size;
+            return (
             <div>
-              {/* 발송 버튼 + 상태 요약 */}
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+              {/* KPI 카드 + 버튼 */}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
                 <div style={{ display: "flex", gap: 12, flex: 1 }}>
                   {[
-                    { icon: "💌", label: "발송 건수", value: `${psSlips.length}건`, color: C.navy },
-                    { icon: "✅", label: "확인 완료", value: `${psSlips.filter(s => s.is_read).length}건`, color: C.success },
-                    { icon: "⏳", label: "미확인", value: `${psSlips.filter(s => !s.is_read).length}건`, color: psSlips.some(s => !s.is_read) ? C.orange : C.gray },
+                    { icon: "👥", label: "급여 대상", value: `${pyRecords.length}명`, color: C.navy },
+                    { icon: "💌", label: "발송 완료", value: `${sentCount}명`, color: C.success },
+                    { icon: "📭", label: "미발송", value: `${unsentCount}명`, color: unsentCount > 0 ? C.orange : C.gray },
+                    { icon: "✅", label: "열람 확인", value: `${readCount}명`, color: readCount > 0 ? C.success : C.gray },
                   ].map(k => (
                     <div key={k.label} style={pyCardStyle}>
                       <div style={{ fontSize: 20, marginBottom: 4 }}>{k.icon}</div>
@@ -9943,11 +9967,32 @@ function PayrollPage({ employees, profitState }) {
                     </div>
                   ))}
                 </div>
-                <button onClick={handleSendPayslips} disabled={psSending || !pyMonthData || pyMonthData.status !== "confirmed"}
-                  style={{ ...btnPrimary, padding: "12px 24px", fontSize: 13, opacity: (!pyMonthData || pyMonthData.status !== "confirmed") ? 0.4 : 1,
-                    background: `linear-gradient(135deg, ${C.navy}, #1E3CB0)`, marginLeft: 16 }}>
-                  {psSending ? "발송 중..." : "💌 급여내역서 일괄 발송"}
+              </div>
+
+              {/* 버튼 영역 */}
+              <div style={{ display: "flex", gap: 8, marginBottom: 16, flexWrap: "wrap", alignItems: "center" }}>
+                {selectedCount > 0 && (
+                  <button onClick={() => handleSendPayslips("selected")} disabled={psSending || !pyMonthData || pyMonthData.status !== "confirmed"}
+                    style={{ ...btnPrimary, padding: "10px 20px", fontSize: 13, opacity: (!pyMonthData || pyMonthData.status !== "confirmed") ? 0.4 : 1 }}>
+                    {psSending ? "발송 중..." : `📨 선택 발송 (${selectedCount}명)`}
+                  </button>
+                )}
+                <button onClick={() => handleSendPayslips("all")} disabled={psSending || !pyMonthData || pyMonthData.status !== "confirmed"}
+                  style={{ ...btnPrimary, padding: "10px 20px", fontSize: 13, opacity: (!pyMonthData || pyMonthData.status !== "confirmed") ? 0.4 : 1,
+                    background: selectedCount > 0 ? "#fff" : C.navy, color: selectedCount > 0 ? C.navy : "#fff",
+                    border: `1.5px solid ${C.navy}` }}>
+                  {psSending ? "발송 중..." : `💌 전체 발송 (${pyRecords.length}명)`}
                 </button>
+                {selectedCount > 0 && (
+                  <button onClick={() => setPsSelectedIds(new Set())}
+                    style={{ padding: "10px 16px", borderRadius: 8, border: `1.5px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.gray }}>
+                    선택 해제
+                  </button>
+                )}
+                <div style={{ flex: 1 }} />
+                {selectedCount > 0 && (
+                  <span style={{ fontSize: 12, color: C.navy, fontWeight: 700 }}>✓ {selectedCount}명 선택</span>
+                )}
               </div>
 
               {pyMonthData && pyMonthData.status !== "confirmed" && (
@@ -9958,17 +10003,10 @@ function PayrollPage({ employees, profitState }) {
 
               {psLoading ? (
                 <div style={{ textAlign: "center", padding: 40, color: C.gray }}>로딩 중...</div>
-              ) : psSlips.length === 0 ? (
+              ) : pyRecords.length === 0 ? (
                 <div style={{ textAlign: "center", padding: 60, color: C.gray, fontSize: 14 }}>
                   <div style={{ fontSize: 40, marginBottom: 12 }}>💌</div>
-                  발송된 급여내역서가 없습니다.
-                  {pyMonthData?.status === "confirmed" && (
-                    <div style={{ marginTop: 12 }}>
-                      <button onClick={handleSendPayslips} style={{ ...btnPrimary, padding: "10px 28px", fontSize: 13 }}>
-                        💌 급여내역서 발송하기
-                      </button>
-                    </div>
-                  )}
+                  급여 데이터가 없습니다. 급여대장 탭에서 먼저 급여를 생성해주세요.
                 </div>
               ) : (
                 <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
@@ -9976,46 +10014,81 @@ function PayrollPage({ employees, profitState }) {
                     <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                       <thead>
                         <tr>
-                          {["#", "사번", "성명", "사업장", "지급액", "공제액", "실수령액", "상태", "열람일시", ""].map((h, i) => (
-                            <th key={i} style={{ ...pyThStyle, textAlign: [4,5,6].includes(i) ? "right" : "left", ...(i === 0 ? { width: 30 } : i === 9 ? { width: 40 } : {}) }}>{h}</th>
+                          <th style={{ ...pyThStyle, width: 36, textAlign: "center" }}>
+                            <input type="checkbox" checked={allSelected} onChange={e => {
+                              if (e.target.checked) setPsSelectedIds(new Set(allIds));
+                              else setPsSelectedIds(new Set());
+                            }} style={{ cursor: "pointer", width: 15, height: 15 }} />
+                          </th>
+                          {["#", "사번", "성명", "사업장", "실수령액", "발송상태", "열람", ""].map((h, i) => (
+                            <th key={i} style={{ ...pyThStyle, textAlign: i === 4 ? "right" : "left",
+                              ...(i === 0 ? { width: 30 } : i === 7 ? { width: 40 } : {}) }}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
-                        {psSlips.map((s, idx) => (
-                          <tr key={s.id} style={{ background: idx % 2 ? "#FAFBFC" : C.white }}>
+                        {pyRecords.map((r, idx) => {
+                          const emp = empMap[r.employee_id];
+                          const slip = slipMap[r.employee_id];
+                          const isSent = !!slip;
+                          const isRead = slip?.is_read;
+                          const gross = PY_PAY_FIELDS.reduce((s, f) => s + (r[f.key] || 0), 0);
+                          const totDed = (r.np || 0) + (r.hi || 0) + (r.lt || 0) + (r.ei || 0) +
+                            (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
+                          const net = gross - totDed;
+                          const checked = psSelectedIds.has(r.employee_id);
+                          return (
+                          <tr key={r.employee_id} style={{ background: checked ? "#EEF2FF" : idx % 2 ? "#FAFBFC" : C.white, cursor: "pointer" }}
+                            onClick={() => setPsSelectedIds(prev => {
+                              const ns = new Set(prev);
+                              if (ns.has(r.employee_id)) ns.delete(r.employee_id); else ns.add(r.employee_id);
+                              return ns;
+                            })}>
+                            <td style={{ ...pyTdStyle, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                              <input type="checkbox" checked={checked} onChange={() => setPsSelectedIds(prev => {
+                                const ns = new Set(prev);
+                                if (ns.has(r.employee_id)) ns.delete(r.employee_id); else ns.add(r.employee_id);
+                                return ns;
+                              })} style={{ cursor: "pointer", width: 15, height: 15 }} />
+                            </td>
                             <td style={{ ...pyTdStyle, textAlign: "center", color: C.gray }}>{idx + 1}</td>
-                            <td style={{ ...pyTdStyle, fontWeight: 700, fontSize: 11, color: C.navy }}>{s.emp_no}</td>
-                            <td style={{ ...pyTdStyle, fontWeight: 700 }}>{s.emp_name}</td>
-                            <td style={{ ...pyTdStyle, fontSize: 11, color: C.gray }}>{getSiteName(s.site_code)}</td>
-                            <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace" }}>{fmt(s.gross_pay)}</td>
-                            <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", color: C.error }}>{fmt(s.total_deduct)}</td>
-                            <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.success }}>{fmt(s.net_pay)}</td>
+                            <td style={{ ...pyTdStyle, fontWeight: 700, fontSize: 11, color: C.navy }}>{emp?.emp_no || ""}</td>
+                            <td style={{ ...pyTdStyle, fontWeight: 700 }}>{emp?.name || ""}</td>
+                            <td style={{ ...pyTdStyle, fontSize: 11, color: C.gray }}>{getSiteName(r.site_code)}</td>
+                            <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.success }}>{fmt(net)}</td>
                             <td style={pyTdStyle}>
-                              {s.is_read ? (
-                                <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#D4EDDA", color: "#155724" }}>✅ 확인</span>
+                              {isSent ? (
+                                <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#D4EDDA", color: "#155724" }}>✅ 발송완료</span>
                               ) : (
-                                <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#FFF3CD", color: "#856404" }}>⏳ 미확인</span>
+                                <span style={{ display: "inline-block", padding: "3px 10px", borderRadius: 20, fontSize: 10, fontWeight: 700, background: "#FFF3CD", color: "#856404" }}>📭 미발송</span>
                               )}
                             </td>
                             <td style={{ ...pyTdStyle, fontSize: 10, color: C.gray }}>
-                              {s.read_at ? new Date(s.read_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "-"}
+                              {isRead ? (
+                                <span style={{ color: C.success, fontWeight: 700 }}>✅ {slip.read_at ? new Date(slip.read_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "확인"}</span>
+                              ) : isSent ? "⏳ 미확인" : "-"}
                             </td>
-                            <td style={{ ...pyTdStyle, textAlign: "center" }}>
-                              <button onClick={() => handleDeletePayslip(s.id)} title="삭제"
-                                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: C.gray, padding: 2 }}>🗑️</button>
+                            <td style={{ ...pyTdStyle, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                              {isSent && (
+                                <button onClick={() => handleDeletePayslip(slip.id)} title="삭제"
+                                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: C.gray, padding: 2 }}>🗑️</button>
+                              )}
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                       <tfoot>
                         <tr style={{ background: C.navy }}>
+                          <td style={{ padding: "8px 6px" }} />
                           <td colSpan={4} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.white }}>
-                            합계 ({psSlips.length}명)
+                            합계 ({pyRecords.length}명 중 {sentCount}명 발송)
                           </td>
-                          <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>{fmt(psSlips.reduce((s, r) => s + (r.gross_pay || 0), 0))}</td>
-                          <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 700, color: "#FFCDD2" }}>{fmt(psSlips.reduce((s, r) => s + (r.total_deduct || 0), 0))}</td>
-                          <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>{fmt(psSlips.reduce((s, r) => s + (r.net_pay || 0), 0))}</td>
+                          <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>{fmt(pyRecords.reduce((s, r) => {
+                            const g = PY_PAY_FIELDS.reduce((ss, f) => ss + (r[f.key] || 0), 0);
+                            const d = (r.np || 0) + (r.hi || 0) + (r.lt || 0) + (r.ei || 0) + (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
+                            return s + g - d;
+                          }, 0))}</td>
                           <td colSpan={3} style={{ padding: "8px 6px" }} />
                         </tr>
                       </tfoot>
@@ -10027,12 +10100,13 @@ function PayrollPage({ employees, profitState }) {
               {/* 안내 */}
               <div style={{ marginTop: 16, padding: 14, background: "#EDE7F6", borderRadius: 10, border: "1px solid #D1C4E9", fontSize: 12, color: "#4527A0" }}>
                 <div style={{ fontWeight: 800, marginBottom: 6 }}>💡 급여내역서 안내</div>
-                <div>• 급여 확정 후 일괄 발송하면 현장앱 💰급여 탭에 자동 표시됩니다.</div>
-                <div>• 직원이 내역서를 열면 상태가 ✅확인으로 자동 변경됩니다.</div>
-                <div>• 급여 수정 후 재발송하면 기존 내역이 덮어씌워집니다.</div>
+                <div>• 체크박스로 원하는 직원만 선택하여 발송할 수 있습니다.</div>
+                <div>• 이미 발송된 직원을 재선택하면 내역이 덮어씌워집니다.</div>
+                <div>• 직원이 현장앱에서 내역서를 열면 ✅확인 상태로 변경됩니다.</div>
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       )}
 
