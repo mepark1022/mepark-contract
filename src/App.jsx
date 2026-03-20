@@ -12074,6 +12074,478 @@ const getOffDays = (workCode) => {
   }
 };
 
+// ── 16-6-C. v9.3 근태분석 공통 유틸 ─────────────────────────────────
+
+// 근무형태별 월간 근무예정일수 계산
+function getExpectedWorkDays(workCode, year, month) {
+  if (!workCode) return 0;
+  const offDays = getOffDays(workCode);
+  const daysInMonth = new Date(year, month, 0).getDate();
+  let count = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const dow = new Date(year, month - 1, d).getDay();
+    if (HOLIDAYS_2026.has(dateStr)) continue;
+    if (offDays && offDays.includes(dow)) continue;
+    count++;
+  }
+  return count;
+}
+
+// 근무형태별 주말 근무예정일수 (주말제/복합 직원의 주말 카운트)
+function getExpectedWeekendDays(workCode, year, month) {
+  if (!workCode) return 0;
+  const cat = getWorkCat(workCode);
+  if (cat === "weekday") return 0; // 순수 평일제는 주말근무 없음
+  const daysInMonth = new Date(year, month, 0).getDate();
+  let count = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+    const dow = new Date(year, month - 1, d).getDay();
+    if (HOLIDAYS_2026.has(dateStr)) continue;
+    if (dow !== 0 && dow !== 6) continue; // 평일 skip
+    const offDays = getOffDays(workCode);
+    if (offDays && offDays.includes(dow)) continue;
+    count++;
+  }
+  return count;
+}
+
+// 개인별 근태 통계 계산
+function calcPersonalAttStats(empId, workCode, dates, getCellStatusFn, todayStr) {
+  let att = 0, extra = 0, late = 0, absent = 0, leave = 0, offDay = 0;
+  const pastDates = dates.filter(d => d.dateStr <= todayStr);
+  pastDates.forEach(d => {
+    const st = getCellStatusFn(empId, d.dateStr, workCode);
+    if (st === "출근") att++;
+    else if (st === "추가") extra++;
+    else if (st === "지각") late++;
+    else if (st === "결근") absent++;
+    else if (st === "연차") leave++;
+    else if (st === "휴무") offDay++;
+  });
+  const worked = att + extra + late;
+  const totalWorkable = pastDates.filter(d => {
+    const offDays = getOffDays(workCode);
+    if (d.isHoliday) return false;
+    if (offDays && offDays.includes(d.dayOfWeek)) return false;
+    return true;
+  }).length;
+  const attRate = totalWorkable > 0 ? Math.round((worked / totalWorkable) * 100) : 0;
+  const lateRate = totalWorkable > 0 ? Math.round((late / totalWorkable) * 100) : 0;
+  return { att, extra, late, absent, leave, offDay, worked, totalWorkable, attRate, lateRate };
+}
+
+// 예상급여 계산 (근태기반)
+function calcExpectedPay(emp, stats, year, month) {
+  if (!emp) return { expectedPay: 0, contractPay: 0, diff: 0, method: "" };
+  const cat = getWorkCat(emp.work_code);
+  const baseSalary = toNum(emp.base_salary);
+  const weekendDaily = toNum(emp.weekend_daily);
+  const expectedTotal = getExpectedWorkDays(emp.work_code, year, month);
+
+  if (cat === "weekday") {
+    // 월급제: base_salary × (실출근 / 예정근무일)
+    const ratio = expectedTotal > 0 ? stats.worked / expectedTotal : 0;
+    const expected = Math.round(baseSalary * ratio);
+    return { expectedPay: expected, contractPay: baseSalary, diff: expected - baseSalary, method: "월급비례" };
+  } else if (cat === "weekend") {
+    // 일당제: weekend_daily × 실출근일
+    const expected = weekendDaily * stats.worked;
+    const expectedWeekend = getExpectedWeekendDays(emp.work_code, year, month);
+    const contractPay = weekendDaily * expectedWeekend;
+    return { expectedPay: expected, contractPay, diff: expected - contractPay, method: "일당제" };
+  } else if (cat === "mixed") {
+    // 복합: base_salary + weekend_daily × 주말실출근
+    const weekdayExpected = expectedTotal - getExpectedWeekendDays(emp.work_code, year, month);
+    const weekdayWorked = stats.att + stats.late; // 주중 출근 (추가근무는 별도)
+    const weekdayRatio = weekdayExpected > 0 ? Math.min(1, weekdayWorked / weekdayExpected) : 0;
+    const weekendWorked = stats.extra; // 주말분은 추가로 잡힘
+    const expected = Math.round(baseSalary * weekdayRatio) + (weekendDaily * weekendWorked);
+    const contractPay = baseSalary + (weekendDaily * getExpectedWeekendDays(emp.work_code, year, month));
+    return { expectedPay: expected, contractPay, diff: expected - contractPay, method: "복합" };
+  } else {
+    // 알바(W): 일당 × 출근일
+    const dailyPay = weekendDaily || baseSalary;
+    const expected = dailyPay * stats.worked;
+    return { expectedPay: expected, contractPay: expected, diff: 0, method: "알바일당" };
+  }
+}
+
+// 연차일수 자동 계산 (근로기준법 제60조)
+function calcAnnualLeave(hireDate, targetYear) {
+  if (!hireDate) return { total: 0, detail: "입사일 미등록" };
+  const hire = new Date(hireDate + "T00:00:00");
+  const targetStart = new Date(targetYear, 0, 1);
+  const diffMs = targetStart - hire;
+  const diffYears = diffMs / (365.25 * 86400000);
+
+  if (diffYears < 0) return { total: 0, detail: "미입사" };
+  if (diffYears < 1) {
+    // 1년 미만: 매월 개근 시 1일 (최대 11일)
+    const months = Math.min(11, Math.floor(diffYears * 12));
+    return { total: months, detail: `1년 미만 (${months}개월분)` };
+  }
+  // 1년 이상: 15일 + 2년 초과 매 2년마다 +1일 (최대 25일)
+  const fullYears = Math.floor(diffYears);
+  const extra = Math.max(0, Math.floor((fullYears - 1) / 2));
+  const total = Math.min(25, 15 + extra);
+  return { total, detail: `${fullYears}년차 (기본15+${extra})` };
+}
+
+// 근태 등급 판정
+function getAttendanceGrade(attRate, lateRate, absentCount) {
+  if (attRate >= 95 && lateRate <= 2 && absentCount === 0) return { grade: "A", label: "우수", color: "#16A34A" };
+  if (attRate >= 85 && absentCount <= 1) return { grade: "B", label: "양호", color: "#1428A0" };
+  if (attRate >= 70) return { grade: "C", label: "주의", color: "#E97132" };
+  return { grade: "D", label: "경고", color: "#E53935" };
+}
+
+// ── 16-6-D. 개인분석 탭 (v9.3 P1) ─────────────────────────────────
+
+function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, todayStr, staffRows, reports, extraAmountMap, moveMonth, goToday, loading }) {
+  const [selectedEmp, setSelectedEmp] = useState(null);
+  const [siteFilter, setSiteFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [payrollCache, setPayrollCache] = useState({}); // { "empId-YYYY-MM": net_pay }
+  const [loadingPayroll, setLoadingPayroll] = useState(false);
+
+  // 직원 필터
+  const activeEmps = useMemo(() => employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000"), [employees]);
+  const filteredEmps = useMemo(() => {
+    let list = activeEmps;
+    if (siteFilter !== "all") list = list.filter(e => e.site_code_1 === siteFilter);
+    if (search) {
+      const s = search.toLowerCase();
+      list = list.filter(e => (e.name || "").toLowerCase().includes(s) || (e.emp_no || "").toLowerCase().includes(s));
+    }
+    return list.sort((a, b) => (a.site_code_1 || "").localeCompare(b.site_code_1 || "") || (a.name || "").localeCompare(b.name || ""));
+  }, [activeEmps, siteFilter, search]);
+
+  const siteOptions = useMemo(() => SITES.filter(s => s.code !== "V000" && activeEmps.some(e => e.site_code_1 === s.code)), [activeEmps]);
+
+  // 선택 직원 근태 통계
+  const empStats = useMemo(() => {
+    if (!selectedEmp) return null;
+    return calcPersonalAttStats(selectedEmp.id, selectedEmp.work_code, dates, getCellStatus, todayStr);
+  }, [selectedEmp, dates, getCellStatus, todayStr]);
+
+  // 예상급여
+  const payCalc = useMemo(() => {
+    if (!selectedEmp || !empStats) return null;
+    return calcExpectedPay(selectedEmp, empStats, year, month);
+  }, [selectedEmp, empStats, year, month]);
+
+  // 연차
+  const annualLeave = useMemo(() => {
+    if (!selectedEmp) return null;
+    return calcAnnualLeave(selectedEmp.hire_date, year);
+  }, [selectedEmp, year]);
+
+  // 등급
+  const grade = useMemo(() => {
+    if (!empStats) return null;
+    return getAttendanceGrade(empStats.attRate, empStats.lateRate, empStats.absent);
+  }, [empStats]);
+
+  // 추가수당
+  const extraAmt = selectedEmp ? (extraAmountMap[selectedEmp.id] || 0) : 0;
+
+  // payroll_records 로드 (선택 직원 바뀔 때)
+  useEffect(() => {
+    if (!selectedEmp) return;
+    const key = `${selectedEmp.id}-${year}-${String(month).padStart(2, "0")}`;
+    if (payrollCache[key] !== undefined) return;
+    (async () => {
+      setLoadingPayroll(true);
+      try {
+        const { data } = await supabase.from("payroll_records").select("net_pay,year,month")
+          .eq("employee_id", selectedEmp.id).eq("year", year).eq("month", month).limit(1);
+        setPayrollCache(prev => ({ ...prev, [key]: data?.[0]?.net_pay ?? null }));
+      } catch (e) { console.error(e); }
+      setLoadingPayroll(false);
+    })();
+  }, [selectedEmp, year, month]);
+
+  const actualPay = selectedEmp ? payrollCache[`${selectedEmp.id}-${year}-${String(month).padStart(2, "0")}`] : null;
+
+  // 일별 상세 데이터
+  const dailyDetails = useMemo(() => {
+    if (!selectedEmp) return [];
+    return dates.filter(d => d.dateStr <= todayStr).map(d => {
+      const status = getCellStatus(selectedEmp.id, d.dateStr, selectedEmp.work_code);
+      // 출퇴근 시간 찾기
+      const staffRow = staffRows.find(s => {
+        if (s.employee_id !== selectedEmp.id) return false;
+        const rep = reports.find(r => r.id === s.report_id);
+        return rep && rep.report_date === d.dateStr;
+      });
+      return {
+        ...d,
+        status: status || (d.isHoliday ? "공휴일" : d.isWeekend ? "주말" : ""),
+        checkIn: staffRow?.check_in || "",
+        checkOut: staffRow?.check_out || "",
+        extraAmt: staffRow ? toNum(staffRow.extra_amount) : 0,
+      };
+    }).reverse(); // 최신순
+  }, [selectedEmp, dates, getCellStatus, todayStr, staffRows, reports]);
+
+  // 6개월 추이 데이터 (간이 계산)
+  const trendData = useMemo(() => {
+    if (!selectedEmp) return [];
+    const result = [];
+    for (let i = 5; i >= 0; i--) {
+      let m = month - i, y = year;
+      while (m < 1) { m += 12; y--; }
+      const mDays = new Date(y, m, 0).getDate();
+      const mDates = Array.from({ length: mDays }, (_, d) => {
+        const dd = d + 1;
+        const ds = `${y}-${String(m).padStart(2, "0")}-${String(dd).padStart(2, "0")}`;
+        const dow = new Date(y, m - 1, dd).getDay();
+        return { day: dd, dateStr: ds, dayOfWeek: dow, isWeekend: dow === 0 || dow === 6, isHoliday: HOLIDAYS_2026.has(ds) };
+      });
+      const pastDs = mDates.filter(d => d.dateStr <= todayStr);
+      // 간이 통계: staffRows 기반으로 해당 월 출근 횟수 계산
+      let worked = 0;
+      pastDs.forEach(d => {
+        const st = getCellStatus(selectedEmp.id, d.dateStr, selectedEmp.work_code);
+        if (st === "출근" || st === "추가" || st === "지각") worked++;
+      });
+      const expected = getExpectedWorkDays(selectedEmp.work_code, y, m);
+      const pastExpected = pastDs.filter(d => {
+        if (d.isHoliday) return false;
+        const offDays = getOffDays(selectedEmp.work_code);
+        if (offDays && offDays.includes(d.dayOfWeek)) return false;
+        return true;
+      }).length;
+      const rate = pastExpected > 0 ? Math.round((worked / pastExpected) * 100) : 0;
+      const pk = `${selectedEmp.id}-${y}-${String(m).padStart(2, "0")}`;
+      const pay = payrollCache[pk];
+      result.push({ label: `${m}월`, month: m, year: y, rate, worked, expected: pastExpected, pay: pay ?? null });
+    }
+    return result;
+  }, [selectedEmp, year, month, todayStr, getCellStatus, payrollCache]);
+
+  // Excel Export
+  const exportPersonalExcel = async () => {
+    if (!selectedEmp) return;
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    // Sheet 1: 일별 상세
+    const rows1 = dailyDetails.map(d => ({
+      "날짜": d.dateStr, "요일": d.dayName, "상태": d.status,
+      "출근시간": d.checkIn || "", "퇴근시간": d.checkOut || "",
+      "추가수당": d.extraAmt || "",
+    }));
+    const ws1 = XLSX.utils.json_to_sheet(rows1);
+    ws1["!cols"] = [{ wch: 12 }, { wch: 4 }, { wch: 8 }, { wch: 10 }, { wch: 10 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, ws1, "일별상세");
+    // Sheet 2: 요약
+    const rows2 = [{
+      "사번": selectedEmp.emp_no, "이름": selectedEmp.name, "사업장": getSiteName(selectedEmp.site_code_1),
+      "근무형태": getWorkLabel(selectedEmp.work_code), "출근일": empStats?.worked || 0,
+      "결근": empStats?.absent || 0, "지각": empStats?.late || 0, "연차": empStats?.leave || 0,
+      "출근률(%)": empStats?.attRate || 0, "등급": grade?.grade || "",
+      "계약급여": payCalc?.contractPay || 0, "예상급여": payCalc?.expectedPay || 0,
+      "실지급액": actualPay ?? "", "차이": payCalc?.diff || 0,
+    }];
+    const ws2 = XLSX.utils.json_to_sheet(rows2);
+    XLSX.utils.book_append_sheet(wb, ws2, "요약");
+    const { saveAs } = await import("file-saver");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    saveAs(new Blob([buf]), `개인근태_${selectedEmp.name}_${year}년${month}월.xlsx`);
+  };
+
+  const statusBg = (st) => {
+    const s = ATT_MAP[st];
+    return s ? s.bg : "transparent";
+  };
+  const statusColor = (st) => {
+    const s = ATT_MAP[st];
+    return s ? s.text : C.gray;
+  };
+
+  return (
+    <div>
+      {/* 월 네비 + 필터 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "10px 16px", flexWrap: "wrap" }}>
+        <button onClick={() => moveMonth(-1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+        <div style={{ fontSize: 16, fontWeight: 900, color: C.dark, minWidth: 120, textAlign: "center" }}>{year}년 {month}월</div>
+        <button onClick={() => moveMonth(1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+        <button onClick={goToday} style={{ padding: "5px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>오늘</button>
+        <div style={{ flex: 1 }} />
+        <select value={siteFilter} onChange={e => { setSiteFilter(e.target.value); setSelectedEmp(null); }} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, fontWeight: 600, background: "#fff" }}>
+          <option value="all">전체 사업장</option>
+          {siteOptions.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+        </select>
+        <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍 이름/사번" style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, width: 130, background: "#fff" }} />
+        {selectedEmp && (
+          <button onClick={exportPersonalExcel} style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 Excel</button>
+        )}
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 30, color: C.gray }}>⏳ 로딩 중...</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: selectedEmp ? "280px 1fr" : "1fr", gap: 16, alignItems: "start" }}>
+        {/* 좌측: 직원 목록 */}
+        <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden", maxHeight: selectedEmp ? "calc(100vh - 260px)" : 600, overflowY: "auto" }}>
+          <div style={{ background: C.navy, padding: "10px 14px", color: "#fff", fontSize: 13, fontWeight: 800 }}>
+            👤 직원 선택 <span style={{ fontWeight: 400, opacity: 0.6, marginLeft: 6 }}>{filteredEmps.length}명</span>
+          </div>
+          {filteredEmps.map(emp => {
+            const isSelected = selectedEmp?.id === emp.id;
+            const st = calcPersonalAttStats(emp.id, emp.work_code, dates, getCellStatus, todayStr);
+            const gr = getAttendanceGrade(st.attRate, st.lateRate, st.absent);
+            return (
+              <div key={emp.id} onClick={() => setSelectedEmp(emp)} style={{
+                padding: "10px 14px", cursor: "pointer", borderBottom: "1px solid #F0F2F8",
+                background: isSelected ? "#EEF2FF" : "transparent", transition: "background 0.1s",
+              }}>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <div>
+                    <span style={{ fontWeight: 800, fontSize: 13, color: isSelected ? C.navy : C.dark }}>{emp.name}</span>
+                    <span style={{ fontSize: 11, color: C.gray, marginLeft: 6 }}>{emp.emp_no}</span>
+                  </div>
+                  <span style={{ fontSize: 11, fontWeight: 800, color: gr.color, background: gr.color + "18", padding: "2px 8px", borderRadius: 6 }}>{gr.grade}</span>
+                </div>
+                <div style={{ fontSize: 11, color: C.gray, marginTop: 3 }}>
+                  {getSiteName(emp.site_code_1)} · {getWorkLabel(emp.work_code)} · 출근률 {st.attRate}%
+                </div>
+              </div>
+            );
+          })}
+          {filteredEmps.length === 0 && <div style={{ padding: 30, textAlign: "center", color: C.gray, fontSize: 13 }}>검색 결과 없음</div>}
+        </div>
+
+        {/* 우측: 개인 분석 상세 */}
+        {selectedEmp && empStats && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            {/* 프로필 카드 */}
+            <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
+              <div style={{ background: C.navy, padding: "14px 18px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div style={{ color: "#fff" }}>
+                  <div style={{ fontSize: 18, fontWeight: 900 }}>{selectedEmp.name} <span style={{ fontSize: 13, fontWeight: 400, opacity: 0.7 }}>{selectedEmp.emp_no}</span></div>
+                  <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>{getSiteName(selectedEmp.site_code_1)} · {getWorkLabel(selectedEmp.work_code)} · 입사 {dateFmt(selectedEmp.hire_date)}</div>
+                </div>
+                {grade && (
+                  <div style={{ textAlign: "center" }}>
+                    <div style={{ fontSize: 28, fontWeight: 900, color: grade.color, background: "#fff", borderRadius: 12, width: 52, height: 52, display: "flex", alignItems: "center", justifyContent: "center" }}>{grade.grade}</div>
+                    <div style={{ fontSize: 10, color: "#fff", opacity: 0.7, marginTop: 3 }}>{grade.label}</div>
+                  </div>
+                )}
+              </div>
+              {/* KPI 4개 */}
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 0 }}>
+                {[
+                  { label: "출근률", value: `${empStats.attRate}%`, color: empStats.attRate >= 90 ? C.success : empStats.attRate >= 70 ? C.orange : C.error },
+                  { label: "지각률", value: `${empStats.lateRate}%`, color: empStats.lateRate > 5 ? C.error : empStats.lateRate > 0 ? "#F57F17" : C.success },
+                  { label: "결근일", value: `${empStats.absent}일`, color: empStats.absent > 0 ? C.error : C.success },
+                  { label: "추가근무", value: `${empStats.extra}일`, color: empStats.extra > 0 ? "#7C3AED" : C.gray },
+                ].map((k, i) => (
+                  <div key={k.label} style={{ padding: "14px", textAlign: "center", borderRight: i < 3 ? "1px solid #F0F2F8" : "none", borderTop: "1px solid #F0F2F8" }}>
+                    <div style={{ fontSize: 22, fontWeight: 900, color: k.color, fontFamily: FONT }}>{k.value}</div>
+                    <div style={{ fontSize: 11, color: C.gray, marginTop: 3, fontWeight: 600 }}>{k.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* 💰 급여 비교 카드 */}
+            {payCalc && (
+              <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
+                <div style={{ background: "#F8F9FC", padding: "10px 16px", borderBottom: "1px solid #E8ECF4", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                  <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>💰 급여 비교</span>
+                  <span style={{ fontSize: 11, color: C.gray }}>{payCalc.method} · {year}년 {month}월{loadingPayroll ? " · ⏳" : ""}</span>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: actualPay !== null ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap: 0 }}>
+                  {[
+                    { label: "계약 급여", value: fmt(payCalc.contractPay), sub: "기준액", color: C.navy },
+                    { label: "예상 급여", value: fmt(payCalc.expectedPay), sub: `출근 ${empStats.worked}/${empStats.totalWorkable}일`, color: payCalc.diff < 0 ? C.error : C.success },
+                    ...(actualPay !== null ? [{ label: "실지급액", value: fmt(actualPay), sub: "급여대장 기준", color: "#7C3AED" }] : []),
+                    { label: "차이", value: `${payCalc.diff >= 0 ? "+" : ""}${fmt(payCalc.diff)}`, sub: payCalc.diff < 0 ? "미달" : payCalc.diff > 0 ? "초과" : "일치", color: payCalc.diff < 0 ? C.error : payCalc.diff > 0 ? C.success : C.gray },
+                  ].map((k, i) => (
+                    <div key={k.label} style={{ padding: "14px", textAlign: "center", borderRight: i < (actualPay !== null ? 3 : 2) ? "1px solid #F0F2F8" : "none" }}>
+                      <div style={{ fontSize: 18, fontWeight: 900, color: k.color, fontFamily: FONT }}>{k.value}<span style={{ fontSize: 11, fontWeight: 600 }}>원</span></div>
+                      <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{k.label}</div>
+                      <div style={{ fontSize: 10, color: k.color, marginTop: 1, opacity: 0.7 }}>{k.sub}</div>
+                    </div>
+                  ))}
+                </div>
+                {extraAmt > 0 && (
+                  <div style={{ padding: "8px 16px", background: "#F3EDFF", fontSize: 12, color: "#7C3AED", fontWeight: 700 }}>
+                    💜 추가수당 합계: {fmt(extraAmt)}원 (별도)
+                  </div>
+                )}
+                {annualLeave && (
+                  <div style={{ padding: "8px 16px", background: "#F0FDF4", fontSize: 12, color: C.success, fontWeight: 600, borderTop: "1px solid #E8ECF4" }}>
+                    🏖️ {year}년 연차: <strong>{annualLeave.total}일</strong> <span style={{ color: C.gray, fontWeight: 400 }}>({annualLeave.detail}) · 사용 {empStats.leave}일 · 잔여 {Math.max(0, annualLeave.total - empStats.leave)}일</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* 일별 출퇴근 상세 */}
+            <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
+              <div style={{ background: "#F8F9FC", padding: "10px 16px", borderBottom: "1px solid #E8ECF4", fontSize: 13, fontWeight: 800, color: C.dark }}>
+                📋 일별 출퇴근 상세 <span style={{ fontSize: 11, color: C.gray, fontWeight: 400 }}>({dailyDetails.length}일)</span>
+              </div>
+              <div style={{ maxHeight: 320, overflowY: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr style={{ background: "#F8F9FC", position: "sticky", top: 0 }}>
+                      {["날짜", "요일", "상태", "출근", "퇴근", "추가수당"].map(h => (
+                        <th key={h} style={{ padding: "8px 10px", fontWeight: 700, color: C.gray, textAlign: "center", borderBottom: "1.5px solid #E8ECF4", fontSize: 11 }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dailyDetails.map(d => (
+                      <tr key={d.dateStr} style={{ background: statusBg(d.status), borderBottom: "1px solid #F0F2F8" }}>
+                        <td style={{ padding: "7px 10px", textAlign: "center", fontWeight: 600 }}>{d.dateStr.slice(5)}</td>
+                        <td style={{ textAlign: "center", color: d.isWeekend || d.isHoliday ? C.error : C.dark, fontWeight: 700 }}>{d.dayName}{d.isHoliday ? "🎌" : ""}</td>
+                        <td style={{ textAlign: "center" }}>
+                          {d.status && <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700, color: statusColor(d.status), background: statusBg(d.status) || "#F5F5F5" }}>{d.status}</span>}
+                        </td>
+                        <td style={{ textAlign: "center", color: C.gray }}>{d.checkIn || "-"}</td>
+                        <td style={{ textAlign: "center", color: C.gray }}>{d.checkOut || "-"}</td>
+                        <td style={{ textAlign: "center", color: d.extraAmt > 0 ? "#7C3AED" : C.gray, fontWeight: d.extraAmt > 0 ? 700 : 400 }}>{d.extraAmt > 0 ? fmt(d.extraAmt) + "원" : "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* 근무현황 요약 (수치) */}
+            <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, padding: "14px 18px" }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 10 }}>📊 월간 요약</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8 }}>
+                {[
+                  { label: "출근", value: empStats.att, color: C.success },
+                  { label: "추가", value: empStats.extra, color: "#7C3AED" },
+                  { label: "지각", value: empStats.late, color: "#F57F17" },
+                  { label: "결근", value: empStats.absent, color: C.error },
+                  { label: "연차", value: empStats.leave, color: "#6A1B9A" },
+                  { label: "휴무", value: empStats.offDay, color: C.gray },
+                ].map(k => (
+                  <div key={k.label} style={{ textAlign: "center", background: k.color + "10", borderRadius: 10, padding: "10px 6px" }}>
+                    <div style={{ fontSize: 20, fontWeight: 900, color: k.color }}>{k.value}</div>
+                    <div style={{ fontSize: 10, color: C.gray, marginTop: 2, fontWeight: 600 }}>{k.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!selectedEmp && (
+          <div style={{ display: "none" }} />
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AttendancePage({ employees }) {
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
@@ -12088,6 +12560,7 @@ function AttendancePage({ employees }) {
   const [saving, setSaving] = useState(false);
   const [viewMode, setViewMode] = useState("calendar"); // calendar / card
   const [empSearch, setEmpSearch] = useState("");
+  const [attTab, setAttTab] = useState("status"); // status / personal / site / anomaly
 
   // 해당 월 날짜 배열
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -12362,6 +12835,20 @@ function AttendancePage({ employees }) {
           <button onClick={exportExcel} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 Excel</button>
         </div>
       </div>
+
+      {/* 탭 바 (v9.3) */}
+      <div style={{ display: "flex", gap: 4, marginBottom: 16, background: "#F0F2F8", borderRadius: 10, padding: 3 }}>
+        {[["status", "📅 근무현황"], ["personal", "👤 개인분석"], ["site", "🏢 사업장분석"], ["anomaly", "⚠️ 이상감지"]].map(([k, v]) => (
+          <button key={k} onClick={() => setAttTab(k)} style={{
+            flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            background: attTab === k ? "#fff" : "transparent", color: attTab === k ? C.navy : C.gray,
+            border: "none", boxShadow: attTab === k ? "0 1px 4px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s",
+          }}>{v}</button>
+        ))}
+      </div>
+
+      {/* ── 근무현황 탭 ── */}
+      {attTab === "status" && (<>
 
       {/* 월 네비게이션 + 뷰 전환 + 검색 + 필터 */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "10px 16px", flexWrap: "wrap" }}>
@@ -12789,6 +13276,44 @@ function AttendancePage({ employees }) {
           )}
         </div>
       )}
+
+      </>)}
+
+      {/* ── 개인분석 탭 (v9.3) ── */}
+      {attTab === "personal" && (
+        <PersonalAnalyticsTab
+          employees={employees}
+          year={year} month={month}
+          dates={dates}
+          getCellStatus={getCellStatus}
+          todayStr={new Date().toISOString().slice(0, 10)}
+          staffRows={staffRows}
+          reports={reports}
+          extraAmountMap={extraAmountMap}
+          moveMonth={moveMonth}
+          goToday={goToday}
+          loading={loading}
+        />
+      )}
+
+      {/* ── 사업장분석 탭 (v9.3 P2 예정) ── */}
+      {attTab === "site" && (
+        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>🏢</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark, marginBottom: 6 }}>사업장 분석</div>
+          <div style={{ fontSize: 13 }}>v9.3 Phase 2에서 구현 예정입니다</div>
+        </div>
+      )}
+
+      {/* ── 이상감지 탭 (v9.3 P3 예정) ── */}
+      {attTab === "anomaly" && (
+        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>
+          <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark, marginBottom: 6 }}>이상 감지</div>
+          <div style={{ fontSize: 13 }}>v9.3 Phase 3에서 구현 예정입니다</div>
+        </div>
+      )}
+
     </div>
   );
 }
