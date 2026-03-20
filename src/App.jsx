@@ -12942,6 +12942,294 @@ function SiteAnalyticsTab({ employees, year, month, dates, getCellStatus, todayS
   );
 }
 
+// ── 16-6-F. 이상감지 탭 (v9.3 P3) ─────────────────────────────────
+
+function AnomalyDetectionTab({ employees, year, month, dates, getCellStatus, todayStr, staffRows, reports, extraAmountMap, moveMonth, goToday, loading }) {
+  const [sevFilter, setSevFilter] = useState("all"); // all / critical / warning / info
+  const [siteFilter, setSiteFilter] = useState("all");
+
+  const activeEmps = useMemo(() => employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000"), [employees]);
+
+  // ── 이상 패턴 감지 엔진 ────────────────
+  const anomalies = useMemo(() => {
+    const results = [];
+    const pastDates = dates.filter(d => d.dateStr <= todayStr);
+    if (pastDates.length === 0) return results;
+
+    activeEmps.forEach(emp => {
+      const stats = calcPersonalAttStats(emp.id, emp.work_code, dates, getCellStatus, todayStr);
+      const siteName = SITES.find(s => s.code === emp.site_code_1)?.name || emp.site_code_1;
+      const base = { empId: emp.id, empNo: emp.emp_no, empName: emp.name, siteCode: emp.site_code_1, siteName };
+
+      // 1) 연속결근 감지
+      let consecutive = 0, maxConsec = 0, streakStart = null, lastStreakStart = null;
+      const offDays = getOffDays(emp.work_code);
+      pastDates.forEach(d => {
+        // 근무 예정일인지 확인
+        const isWorkDay = !(d.isHoliday || (offDays && offDays.includes(d.dayOfWeek)));
+        if (!isWorkDay) return;
+        const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
+        if (st === "결근") {
+          if (consecutive === 0) streakStart = d.dateStr;
+          consecutive++;
+          if (consecutive > maxConsec) { maxConsec = consecutive; lastStreakStart = streakStart; }
+        } else {
+          consecutive = 0; streakStart = null;
+        }
+      });
+      // 현재 진행중인 연속결근도 체크
+      if (consecutive > maxConsec) { maxConsec = consecutive; lastStreakStart = streakStart; }
+
+      if (maxConsec >= 5) {
+        results.push({ ...base, type: "consecutive_absent", severity: "critical", icon: "🚨",
+          title: `연속 ${maxConsec}일 결근`, detail: `${lastStreakStart} 부터 ${maxConsec}일 연속 결근 — 즉시 확인 필요`,
+          metric: maxConsec, sortOrder: 1 });
+      } else if (maxConsec >= 3) {
+        results.push({ ...base, type: "consecutive_absent", severity: "warning", icon: "⚠️",
+          title: `연속 ${maxConsec}일 결근`, detail: `${lastStreakStart} 부터 ${maxConsec}일 연속 결근`,
+          metric: maxConsec, sortOrder: 2 });
+      } else if (maxConsec >= 2) {
+        results.push({ ...base, type: "consecutive_absent", severity: "info", icon: "ℹ️",
+          title: `연속 ${maxConsec}일 결근`, detail: `${lastStreakStart} 부터 ${maxConsec}일 연속 결근`,
+          metric: maxConsec, sortOrder: 3 });
+      }
+
+      // 2) 지각률 이상
+      if (stats.totalWorkable >= 5) {
+        if (stats.lateRate >= 30) {
+          results.push({ ...base, type: "high_late_rate", severity: "critical", icon: "🕐",
+            title: `지각률 ${stats.lateRate}%`, detail: `${stats.totalWorkable}일 중 ${stats.late}회 지각 — 심각 수준`,
+            metric: stats.lateRate, sortOrder: 1 });
+        } else if (stats.lateRate >= 15) {
+          results.push({ ...base, type: "high_late_rate", severity: "warning", icon: "🕐",
+            title: `지각률 ${stats.lateRate}%`, detail: `${stats.totalWorkable}일 중 ${stats.late}회 지각`,
+            metric: stats.lateRate, sortOrder: 2 });
+        }
+      }
+
+      // 3) 출근률 급락
+      if (stats.totalWorkable >= 5) {
+        if (stats.attRate < 60) {
+          results.push({ ...base, type: "low_attendance", severity: "critical", icon: "📉",
+            title: `출근률 ${stats.attRate}%`, detail: `예정 ${stats.totalWorkable}일 중 ${stats.worked}일만 출근 — 심각`,
+            metric: stats.attRate, sortOrder: 1 });
+        } else if (stats.attRate < 80) {
+          results.push({ ...base, type: "low_attendance", severity: "warning", icon: "📉",
+            title: `출근률 ${stats.attRate}%`, detail: `예정 ${stats.totalWorkable}일 중 ${stats.worked}일 출근`,
+            metric: stats.attRate, sortOrder: 2 });
+        }
+      }
+
+      // 4) 추가근무(비번투입) 과다
+      if (stats.extra >= 10) {
+        results.push({ ...base, type: "excessive_extra", severity: "critical", icon: "🔥",
+          title: `추가근무 ${stats.extra}일`, detail: `이번 달 비번투입 ${stats.extra}회 — 과로 위험`,
+          metric: stats.extra, sortOrder: 1 });
+      } else if (stats.extra >= 6) {
+        results.push({ ...base, type: "excessive_extra", severity: "warning", icon: "💪",
+          title: `추가근무 ${stats.extra}일`, detail: `이번 달 비번투입 ${stats.extra}회 — 관리 필요`,
+          metric: stats.extra, sortOrder: 2 });
+      }
+
+      // 5) 결근 다수 (비연속이라도)
+      if (stats.absent >= 5 && maxConsec < 5) {
+        const sev = stats.absent >= 8 ? "critical" : "warning";
+        results.push({ ...base, type: "high_absent", severity: sev, icon: "🚫",
+          title: `월 결근 ${stats.absent}일`, detail: `이번 달 총 ${stats.absent}일 결근 (예정 ${stats.totalWorkable}일)`,
+          metric: stats.absent, sortOrder: sev === "critical" ? 1 : 2 });
+      }
+    });
+
+    // 정렬: severity (critical→warning→info) → metric 내림차순
+    results.sort((a, b) => a.sortOrder - b.sortOrder || b.metric - a.metric);
+    return results;
+  }, [activeEmps, dates, getCellStatus, todayStr]);
+
+  // ── 필터링 ────────────────
+  const filtered = useMemo(() => {
+    return anomalies.filter(a => {
+      if (sevFilter !== "all" && a.severity !== sevFilter) return false;
+      if (siteFilter !== "all" && a.siteCode !== siteFilter) return false;
+      return true;
+    });
+  }, [anomalies, sevFilter, siteFilter]);
+
+  // ── 사업장별 요약 ────────────────
+  const siteSummary = useMemo(() => {
+    const map = {};
+    anomalies.forEach(a => {
+      if (!map[a.siteCode]) map[a.siteCode] = { code: a.siteCode, name: a.siteName, critical: 0, warning: 0, info: 0, total: 0 };
+      map[a.siteCode][a.severity]++;
+      map[a.siteCode].total++;
+    });
+    return Object.values(map).sort((a, b) => b.critical - a.critical || b.total - a.total);
+  }, [anomalies]);
+
+  // ── 유형별 카운트 ────────────────
+  const typeCounts = useMemo(() => {
+    const map = { consecutive_absent: 0, high_late_rate: 0, low_attendance: 0, excessive_extra: 0, high_absent: 0 };
+    anomalies.forEach(a => { map[a.type] = (map[a.type] || 0) + 1; });
+    return map;
+  }, [anomalies]);
+
+  const sevColors = { critical: { bg: "#FEE2E2", border: "#E53935", text: "#B71C1C", label: "심각" },
+    warning: { bg: "#FFF3E0", border: "#E97132", text: "#BF360C", label: "주의" },
+    info: { bg: "#E3F2FD", border: "#0F9ED5", text: "#0D47A1", label: "참고" } };
+
+  const siteList = useMemo(() => {
+    const codes = [...new Set(activeEmps.map(e => e.site_code_1))].sort();
+    return codes.map(c => ({ code: c, name: SITES.find(s => s.code === c)?.name || c }));
+  }, [activeEmps]);
+
+  const critCount = anomalies.filter(a => a.severity === "critical").length;
+  const warnCount = anomalies.filter(a => a.severity === "warning").length;
+  const infoCount = anomalies.filter(a => a.severity === "info").length;
+
+  return (
+    <div>
+      {/* 월 네비게이션 */}
+      <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16, marginBottom: 16 }}>
+        <button onClick={() => moveMonth(-1)} style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid #D0D2DA", background: "#fff", fontWeight: 700, cursor: "pointer" }}>◀</button>
+        <span style={{ fontSize: 18, fontWeight: 900, color: C.dark }}>{year}년 {month}월</span>
+        <button onClick={() => moveMonth(1)} style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid #D0D2DA", background: "#fff", fontWeight: 700, cursor: "pointer" }}>▶</button>
+        <button onClick={goToday} style={{ padding: "6px 14px", borderRadius: 8, border: "1.5px solid " + C.navy, background: C.navy, color: "#fff", fontWeight: 700, fontSize: 12, cursor: "pointer" }}>오늘</button>
+      </div>
+
+      {loading ? (
+        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>⏳</div>
+          <div style={{ fontSize: 14 }}>근태 데이터 분석 중...</div>
+        </div>
+      ) : (
+        <>
+          {/* ── KPI 스트립 ── */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 16 }}>
+            {[
+              { label: "전체 이상", value: anomalies.length, unit: "건", color: C.dark, bg: "#F5F5F5" },
+              { label: "🚨 심각", value: critCount, unit: "건", color: "#E53935", bg: "#FEE2E2" },
+              { label: "⚠️ 주의", value: warnCount, unit: "건", color: "#E97132", bg: "#FFF3E0" },
+              { label: "ℹ️ 참고", value: infoCount, unit: "건", color: "#0F9ED5", bg: "#E3F2FD" },
+            ].map((k, i) => (
+              <div key={i} style={{ background: k.bg, borderRadius: 12, padding: "12px 10px", textAlign: "center" }}>
+                <div style={{ fontSize: 22, fontWeight: 900, color: k.color, fontFamily: "'Noto Sans KR'" }}>{k.value}<span style={{ fontSize: 12, fontWeight: 700 }}>{k.unit}</span></div>
+                <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{k.label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* ── 유형별 분포 ── */}
+          <div style={{ background: "#fff", border: "1px solid #E8E8E8", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 10 }}>📊 유형별 분포</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {[
+                { key: "consecutive_absent", label: "연속결근", icon: "🚨", color: "#E53935" },
+                { key: "high_absent", label: "월 결근 다수", icon: "🚫", color: "#E53935" },
+                { key: "high_late_rate", label: "지각률 이상", icon: "🕐", color: "#E97132" },
+                { key: "low_attendance", label: "출근률 급락", icon: "📉", color: "#E97132" },
+                { key: "excessive_extra", label: "추가근무 과다", icon: "🔥", color: "#0F9ED5" },
+              ].map(t => (
+                <div key={t.key} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 12px", borderRadius: 8, background: typeCounts[t.key] > 0 ? "#FFF8F0" : "#F5F5F5", border: `1px solid ${typeCounts[t.key] > 0 ? t.color : "#E8E8E8"}` }}>
+                  <span style={{ fontSize: 13 }}>{t.icon}</span>
+                  <span style={{ fontSize: 12, color: C.dark, fontWeight: 600 }}>{t.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 900, color: typeCounts[t.key] > 0 ? t.color : C.gray }}>{typeCounts[t.key]}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* ── 사업장별 이상 건수 요약 ── */}
+          {siteSummary.length > 0 && (
+            <div style={{ background: "#fff", border: "1px solid #E8E8E8", borderRadius: 12, padding: 14, marginBottom: 16 }}>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.dark, marginBottom: 10 }}>🏢 사업장별 이상 건수</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))", gap: 8 }}>
+                {siteSummary.map(s => (
+                  <div key={s.code} onClick={() => setSiteFilter(siteFilter === s.code ? "all" : s.code)}
+                    style={{ padding: "10px 12px", borderRadius: 10, border: `1.5px solid ${siteFilter === s.code ? C.navy : "#E8E8E8"}`, background: siteFilter === s.code ? "#EEF0FF" : "#FAFAFA", cursor: "pointer", transition: "all 0.15s" }}>
+                    <div style={{ fontSize: 12, fontWeight: 800, color: C.dark, marginBottom: 6 }}>{s.name}</div>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {s.critical > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: "#E53935", background: "#FEE2E2", padding: "2px 7px", borderRadius: 6 }}>심각 {s.critical}</span>}
+                      {s.warning > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: "#E97132", background: "#FFF3E0", padding: "2px 7px", borderRadius: 6 }}>주의 {s.warning}</span>}
+                      {s.info > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: "#0F9ED5", background: "#E3F2FD", padding: "2px 7px", borderRadius: 6 }}>참고 {s.info}</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* ── 필터 ── */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: 12, fontWeight: 800, color: C.gray }}>심각도:</span>
+            {[["all", "전체"], ["critical", "🚨 심각"], ["warning", "⚠️ 주의"], ["info", "ℹ️ 참고"]].map(([k, v]) => (
+              <button key={k} onClick={() => setSevFilter(k)}
+                style={{ padding: "5px 14px", borderRadius: 8, border: `1.5px solid ${sevFilter === k ? C.navy : "#D0D2DA"}`, background: sevFilter === k ? C.navy : "#fff", color: sevFilter === k ? "#fff" : C.gray, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>{v}</button>
+            ))}
+            <span style={{ fontSize: 12, fontWeight: 800, color: C.gray, marginLeft: 8 }}>사업장:</span>
+            <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)}
+              style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #D0D2DA", fontSize: 12, fontWeight: 600 }}>
+              <option value="all">전체</option>
+              {siteList.map(s => <option key={s.code} value={s.code}>{s.name}</option>)}
+            </select>
+            {(sevFilter !== "all" || siteFilter !== "all") && (
+              <button onClick={() => { setSevFilter("all"); setSiteFilter("all"); }}
+                style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #D0D2DA", background: "#fff", color: C.gray, fontWeight: 700, fontSize: 11, cursor: "pointer" }}>✕ 초기화</button>
+            )}
+            <span style={{ fontSize: 12, color: C.gray, marginLeft: "auto" }}>{filtered.length}건</span>
+          </div>
+
+          {/* ── 알림 카드 리스트 ── */}
+          {filtered.length === 0 ? (
+            <div style={{ textAlign: "center", padding: 50, color: C.gray }}>
+              <div style={{ fontSize: 40, marginBottom: 8 }}>✅</div>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.dark, marginBottom: 4 }}>{anomalies.length === 0 ? "이상 패턴 없음" : "해당 조건 없음"}</div>
+              <div style={{ fontSize: 13 }}>{anomalies.length === 0 ? `${year}년 ${month}월 — 모든 직원의 근태가 정상 범위입니다` : "필터 조건을 변경해 보세요"}</div>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+              {filtered.map((a, i) => {
+                const sc = sevColors[a.severity];
+                return (
+                  <div key={i} style={{ background: sc.bg, border: `1.5px solid ${sc.border}`, borderRadius: 12, padding: "14px 16px", borderLeft: `5px solid ${sc.border}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 6 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <span style={{ fontSize: 18 }}>{a.icon}</span>
+                        <div>
+                          <span style={{ fontSize: 14, fontWeight: 900, color: sc.text }}>{a.title}</span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: sc.border, background: "#fff", padding: "1px 8px", borderRadius: 6, marginLeft: 8 }}>{sc.label}</span>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: "right", flexShrink: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 800, color: C.dark }}>{a.empName}</div>
+                        <div style={{ fontSize: 11, color: C.gray }}>{a.empNo}</div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 12, color: sc.text, lineHeight: 1.5, marginBottom: 4 }}>{a.detail}</div>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                      <span style={{ fontSize: 11, color: C.gray, background: "#fff", padding: "2px 8px", borderRadius: 6 }}>🏢 {a.siteName}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
+          {/* ── 감지 기준 안내 ── */}
+          <div style={{ marginTop: 20, background: "#F5F5F5", borderRadius: 12, padding: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.dark, marginBottom: 8 }}>📌 이상 감지 기준</div>
+            <div style={{ fontSize: 11, color: C.gray, lineHeight: 2.0 }}>
+              <div>• <b style={{ color: "#E53935" }}>연속결근</b>: 2일↑ 참고 / 3일↑ 주의 / 5일↑ 심각</div>
+              <div>• <b style={{ color: "#E97132" }}>지각률</b>: 15%↑ 주의 / 30%↑ 심각 (근무예정 5일 이상 시 판정)</div>
+              <div>• <b style={{ color: "#E97132" }}>출근률</b>: 80% 미만 주의 / 60% 미만 심각</div>
+              <div>• <b style={{ color: "#0F9ED5" }}>추가근무</b>: 6일↑ 주의 / 10일↑ 심각 (과로 방지)</div>
+              <div>• <b style={{ color: "#E53935" }}>월 결근</b>: 5일↑ 주의 / 8일↑ 심각 (비연속 포함)</div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function AttendancePage({ employees }) {
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
@@ -13709,13 +13997,21 @@ function AttendancePage({ employees }) {
         />
       )}
 
-      {/* ── 이상감지 탭 (v9.3 P3 예정) ── */}
+      {/* ── 이상감지 탭 (v9.3 P3) ── */}
       {attTab === "anomaly" && (
-        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>⚠️</div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark, marginBottom: 6 }}>이상 감지</div>
-          <div style={{ fontSize: 13 }}>v9.3 Phase 3에서 구현 예정입니다</div>
-        </div>
+        <AnomalyDetectionTab
+          employees={employees}
+          year={year} month={month}
+          dates={dates}
+          getCellStatus={getCellStatus}
+          todayStr={new Date().toISOString().slice(0, 10)}
+          staffRows={staffRows}
+          reports={reports}
+          extraAmountMap={extraAmountMap}
+          moveMonth={moveMonth}
+          goToday={goToday}
+          loading={loading}
+        />
       )}
 
     </div>
