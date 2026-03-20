@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
       // 1. employees에서 전화번호로 조회
       const { data: empList, error: empErr } = await adminClient
         .from("employees")
-        .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, is_active")
+        .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, status")
         .eq("phone", digits)
         .limit(1);
 
@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
         const formatted = digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
         const { data: empList2, error: empErr2 } = await adminClient
           .from("employees")
-          .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, is_active")
+          .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, status")
           .eq("phone", formatted)
           .limit(1);
 
@@ -72,7 +72,7 @@ Deno.serve(async (req) => {
       }
 
       // 2. 퇴사자 차단
-      if (emp.is_active === false) {
+      if (emp.status === "퇴사") {
         return new Response(JSON.stringify({ error: "퇴사 처리된 직원입니다. 관리자에게 문의하세요." }), {
           status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
