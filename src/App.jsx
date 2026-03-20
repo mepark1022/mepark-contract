@@ -12056,6 +12056,24 @@ const ATT_STATUSES = [
 const ATT_MAP = Object.fromEntries(ATT_STATUSES.map(s => [s.key, s]));
 const DAY_NAMES = ["일", "월", "화", "수", "목", "금", "토"];
 
+// 근무코드별 비근무 요일 (0=일, 1=월, ..., 6=토)
+const getOffDays = (workCode) => {
+  if (!workCode) return null;
+  const base = workCode.replace(/P/g, "");
+  switch (base) {
+    case "A": case "B": case "C": return [0, 6];   // 평일제 → 토/일 휴무
+    case "D":                      return [0];       // 평(6) → 일요일만 휴무
+    case "E":                      return [1,2,3,4,5]; // 주(2) → 평일 휴무
+    case "F":                      return [0,1,2,3,4,5]; // 주(토) → 토요일만 근무
+    case "G":                      return [1,2,3,4,5,6]; // 주(일) → 일요일만 근무
+    case "AE":                     return null;       // 평(3)+주(2) → 매일 근무
+    case "CF":                     return [0];         // 평(5)+주(토) → 일요일 휴무
+    case "CG":                     return [6];         // 평(5)+주(일) → 토요일 휴무
+    case "FG":                     return [1,2,3,4,5]; // 주(토)+주(일) → 평일 휴무
+    default:                       return null;
+  }
+};
+
 function AttendancePage({ employees }) {
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
@@ -12164,11 +12182,19 @@ function AttendancePage({ employees }) {
     return map;
   }, [attRecords]);
 
-  // 셀 상태 결정: 수동 > 일보자동
-  const getCellStatus = (empId, dateStr) => {
+  // 셀 상태 결정: 수동 > 일보자동 > 근무코드 자동휴무
+  const getCellStatus = (empId, dateStr, workCode) => {
     const key = `${empId}-${dateStr}`;
     if (manualAttMap[key]) return manualAttMap[key];
     if (autoAttMap[key]) return autoAttMap[key]; // "출근" 또는 "추가"
+    // 근무코드 기반 자동 휴무 (과거+오늘만, 미래 제외)
+    if (workCode && dateStr <= todayStr) {
+      const offDays = getOffDays(workCode);
+      if (offDays) {
+        const dow = new Date(dateStr + "T00:00:00").getDay();
+        if (offDays.includes(dow)) return "휴무";
+      }
+    }
     return null;
   };
 
@@ -12199,19 +12225,19 @@ function AttendancePage({ employees }) {
   const pastWorkDates = dates.filter(d => !d.isWeekend && !d.isHoliday && d.dateStr <= todayStr);
   const totalWorkableDays = pastWorkDates.length;
   const kpiAttCount = allFilteredEmps.reduce((sum, emp) => {
-    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "출근").length;
+    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "출근").length;
   }, 0);
   const kpiExtraCount = allFilteredEmps.reduce((sum, emp) => {
-    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "추가").length;
+    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "추가").length;
   }, 0);
   const kpiLateCount = allFilteredEmps.reduce((sum, emp) => {
-    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "지각").length;
+    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "지각").length;
   }, 0);
   const kpiAbsentCount = allFilteredEmps.reduce((sum, emp) => {
-    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "결근").length;
+    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "결근").length;
   }, 0);
   const kpiLeaveCount = allFilteredEmps.reduce((sum, emp) => {
-    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr) === "연차").length;
+    return sum + dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "연차").length;
   }, 0);
   const expectedTotal = totalEmps * totalWorkableDays;
   const overallAttRate = expectedTotal > 0 ? Math.round(((kpiAttCount + kpiExtraCount + kpiLateCount) / expectedTotal) * 100) : 0;
@@ -12220,11 +12246,11 @@ function AttendancePage({ employees }) {
   // Per-employee stats (for card view)
   const empStats = useMemo(() => {
     return allFilteredEmps.map(emp => {
-      const att = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "출근").length;
-      const extra = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "추가").length;
-      const late = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "지각").length;
-      const absent = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "결근").length;
-      const leave = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "연차").length;
+      const att = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "출근").length;
+      const extra = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "추가").length;
+      const late = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "지각").length;
+      const absent = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "결근").length;
+      const leave = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "연차").length;
       const worked = att + extra + late;
       const rate = totalWorkableDays > 0 ? Math.round((worked / totalWorkableDays) * 100) : 0;
       const extraAmt = extraAmountMap[emp.id] || 0;
@@ -12251,7 +12277,7 @@ function AttendancePage({ employees }) {
     const detailRows = empStats.flatMap(e =>
       dates.filter(d => d.dateStr <= todayStr).map(d => ({
         "사번": e.emp_no || "", "이름": e.name, "사업장": getSiteName(e.site_code_1),
-        "날짜": d.dateStr, "요일": d.dayName, "상태": getCellStatus(e.id, d.dateStr) || (d.isHoliday ? "공휴일" : d.isWeekend ? "주말" : ""),
+        "날짜": d.dateStr, "요일": d.dayName, "상태": getCellStatus(e.id, d.dateStr, e.work_code) || (d.isHoliday ? "공휴일" : d.isWeekend ? "주말" : ""),
       }))
     );
     const ws2 = XLSX.utils.json_to_sheet(detailRows);
@@ -12280,10 +12306,10 @@ function AttendancePage({ employees }) {
   };
 
   // 셀 클릭 → 팝업
-  const handleCellClick = (empId, dateStr, e) => {
+  const handleCellClick = (empId, dateStr, e, workCode) => {
     e.stopPropagation();
     const rect = e.currentTarget.getBoundingClientRect();
-    setPopup({ empId, dateStr, x: rect.left, y: rect.bottom + 2 });
+    setPopup({ empId, dateStr, x: rect.left, y: rect.bottom + 2, workCode });
   };
 
   // 상태 저장
@@ -12549,7 +12575,7 @@ function AttendancePage({ employees }) {
                       {/* 미니 달력 도트 */}
                       <div style={{ marginTop: 10, display: "flex", flexWrap: "wrap", gap: 2 }}>
                         {dates.filter(d => d.dateStr <= todayStr).map(d => {
-                          const st = getCellStatus(emp.id, d.dateStr);
+                          const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
                           const dotColor = st === "출근" ? "#C8E6C9" : st === "추가" ? "#E8D5F5" : st === "지각" ? "#FFF9C4" : st === "결근" ? "#FFCDD2" : st === "연차" ? "#E1BEE7" : st === "휴무" ? "#E0E0E0" : d.isHoliday || d.isWeekend ? "#F5F5F5" : "#EEEEEE";
                           return <div key={d.dateStr} title={`${d.dateStr} ${st || ""}`} style={{ width: 8, height: 8, borderRadius: 2, background: dotColor }} />;
                         })}
@@ -12614,9 +12640,9 @@ function AttendancePage({ employees }) {
                     </td>
                   </tr>
                   {group.emps.map((emp, idx) => {
-                    const attDays = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "출근").length;
-                    const extraDays = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "추가").length;
-                    const lateDays = dates.filter(d => getCellStatus(emp.id, d.dateStr) === "지각").length;
+                    const attDays = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "출근").length;
+                    const extraDays = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "추가").length;
+                    const lateDays = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "지각").length;
                     const workableDays = dates.filter(d => !d.isWeekend && !d.isHoliday && d.dateStr <= todayStr).length;
                     const totalWorked = attDays + extraDays + lateDays;
                     const rate = workableDays > 0 ? Math.round((totalWorked / workableDays) * 100) : 0;
@@ -12641,13 +12667,13 @@ function AttendancePage({ employees }) {
                           </div>
                         </td>
                         {dates.map(d => {
-                          const st = getCellStatus(emp.id, d.dateStr);
+                          const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
                           const isAuto = !manualAttMap[`${emp.id}-${d.dateStr}`] && autoAttMap[`${emp.id}-${d.dateStr}`];
                           const info = st ? ATT_MAP[st] : null;
                           const isFuture = d.dateStr > todayStr;
                           return (
                             <td key={d.day}
-                              onClick={isFuture ? undefined : (e) => handleCellClick(emp.id, d.dateStr, e)}
+                              onClick={isFuture ? undefined : (e) => handleCellClick(emp.id, d.dateStr, e, emp.work_code)}
                               style={{
                                 padding: 0, textAlign: "center", borderBottom: "1px solid #F0F2F8",
                                 borderLeft: "1px solid #F0F0F0", cursor: isFuture ? "default" : "pointer",
@@ -12726,7 +12752,7 @@ function AttendancePage({ employees }) {
             {popup.dateStr.slice(5)} 상태 변경
           </div>
           {ATT_STATUSES.map(s => {
-            const isActive = getCellStatus(popup.empId, popup.dateStr) === s.key;
+            const isActive = getCellStatus(popup.empId, popup.dateStr, popup.workCode) === s.key;
             return (
               <button key={s.key} onClick={() => saveStatus(popup.empId, popup.dateStr, s.key)}
                 style={{
@@ -12745,7 +12771,7 @@ function AttendancePage({ employees }) {
             );
           })}
           {/* 삭제(초기화) */}
-          {getCellStatus(popup.empId, popup.dateStr) && (
+          {getCellStatus(popup.empId, popup.dateStr, popup.workCode) && (
             <>
               <div style={{ height: 1, background: "#eee", margin: "4px 0" }} />
               <button onClick={() => saveStatus(popup.empId, popup.dateStr, null)}
