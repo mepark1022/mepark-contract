@@ -1,5 +1,5 @@
 // ============================================================
-// 미팍ERP — admin-api Edge Function v4 (field_login 역할별 분기)
+// 미팍ERP — admin-api Edge Function v5 (phone_login + field_login)
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -20,7 +20,158 @@ Deno.serve(async (req) => {
     const { action } = body;
 
     // ────────────────────────────────────────────────────────
-    // ACTION: field_login — 전화번호/사번 로그인 (인증 불필요)
+    // ACTION: phone_login — 전화번호 1단계 로그인 (v9.2)
+    // 클라이언트는 전화번호만 전송 → 서버에서 사번 조회 + 인증 일괄 처리
+    // PIN/비밀번호가 클라이언트에 노출되지 않음
+    // ────────────────────────────────────────────────────────
+    if (action === "phone_login") {
+      const { phone } = body;
+      if (!phone) {
+        return new Response(JSON.stringify({ error: "전화번호가 필요합니다." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const digits = (phone || "").replace(/\D/g, "");
+      if (digits.length !== 11) {
+        return new Response(JSON.stringify({ error: "전화번호 11자리를 입력해주세요." }), {
+          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      const adminClient = createClient(
+        Deno.env.get("SUPABASE_URL") ?? "",
+        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+        { auth: { autoRefreshToken: false, persistSession: false } }
+      );
+
+      // 1. employees에서 전화번호로 조회
+      const { data: empList, error: empErr } = await adminClient
+        .from("employees")
+        .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, is_active")
+        .eq("phone", digits)
+        .limit(1);
+
+      if (empErr || !empList || empList.length === 0) {
+        // 하이픈 포함 형식도 시도 (010-1234-5678)
+        const formatted = digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
+        const { data: empList2, error: empErr2 } = await adminClient
+          .from("employees")
+          .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, is_active")
+          .eq("phone", formatted)
+          .limit(1);
+
+        if (empErr2 || !empList2 || empList2.length === 0) {
+          return new Response(JSON.stringify({ error: "등록되지 않은 전화번호입니다." }), {
+            status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+        var emp = empList2[0];
+      } else {
+        var emp = empList[0];
+      }
+
+      // 2. 퇴사자 차단
+      if (emp.is_active === false) {
+        return new Response(JSON.stringify({ error: "퇴사 처리된 직원입니다. 관리자에게 문의하세요." }), {
+          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      // 3. PIN 생성 (전화번호 뒤 4자리)
+      const phoneDigits = (emp.phone || "").replace(/\D/g, "");
+      const pin4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : digits.slice(-4);
+      const password = `mp${pin4}`;
+
+      // 4. 역할에 따라 이메일 형식 분기
+      const role = emp.system_role || "field_member";
+      const isERP = ["crew", "admin", "super_admin"].includes(role);
+      const email = isERP
+        ? `${emp.emp_no.toLowerCase()}@mepark.internal`
+        : `${emp.emp_no.toLowerCase()}@field.mepark.internal`;
+
+      let authId = emp.auth_id;
+
+      // 5. auth_id 없으면 이메일로 탐색
+      if (!authId) {
+        const { data: userList } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+        const existing = userList?.users?.find((u: any) => u.email === email);
+        if (existing) {
+          authId = existing.id;
+          await adminClient.from("employees").update({ auth_id: authId }).eq("id", emp.id);
+        }
+      }
+
+      // 6. field_member 신규 계정 자동 생성
+      if (!authId && !isERP) {
+        const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: {
+            emp_no: emp.emp_no,
+            name: emp.name,
+            role,
+            site_code: emp.site_code_1,
+          },
+        });
+
+        if (createErr && !createErr.message.includes("already been registered")) {
+          return new Response(JSON.stringify({ error: "계정 생성 실패: " + createErr.message }), {
+            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+          });
+        }
+
+        if (createErr) {
+          const { data: ul } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
+          authId = ul?.users?.find((u: any) => u.email === email)?.id ?? null;
+        } else {
+          authId = newUser?.user?.id ?? null;
+        }
+
+        if (authId) {
+          await adminClient.from("employees").update({ auth_id: authId }).eq("id", emp.id);
+        }
+      }
+
+      if (!authId) {
+        return new Response(JSON.stringify({
+          error: isERP
+            ? "ERP 계정이 없습니다. 관리자에게 계정 생성을 요청하세요."
+            : "Auth 계정을 찾을 수 없습니다.",
+        }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
+
+      // 7. 비밀번호 최신화 → 로그인
+      await adminClient.auth.admin.updateUserById(authId, { password });
+
+      const { data: signInData, error: signInErr } = await adminClient.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (signInErr || !signInData?.session) {
+        return new Response(JSON.stringify({ error: "세션 생성 실패: " + (signInErr?.message || "unknown") }), {
+          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+
+      return new Response(JSON.stringify({
+        access_token: signInData.session.access_token,
+        refresh_token: signInData.session.refresh_token,
+        employee: {
+          id: emp.id,
+          name: emp.name,
+          emp_no: emp.emp_no,
+          emp_id: emp.emp_no,
+          site_code: emp.site_code_1,
+          work_type: emp.work_code,
+          role,
+        },
+      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
+
+    // ────────────────────────────────────────────────────────
+    // ACTION: field_login — 사번+PIN 로그인 (기존 호환 유지)
     // 역할별 이메일 형식 분기:
     //   crew / admin / super_admin → empNo@mepark.internal
     //   field_member (기본)        → empNo@field.mepark.internal
