@@ -12125,15 +12125,16 @@ function calcPersonalAttStats(empId, workCode, dates, getCellStatusFn, todayStr)
     else if (st === "휴무") offDay++;
   });
   const worked = att + extra + late;
+  const regularWorked = att + late; // 출근률 산정 기준: 정규출근 + 지각만 (추가근무 제외)
   const totalWorkable = pastDates.filter(d => {
     const offDays = getOffDays(workCode);
     if (d.isHoliday) return false;
     if (offDays && offDays.includes(d.dayOfWeek)) return false;
     return true;
   }).length;
-  const attRate = totalWorkable > 0 ? Math.round((worked / totalWorkable) * 100) : 0;
+  const attRate = totalWorkable > 0 ? Math.round((regularWorked / totalWorkable) * 100) : 0;
   const lateRate = totalWorkable > 0 ? Math.round((late / totalWorkable) * 100) : 0;
-  return { att, extra, late, absent, leave, offDay, worked, totalWorkable, attRate, lateRate };
+  return { att, extra, late, absent, leave, offDay, worked, regularWorked, totalWorkable, attRate, lateRate };
 }
 
 // 예상급여 계산 (근태기반)
@@ -12460,7 +12461,7 @@ function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, to
                 <div style={{ display: "grid", gridTemplateColumns: actualPay !== null ? "1fr 1fr 1fr 1fr" : "1fr 1fr 1fr", gap: 0 }}>
                   {[
                     { label: "계약 급여", value: fmt(payCalc.contractPay), sub: "기준액", color: C.navy },
-                    { label: "예상 급여", value: fmt(payCalc.expectedPay), sub: `출근 ${empStats.worked}/${empStats.totalWorkable}일`, color: payCalc.diff < 0 ? C.error : C.success },
+                    { label: "예상 급여", value: fmt(payCalc.expectedPay), sub: empStats.extra > 0 ? `출근 ${empStats.regularWorked}+추가${empStats.extra}/${empStats.totalWorkable}일` : `출근 ${empStats.regularWorked}/${empStats.totalWorkable}일`, color: payCalc.diff < 0 ? C.error : C.success },
                     ...(actualPay !== null ? [{ label: "실지급액", value: fmt(actualPay), sub: "급여대장 기준", color: "#7C3AED" }] : []),
                     { label: "차이", value: `${payCalc.diff >= 0 ? "+" : ""}${fmt(payCalc.diff)}`, sub: payCalc.diff < 0 ? "미달" : payCalc.diff > 0 ? "초과" : "일치", color: payCalc.diff < 0 ? C.error : payCalc.diff > 0 ? C.success : C.gray },
                   ].map((k, i) => (
@@ -13011,11 +13012,11 @@ function AnomalyDetectionTab({ employees, year, month, dates, getCellStatus, tod
       if (stats.totalWorkable >= 5) {
         if (stats.attRate < 60) {
           results.push({ ...base, type: "low_attendance", severity: "critical", icon: "📉",
-            title: `출근률 ${stats.attRate}%`, detail: `예정 ${stats.totalWorkable}일 중 ${stats.worked}일만 출근 — 심각`,
+            title: `출근률 ${stats.attRate}%`, detail: `예정 ${stats.totalWorkable}일 중 정규출근 ${stats.regularWorked}일 — 심각`,
             metric: stats.attRate, sortOrder: 1 });
         } else if (stats.attRate < 80) {
           results.push({ ...base, type: "low_attendance", severity: "warning", icon: "📉",
-            title: `출근률 ${stats.attRate}%`, detail: `예정 ${stats.totalWorkable}일 중 ${stats.worked}일 출근`,
+            title: `출근률 ${stats.attRate}%`, detail: `예정 ${stats.totalWorkable}일 중 정규출근 ${stats.regularWorked}일`,
             metric: stats.attRate, sortOrder: 2 });
         }
       }
