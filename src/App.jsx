@@ -13073,6 +13073,29 @@ function AnomalyDetectionTab({ employees, year, month, dates, getCellStatus, tod
     return map;
   }, [anomalies]);
 
+  // Excel Export
+  const exportAnomalyExcel = async () => {
+    const XLSX = await import("xlsx");
+    const wb = XLSX.utils.book_new();
+    // Sheet 1: 이상감지 목록
+    const rows1 = anomalies.map((a, i) => ({
+      "#": i + 1, "심각도": a.severity === "critical" ? "심각" : a.severity === "warning" ? "주의" : "참고",
+      "유형": a.type === "consecutive_absent" ? "연속결근" : a.type === "high_late_rate" ? "지각률" : a.type === "low_attendance" ? "출근률급락" : a.type === "excessive_extra" ? "추가근무과다" : "월결근다수",
+      "사번": a.empNo, "이름": a.empName, "사업장": a.siteName, "제목": a.title, "상세": a.detail,
+    }));
+    const ws1 = XLSX.utils.json_to_sheet(rows1);
+    ws1["!cols"] = [{ wch: 4 }, { wch: 6 }, { wch: 12 }, { wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 20 }, { wch: 40 }];
+    XLSX.utils.book_append_sheet(wb, ws1, "이상감지목록");
+    // Sheet 2: 사업장별 요약
+    const rows2 = siteSummary.map(s => ({ "사업장": s.name, "심각": s.critical, "주의": s.warning, "참고": s.info, "합계": s.total }));
+    const ws2 = XLSX.utils.json_to_sheet(rows2);
+    ws2["!cols"] = [{ wch: 14 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }];
+    XLSX.utils.book_append_sheet(wb, ws2, "사업장별요약");
+    const { saveAs } = await import("file-saver");
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    saveAs(new Blob([buf]), `이상감지_${year}년${month}월.xlsx`);
+  };
+
   const sevColors = { critical: { bg: "#FEE2E2", border: "#E53935", text: "#B71C1C", label: "심각" },
     warning: { bg: "#FFF3E0", border: "#E97132", text: "#BF360C", label: "주의" },
     info: { bg: "#E3F2FD", border: "#0F9ED5", text: "#0D47A1", label: "참고" } };
@@ -13176,6 +13199,7 @@ function AnomalyDetectionTab({ employees, year, month, dates, getCellStatus, tod
                 style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #D0D2DA", background: "#fff", color: C.gray, fontWeight: 700, fontSize: 11, cursor: "pointer" }}>✕ 초기화</button>
             )}
             <span style={{ fontSize: 12, color: C.gray, marginLeft: "auto" }}>{filtered.length}건</span>
+            <button onClick={exportAnomalyExcel} disabled={anomalies.length === 0} style={{ padding: "5px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: anomalies.length > 0 ? C.navy : C.gray, fontWeight: 700, fontSize: 12, cursor: anomalies.length > 0 ? "pointer" : "default", opacity: anomalies.length > 0 ? 1 : 0.5 }}>📥 Excel</button>
           </div>
 
           {/* ── 알림 카드 리스트 ── */}
@@ -13458,9 +13482,57 @@ function AttendancePage({ employees }) {
     ws3["!cols"] = [{ wch: 18 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 6 }, { wch: 10 }, { wch: 16 }];
     XLSX.utils.book_append_sheet(wb, ws3, "매장별집계");
 
+    // Sheet 4: 이상감지 목록
+    const anomalyRows = [];
+    const allActiveForAnomaly = employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000");
+    allActiveForAnomaly.forEach(emp => {
+      const stats = calcPersonalAttStats(emp.id, emp.work_code, dates, getCellStatus, todayStr);
+      if (!stats || stats.totalWorkable < 3) return;
+      const siteName = getSiteName(emp.site_code_1);
+      const base = { "사번": emp.emp_no || "", "이름": emp.name, "사업장": siteName };
+      // 연속결근
+      let maxConsec = 0, consec = 0;
+      dates.filter(d => d.dateStr <= todayStr).forEach(d => {
+        const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
+        if (st === "결근") { consec++; maxConsec = Math.max(maxConsec, consec); } else if (st && st !== "결근") consec = 0;
+      });
+      if (maxConsec >= 2) anomalyRows.push({ ...base, "심각도": maxConsec >= 5 ? "심각" : maxConsec >= 3 ? "주의" : "참고", "유형": "연속결근", "상세": `최대 ${maxConsec}일 연속 결근` });
+      // 지각률
+      if (stats.totalWorkable >= 5 && stats.lateRate >= 15) anomalyRows.push({ ...base, "심각도": stats.lateRate >= 30 ? "심각" : "주의", "유형": "지각률이상", "상세": `${stats.totalWorkable}일 중 ${stats.late}회 지각 (${stats.lateRate}%)` });
+      // 출근률
+      if (stats.totalWorkable >= 5 && stats.attRate < 80) anomalyRows.push({ ...base, "심각도": stats.attRate < 60 ? "심각" : "주의", "유형": "출근률급락", "상세": `출근률 ${stats.attRate}% (정규출근 ${stats.regularWorked}/${stats.totalWorkable}일)` });
+      // 추가근무 과다
+      if (stats.extra >= 6) anomalyRows.push({ ...base, "심각도": stats.extra >= 10 ? "심각" : "주의", "유형": "추가근무과다", "상세": `비번투입 ${stats.extra}회` });
+      // 월 결근 다수
+      if (stats.absent >= 5 && maxConsec < 5) anomalyRows.push({ ...base, "심각도": stats.absent >= 8 ? "심각" : "주의", "유형": "월결근다수", "상세": `총 ${stats.absent}일 결근` });
+    });
+    if (anomalyRows.length > 0) {
+      const ws4 = XLSX.utils.json_to_sheet(anomalyRows);
+      ws4["!cols"] = [{ wch: 12 }, { wch: 8 }, { wch: 14 }, { wch: 6 }, { wch: 12 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(wb, ws4, "이상감지목록");
+    }
+
+    // Sheet 5: 사업장 근태 비교
+    const siteCompareRows = siteGroups.map(g => {
+      const gEmps = allActiveForAnomaly.filter(e => e.site_code_1 === g.code);
+      const gStats = gEmps.map(e => calcPersonalAttStats(e.id, e.work_code, dates, getCellStatus, todayStr)).filter(Boolean);
+      const avgAtt = gStats.length > 0 ? Math.round(gStats.reduce((s, st) => s + st.attRate, 0) / gStats.length) : 0;
+      const avgLate = gStats.length > 0 ? Math.round(gStats.reduce((s, st) => s + st.lateRate, 0) / gStats.length) : 0;
+      const totalAbsent = gStats.reduce((s, st) => s + st.absent, 0);
+      const totalExtra = gStats.reduce((s, st) => s + st.extra, 0);
+      const anomalyCount = anomalyRows.filter(a => a["사업장"] === g.name).length;
+      const grade = getAttendanceGrade(avgAtt, avgLate, totalAbsent);
+      return { "사업장": `${g.code} ${g.name}`, "인원": gEmps.length, "평균출근률(%)": avgAtt, "평균지각률(%)": avgLate, "총결근": totalAbsent, "총추가근무": totalExtra, "이상건수": anomalyCount, "등급": grade };
+    });
+    if (siteCompareRows.length > 0) {
+      const ws5 = XLSX.utils.json_to_sheet(siteCompareRows);
+      ws5["!cols"] = [{ wch: 18 }, { wch: 6 }, { wch: 14 }, { wch: 14 }, { wch: 8 }, { wch: 12 }, { wch: 8 }, { wch: 6 }];
+      XLSX.utils.book_append_sheet(wb, ws5, "사업장근태비교");
+    }
+
     const { saveAs } = await import("file-saver");
     const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-    saveAs(new Blob([buf]), `근태현황_${year}년${month}월.xlsx`);
+    saveAs(new Blob([buf]), `근태종합보고서_${year}년${month}월.xlsx`);
   };
 
   // 셀 클릭 → 팝업
@@ -13517,7 +13589,7 @@ function AttendancePage({ employees }) {
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           {loading && <span style={{ fontSize: 12, color: C.gray }}>⏳ 로딩 중...</span>}
           {saving && <span style={{ fontSize: 12, color: C.orange, fontWeight: 700 }}>💾 저장 중...</span>}
-          <button onClick={exportExcel} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 Excel</button>
+          <button onClick={exportExcel} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 종합 Excel</button>
         </div>
       </div>
 
