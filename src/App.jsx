@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef, createContext, useCo
 import { supabase, supabaseUrl, supabaseAnonKey, callAdminApi } from "./supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
-import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid } from "recharts";
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, LineChart, Cell, Legend } from "recharts";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
@@ -12546,6 +12546,402 @@ function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, to
   );
 }
 
+
+// ── 사업장분석 탭 (v9.3 P2) ─────────────────────────────
+function SiteAnalyticsTab({ employees, year, month, dates, getCellStatus, todayStr, staffRows, reports, extraAmountMap, moveMonth, goToday, loading }) {
+  const [siteFilter, setSiteFilter] = useState("all");
+  const [trendMonths, setTrendMonths] = useState(6);
+  const [trendData, setTrendData] = useState([]);
+  const [loadingTrend, setLoadingTrend] = useState(false);
+
+  // 재직 현장직원 (V000 제외)
+  const activeEmps = useMemo(() => employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000"), [employees]);
+
+  // 사업장 목록
+  const siteOptions = useMemo(() => {
+    const codes = [...new Set(activeEmps.map(e => e.site_code_1))].sort();
+    return codes.map(c => ({ code: c, name: getSiteName(c), count: activeEmps.filter(e => e.site_code_1 === c).length }));
+  }, [activeEmps]);
+
+  // 사업장별 근태 집계
+  const siteStats = useMemo(() => {
+    return siteOptions.map(site => {
+      const emps = activeEmps.filter(e => e.site_code_1 === site.code);
+      let totalAtt = 0, totalWorkable = 0, totalLate = 0, totalAbsent = 0, totalExtra = 0, totalExtraAmt = 0;
+      const empDetails = emps.map(emp => {
+        const st = calcPersonalAttStats(emp.id, emp.work_code, dates, getCellStatus, todayStr);
+        const gr = getAttendanceGrade(st.attRate, st.lateRate, st.absent);
+        const pay = calcExpectedPay(emp, st, year, month);
+        const extraAmt = extraAmountMap[emp.id] || 0;
+        totalAtt += st.worked;
+        totalWorkable += st.totalWorkable;
+        totalLate += st.late;
+        totalAbsent += st.absent;
+        totalExtra += st.extra;
+        totalExtraAmt += extraAmt;
+        return { emp, st, gr, pay, extraAmt };
+      }).sort((a, b) => b.st.attRate - a.st.attRate);
+      const avgAttRate = totalWorkable > 0 ? Math.round((totalAtt / totalWorkable) * 100) : 0;
+      return { ...site, emps: empDetails, totalAtt, totalWorkable, totalLate, totalAbsent, totalExtra, totalExtraAmt, avgAttRate };
+    }).sort((a, b) => b.avgAttRate - a.avgAttRate);
+  }, [siteOptions, activeEmps, dates, getCellStatus, todayStr, year, month, extraAmountMap]);
+
+  // 전체 KPI
+  const totalKpi = useMemo(() => {
+    const data = siteFilter === "all" ? siteStats : siteStats.filter(s => s.code === siteFilter);
+    const totalEmps = data.reduce((s, d) => s + d.count, 0);
+    const totalWorkable = data.reduce((s, d) => s + d.totalWorkable, 0);
+    const totalAtt = data.reduce((s, d) => s + d.totalAtt, 0);
+    const avgRate = totalWorkable > 0 ? Math.round((totalAtt / totalWorkable) * 100) : 0;
+    const totalAbsent = data.reduce((s, d) => s + d.totalAbsent, 0);
+    const totalLate = data.reduce((s, d) => s + d.totalLate, 0);
+    const totalExtraAmt = data.reduce((s, d) => s + d.totalExtraAmt, 0);
+    return { totalEmps, avgRate, totalAbsent, totalLate, totalExtraAmt };
+  }, [siteStats, siteFilter]);
+
+  // 선택 사업장 데이터
+  const selectedSite = siteFilter !== "all" ? siteStats.find(s => s.code === siteFilter) : null;
+
+  // 비교 차트 데이터
+  const compareChartData = useMemo(() => {
+    return siteStats.map(s => ({
+      name: s.name.length > 6 ? s.name.slice(0, 6) + ".." : s.name,
+      code: s.code,
+      출근률: s.avgAttRate,
+      인원: s.count,
+      결근: s.totalAbsent,
+      지각: s.totalLate,
+    }));
+  }, [siteStats]);
+
+  // 월별 추이 로드 (최근 N개월)
+  useEffect(() => {
+    if (siteFilter === "all") { setTrendData([]); return; }
+    let cancelled = false;
+    (async () => {
+      setLoadingTrend(true);
+      const months = [];
+      for (let i = trendMonths - 1; i >= 0; i--) {
+        const d = new Date(year, month - 1 - i, 1);
+        months.push({ y: d.getFullYear(), m: d.getMonth() + 1, label: `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}` });
+      }
+      const results = [];
+      for (const mo of months) {
+        try {
+          const startDate = `${mo.y}-${String(mo.m).padStart(2, "0")}-01`;
+          const lastDay = new Date(mo.y, mo.m, 0).getDate();
+          const endDate = `${mo.y}-${String(mo.m).padStart(2, "0")}-${lastDay}`;
+          const { data: reps } = await supabase.from("daily_reports").select("id, report_date, site_code, status").gte("report_date", startDate).lte("report_date", endDate).eq("site_code", siteFilter);
+          const repIds = (reps || []).map(r => r.id);
+          let stRows = [];
+          if (repIds.length > 0) {
+            const chunks = [];
+            for (let ci = 0; ci < repIds.length; ci += 50) chunks.push(repIds.slice(ci, ci + 50));
+            for (const chunk of chunks) {
+              const { data: s } = await supabase.from("daily_report_staff").select("employee_id, report_id, check_in, check_out, staff_type, extra_amount").in("report_id", chunk);
+              if (s) stRows.push(...s);
+            }
+          }
+          const siteEmps = activeEmps.filter(e => e.site_code_1 === siteFilter);
+          const repMap = {};
+          (reps || []).forEach(r => { repMap[r.id] = r; });
+          const stMap = {};
+          stRows.forEach(s => {
+            if (!s.employee_id) return;
+            const rep = repMap[s.report_id];
+            if (!rep) return;
+            stMap[`${s.employee_id}-${rep.report_date}`] = s.staff_type === "extra" ? "추가" : "출근";
+          });
+          let totalWorkable = 0, totalWorked = 0;
+          siteEmps.forEach(emp => {
+            const offDays = getOffDays(emp.work_code);
+            for (let day = 1; day <= lastDay; day++) {
+              const dt = new Date(mo.y, mo.m - 1, day);
+              const dateStr = `${mo.y}-${String(mo.m).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+              if (dateStr > todayStr) continue;
+              const dow = dt.getDay();
+              const isHoliday = HOLIDAYS_2026.has(dateStr);
+              if (isHoliday) continue;
+              if (offDays && offDays.includes(dow)) continue;
+              totalWorkable++;
+              const key = `${emp.id}-${dateStr}`;
+              const st = stMap[key];
+              if (st === "출근" || st === "추가") totalWorked++;
+            }
+          });
+          const attRate = totalWorkable > 0 ? Math.round((totalWorked / totalWorkable) * 100) : 0;
+          results.push({ label: mo.label, 출근률: attRate, 근무: totalWorked, 인원: siteEmps.length });
+        } catch (e) {
+          results.push({ label: mo.label, 출근률: 0, 근무: 0, 인원: 0 });
+        }
+      }
+      // 실지급 payroll
+      try {
+        const { data: pr } = await supabase.from("payroll_records").select("employee_id, net_pay, year, month").in("employee_id", activeEmps.filter(e => e.site_code_1 === siteFilter).map(e => e.id));
+        if (pr) {
+          const prMap = {};
+          pr.forEach(p => {
+            const key = `${p.year}.${String(p.month).padStart(2, "0")}`;
+            prMap[key] = (prMap[key] || 0) + toNum(p.net_pay);
+          });
+          results.forEach(r => { r.실지급 = prMap[r.label] || 0; });
+        }
+      } catch (e) { /* ignore */ }
+      if (!cancelled) { setTrendData(results); setLoadingTrend(false); }
+    })();
+    return () => { cancelled = true; };
+  }, [siteFilter, trendMonths, year, month, activeEmps, todayStr]);
+
+  // Excel Export
+  const exportSiteExcel = async () => {
+    const XLSX = await import("xlsx");
+    const { saveAs } = await import("file-saver");
+    const wb = XLSX.utils.book_new();
+    // Sheet 1: 사업장 요약
+    const rows1 = siteStats.map(s => ({
+      사업장코드: s.code, 사업장명: s.name, 소속인원: s.count, 평균출근률: s.avgAttRate + "%",
+      총결근: s.totalAbsent, 총지각: s.totalLate, 추가근무: s.totalExtra, 추가수당합계: s.totalExtraAmt,
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows1), "사업장요약");
+    // Sheet 2: 직원별 상세
+    const rows2 = [];
+    siteStats.forEach(s => s.emps.forEach(d => {
+      rows2.push({
+        사업장: s.name, 사번: d.emp.emp_no, 이름: d.emp.name, 근무형태: getWorkLabel(d.emp.work_code),
+        출근: d.st.att, 추가: d.st.extra, 지각: d.st.late, 결근: d.st.absent, 연차: d.st.leave,
+        출근률: d.st.attRate + "%", 등급: d.gr.grade, 예상급여: d.pay.expectedPay, 추가수당: d.extraAmt,
+      });
+    }));
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows2), "직원별상세");
+    // Sheet 3: 월별추이 (선택 사업장)
+    if (trendData.length > 0) {
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(trendData), "월별추이");
+    }
+    const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+    saveAs(new Blob([buf]), `사업장근태_${year}년${month}월.xlsx`);
+  };
+
+  const kpiCards = [
+    { icon: "👥", label: "소속인원", value: totalKpi.totalEmps + "명", color: C.navy },
+    { icon: "📊", label: "평균출근률", value: totalKpi.avgRate + "%", color: totalKpi.avgRate >= 90 ? C.success : totalKpi.avgRate >= 70 ? C.orange : C.error },
+    { icon: "❌", label: "총 결근", value: totalKpi.totalAbsent + "건", color: totalKpi.totalAbsent > 0 ? C.error : C.success },
+    { icon: "⏰", label: "총 지각", value: totalKpi.totalLate + "건", color: totalKpi.totalLate > 0 ? C.orange : C.success },
+    { icon: "💰", label: "추가수당합계", value: fmt(totalKpi.totalExtraAmt) + "원", color: C.navy },
+  ];
+
+  return (
+    <div>
+      {/* 필터 바 */}
+      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16, flexWrap: "wrap" }}>
+        <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ padding: "6px 12px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, background: "#fff" }}>
+          <option value="all">🏢 전체 사업장 비교</option>
+          {siteOptions.map(s => <option key={s.code} value={s.code}>{s.code} {s.name} ({s.count}명)</option>)}
+        </select>
+        {siteFilter !== "all" && (
+          <div style={{ display: "flex", gap: 4, background: "#F3F4F6", padding: 3, borderRadius: 8 }}>
+            {[3, 6, 12].map(n => (
+              <button key={n} onClick={() => setTrendMonths(n)} style={{ padding: "4px 10px", borderRadius: 6, border: "none", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, background: trendMonths === n ? C.navy : "transparent", color: trendMonths === n ? "#fff" : C.gray }}>{n}개월</button>
+            ))}
+          </div>
+        )}
+        <div style={{ flex: 1 }} />
+        <button onClick={exportSiteExcel} style={{ padding: "6px 12px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 Excel</button>
+      </div>
+
+      {loading && <div style={{ textAlign: "center", padding: 30, color: C.gray }}>⏳ 로딩 중...</div>}
+
+      {/* KPI 카드 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 10, marginBottom: 16 }}>
+        {kpiCards.map((k, i) => (
+          <div key={i} style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "14px 12px", textAlign: "center", borderLeft: `4px solid ${k.color}` }}>
+            <div style={{ fontSize: 20, marginBottom: 4 }}>{k.icon}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: k.color, fontFamily: FONT }}>{k.value}</div>
+            <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{k.label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 전체 비교 모드 */}
+      {siteFilter === "all" && (<>
+        {/* 사업장 간 비교 차트 */}
+        <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ background: C.navy, padding: "10px 16px", color: "#fff", fontSize: 13, fontWeight: 800 }}>
+            📊 사업장별 출근률 비교 <span style={{ fontWeight: 400, opacity: 0.6, marginLeft: 6 }}>{year}년 {month}월</span>
+          </div>
+          <div style={{ padding: 16 }}>
+            <ResponsiveContainer width="100%" height={Math.max(260, siteStats.length * 36)}>
+              <BarChart data={compareChartData} layout="vertical" margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} />
+                <XAxis type="number" domain={[0, 100]} tickFormatter={v => v + "%"} tick={{ fontSize: 11, fill: C.gray }} />
+                <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 11, fill: C.dark, fontWeight: 700 }} />
+                <Tooltip formatter={(v, name) => [v + "%", name]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                <Bar dataKey="출근률" radius={[0, 6, 6, 0]} barSize={20}>
+                  {compareChartData.map((entry, idx) => (
+                    <Cell key={idx} fill={entry["출근률"] >= 90 ? C.success : entry["출근률"] >= 70 ? C.orange : C.error} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* 사업장별 랭킹 테이블 */}
+        <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
+          <div style={{ background: C.navy, padding: "10px 16px", color: "#fff", fontSize: 13, fontWeight: 800 }}>
+            🏆 사업장 근태 랭킹
+          </div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT }}>
+              <thead>
+                <tr style={{ background: "#F8F9FC" }}>
+                  {["#", "사업장", "인원", "출근률", "출근", "결근", "지각", "추가근무", "추가수당"].map(h => (
+                    <th key={h} style={{ padding: "10px 8px", fontWeight: 800, color: C.gray, borderBottom: `2px solid ${C.navy}`, textAlign: h === "사업장" ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {siteStats.map((s, i) => (
+                  <tr key={s.code} onClick={() => setSiteFilter(s.code)} style={{ cursor: "pointer", borderBottom: "1px solid #F0F2F8", background: i % 2 === 0 ? "#fff" : "#FAFBFD" }}>
+                    <td style={{ padding: "10px 8px", textAlign: "center", fontWeight: 800, color: i < 3 ? C.gold : C.gray }}>{i + 1}</td>
+                    <td style={{ padding: "10px 8px", fontWeight: 700 }}>
+                      <span style={{ color: C.navy }}>{s.code}</span>
+                      <span style={{ marginLeft: 6, color: C.dark }}>{s.name}</span>
+                    </td>
+                    <td style={{ padding: "10px 8px", textAlign: "center" }}>{s.count}명</td>
+                    <td style={{ padding: "10px 8px", textAlign: "center" }}>
+                      <span style={{ fontWeight: 800, color: s.avgAttRate >= 90 ? C.success : s.avgAttRate >= 70 ? C.orange : C.error, background: (s.avgAttRate >= 90 ? C.success : s.avgAttRate >= 70 ? C.orange : C.error) + "15", padding: "3px 10px", borderRadius: 6 }}>{s.avgAttRate}%</span>
+                    </td>
+                    <td style={{ padding: "10px 8px", textAlign: "center", color: C.navy, fontWeight: 700 }}>{s.totalAtt}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "center", color: s.totalAbsent > 0 ? C.error : C.gray, fontWeight: 700 }}>{s.totalAbsent}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "center", color: s.totalLate > 0 ? C.orange : C.gray, fontWeight: 700 }}>{s.totalLate}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "center" }}>{s.totalExtra}</td>
+                    <td style={{ padding: "10px 8px", textAlign: "right", fontWeight: 700, fontFamily: "monospace" }}>{fmt(s.totalExtraAmt)}원</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </>)}
+
+      {/* 개별 사업장 상세 모드 */}
+      {siteFilter !== "all" && selectedSite && (<>
+        {/* 사업장 헤더 */}
+        <div style={{ background: C.navy, borderRadius: "14px 14px 0 0", padding: "12px 16px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ color: "#fff" }}>
+            <span style={{ fontWeight: 900, fontSize: 15 }}>{selectedSite.code} {selectedSite.name}</span>
+            <span style={{ marginLeft: 10, opacity: 0.6, fontSize: 13 }}>{selectedSite.count}명</span>
+          </div>
+          <button onClick={() => setSiteFilter("all")} style={{ padding: "4px 12px", borderRadius: 6, border: "1.5px solid rgba(255,255,255,0.3)", background: "transparent", color: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>← 전체비교</button>
+        </div>
+
+        {/* 직원별 랭킹 테이블 */}
+        <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: "0 0 14px 14px", overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, fontFamily: FONT }}>
+              <thead>
+                <tr style={{ background: "#F8F9FC" }}>
+                  {["#", "사번", "이름", "근무형태", "출근률", "출근", "추가", "지각", "결근", "연차", "등급", "예상급여", "추가수당"].map(h => (
+                    <th key={h} style={{ padding: "10px 6px", fontWeight: 800, color: C.gray, borderBottom: `2px solid ${C.navy}`, textAlign: h === "이름" ? "left" : "center", whiteSpace: "nowrap", fontSize: 11 }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {selectedSite.emps.map((d, i) => (
+                  <tr key={d.emp.id} style={{ borderBottom: "1px solid #F0F2F8", background: i % 2 === 0 ? "#fff" : "#FAFBFD" }}>
+                    <td style={{ padding: "9px 6px", textAlign: "center", fontWeight: 800, color: i < 3 ? C.gold : C.gray }}>{i + 1}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center", fontSize: 11, color: C.gray }}>{d.emp.emp_no}</td>
+                    <td style={{ padding: "9px 6px", fontWeight: 700 }}>{d.emp.name}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center", fontSize: 11 }}>{getWorkLabel(d.emp.work_code)}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center" }}>
+                      <span style={{ fontWeight: 800, color: d.st.attRate >= 90 ? C.success : d.st.attRate >= 70 ? C.orange : C.error }}>{d.st.attRate}%</span>
+                    </td>
+                    <td style={{ padding: "9px 6px", textAlign: "center", color: C.navy, fontWeight: 700 }}>{d.st.att}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center", color: "#7C3AED", fontWeight: 700 }}>{d.st.extra}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center", color: d.st.late > 0 ? C.orange : C.gray }}>{d.st.late}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center", color: d.st.absent > 0 ? C.error : C.gray }}>{d.st.absent}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center" }}>{d.st.leave}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "center" }}>
+                      <span style={{ fontSize: 11, fontWeight: 800, color: d.gr.color, background: d.gr.color + "18", padding: "2px 8px", borderRadius: 6 }}>{d.gr.grade}</span>
+                    </td>
+                    <td style={{ padding: "9px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 700, fontSize: 11 }}>{fmt(d.pay.expectedPay)}</td>
+                    <td style={{ padding: "9px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 700, fontSize: 11, color: d.extraAmt > 0 ? "#7C3AED" : C.gray }}>{d.extraAmt > 0 ? fmt(d.extraAmt) : "-"}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ background: "#F0F4FF", borderTop: `2px solid ${C.navy}` }}>
+                  <td colSpan={4} style={{ padding: "10px 6px", fontWeight: 900, color: C.navy, textAlign: "center" }}>합계 / 평균</td>
+                  <td style={{ padding: "10px 6px", textAlign: "center", fontWeight: 900, color: C.navy }}>{selectedSite.avgAttRate}%</td>
+                  <td style={{ padding: "10px 6px", textAlign: "center", fontWeight: 800 }}>{selectedSite.totalAtt}</td>
+                  <td style={{ padding: "10px 6px", textAlign: "center", fontWeight: 800, color: "#7C3AED" }}>{selectedSite.totalExtra}</td>
+                  <td style={{ padding: "10px 6px", textAlign: "center", fontWeight: 800 }}>{selectedSite.totalLate}</td>
+                  <td style={{ padding: "10px 6px", textAlign: "center", fontWeight: 800, color: selectedSite.totalAbsent > 0 ? C.error : C.gray }}>{selectedSite.totalAbsent}</td>
+                  <td style={{ padding: "10px 6px", textAlign: "center" }}>{selectedSite.emps.reduce((s, d) => s + d.st.leave, 0)}</td>
+                  <td style={{ padding: "10px 6px", textAlign: "center" }}>—</td>
+                  <td style={{ padding: "10px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.navy }}>{fmt(selectedSite.emps.reduce((s, d) => s + d.pay.expectedPay, 0))}</td>
+                  <td style={{ padding: "10px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: "#7C3AED" }}>{fmt(selectedSite.totalExtraAmt)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+
+        {/* 월별 추이 차트 */}
+        <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden", marginBottom: 16 }}>
+          <div style={{ background: C.navy, padding: "10px 16px", color: "#fff", fontSize: 13, fontWeight: 800 }}>
+            📈 월별 출근률 추이 <span style={{ fontWeight: 400, opacity: 0.6, marginLeft: 6 }}>최근 {trendMonths}개월</span>
+          </div>
+          <div style={{ padding: 16 }}>
+            {loadingTrend ? (
+              <div style={{ textAlign: "center", padding: 40, color: C.gray }}>⏳ 추이 데이터 로딩 중...</div>
+            ) : trendData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={240}>
+                <LineChart data={trendData} margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: C.gray }} />
+                  <YAxis domain={[0, 100]} tickFormatter={v => v + "%"} tick={{ fontSize: 11, fill: C.gray }} />
+                  <Tooltip formatter={(v, name) => [name === "출근률" ? v + "%" : fmt(v), name]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                  <Line type="monotone" dataKey="출근률" stroke={C.navy} strokeWidth={2.5} dot={{ fill: C.navy, r: 4 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ textAlign: "center", padding: 40, color: C.gray, fontSize: 13 }}>데이터 없음</div>
+            )}
+          </div>
+        </div>
+
+        {/* 실지급 비교 (payroll_records 있는 달만) */}
+        {trendData.some(d => d.실지급 > 0) && (
+          <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
+            <div style={{ background: C.navy, padding: "10px 16px", color: "#fff", fontSize: 13, fontWeight: 800 }}>
+              💰 월별 인건비 추이 (실지급 기준)
+            </div>
+            <div style={{ padding: 16 }}>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={trendData.filter(d => d.실지급 > 0)} margin={{ left: 10, right: 20, top: 5, bottom: 5 }}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: C.gray }} />
+                  <YAxis tickFormatter={v => pFmt(v)} tick={{ fontSize: 11, fill: C.gray }} />
+                  <Tooltip formatter={(v) => [fmt(v) + "원"]} contentStyle={{ fontSize: 12, borderRadius: 8 }} />
+                  <Bar dataKey="실지급" fill={C.gold} radius={[4, 4, 0, 0]} barSize={32} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
+      </>)}
+
+      {siteStats.length === 0 && !loading && (
+        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>
+          <div style={{ fontSize: 40, marginBottom: 8 }}>📭</div>
+          <div style={{ fontSize: 14 }}>현장 직원 데이터가 없습니다</div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AttendancePage({ employees }) {
   const today = new Date();
   const todayStr = today.toISOString().slice(0, 10);
@@ -13296,13 +13692,21 @@ function AttendancePage({ employees }) {
         />
       )}
 
-      {/* ── 사업장분석 탭 (v9.3 P2 예정) ── */}
+      {/* ── 사업장분석 탭 (v9.3 P2) ── */}
       {attTab === "site" && (
-        <div style={{ textAlign: "center", padding: 60, color: C.gray }}>
-          <div style={{ fontSize: 48, marginBottom: 12 }}>🏢</div>
-          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark, marginBottom: 6 }}>사업장 분석</div>
-          <div style={{ fontSize: 13 }}>v9.3 Phase 2에서 구현 예정입니다</div>
-        </div>
+        <SiteAnalyticsTab
+          employees={employees}
+          year={year} month={month}
+          dates={dates}
+          getCellStatus={getCellStatus}
+          todayStr={new Date().toISOString().slice(0, 10)}
+          staffRows={staffRows}
+          reports={reports}
+          extraAmountMap={extraAmountMap}
+          moveMonth={moveMonth}
+          goToday={goToday}
+          loading={loading}
+        />
       )}
 
       {/* ── 이상감지 탭 (v9.3 P3 예정) ── */}
