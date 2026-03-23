@@ -5985,7 +5985,7 @@ function SiteExtraConfigTab({ siteCode }) {
   const [types, setTypes] = useState([]);
   const [saving, setSaving] = useState(false);
   const [editId, setEditId] = useState(null); // 편집 중인 유형 ID
-  const [form, setForm] = useState({ type_name: "", pay_kind: "fixed", fixed_min: 30, fixed_amount: 0, hourly_rate: 0, meal_trigger: null, meal_amount: null });
+  const [form, setForm] = useState({ type_name: "", pay_kind: "fixed", fixed_min: 30, fixed_amount: 0, hourly_rate: 0, meal_trigger: null, meal_amount: null, group_name: null, includes_meal: false, min_participants: null, meal_per_person: null });
   const [showAdd, setShowAdd] = useState(false);
 
   const load = async () => {
@@ -6002,7 +6002,7 @@ function SiteExtraConfigTab({ siteCode }) {
     await supabase.from("site_extra_config").upsert({ site_code: siteCode, is_enabled: val, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
   };
 
-  const resetForm = () => setForm({ type_name: "", pay_kind: "fixed", fixed_min: 30, fixed_amount: 0, hourly_rate: 0, meal_trigger: null, meal_amount: null });
+  const resetForm = () => setForm({ type_name: "", pay_kind: "fixed", fixed_min: 30, fixed_amount: 0, hourly_rate: 0, meal_trigger: null, meal_amount: null, group_name: null, includes_meal: false, min_participants: null, meal_per_person: null });
 
   const handleAddType = async () => {
     if (!form.type_name.trim()) { alert("유형명을 입력하세요"); return; }
@@ -6017,6 +6017,10 @@ function SiteExtraConfigTab({ siteCode }) {
       hourly_rate: form.pay_kind === "hourly" ? Number(form.hourly_rate) : null,
       meal_trigger: form.meal_trigger ? Number(form.meal_trigger) : null,
       meal_amount: form.meal_trigger ? Number(form.meal_amount) : null,
+      group_name: form.group_name || null,
+      includes_meal: form.includes_meal ?? false,
+      min_participants: form.min_participants ? Number(form.min_participants) : null,
+      meal_per_person: form.includes_meal ? Number(form.meal_per_person || 0) : null,
       updated_at: new Date().toISOString(),
     };
     if (editId) {
@@ -6040,6 +6044,8 @@ function SiteExtraConfigTab({ siteCode }) {
       fixed_min: t.fixed_min ?? 30, fixed_amount: t.fixed_amount ?? 0,
       hourly_rate: t.hourly_rate ?? 0,
       meal_trigger: t.meal_trigger ?? null, meal_amount: t.meal_amount ?? null,
+      group_name: t.group_name ?? null, includes_meal: t.includes_meal ?? false,
+      min_participants: t.min_participants ?? null, meal_per_person: t.meal_per_person ?? null,
     });
     setShowAdd(true);
   };
@@ -6053,6 +6059,12 @@ function SiteExtraConfigTab({ siteCode }) {
     await Promise.all(newTypes.map((t, i) => supabase.from("site_extra_types").update({ sort_order: i }).eq("id", t.id)));
   };
 
+  const GROUP_OPTIONS = [
+    { key: "키전달", label: "🔑 키전달", color: "#0EA5E9", bg: "#E0F2FE" },
+    { key: "연장근무", label: "⏰ 연장근무", color: "#8B5CF6", bg: "#EDE9FE" },
+    { key: "연장근무(행사)", label: "🎪 연장근무(행사)", color: "#D97706", bg: "#FEF3C7" },
+    { key: "", label: "기타", color: C.gray, bg: C.lightGray },
+  ];
   const PAY_KIND_LABEL = { fixed: "정액", hourly: "시급제" };
   const PAY_KIND_COLOR = { fixed: { bg: "#DBEAFE", text: "#1D4ED8" }, hourly: { bg: "#EDE9FE", text: "#6D28D9" } };
 
@@ -6079,17 +6091,22 @@ function SiteExtraConfigTab({ siteCode }) {
           {types.length === 0 && (
             <div style={{ fontSize: 13, color: C.gray, textAlign: "center", padding: "16px 0", background: C.lightGray, borderRadius: 10, marginBottom: 10 }}>유형을 추가하세요</div>
           )}
-          {types.map((t, idx) => (
+          {types.map((t, idx) => {
+            const grp = GROUP_OPTIONS.find(g => g.key === (t.group_name || ""));
+            return (
             <div key={t.id} style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 12, padding: "12px 14px", marginBottom: 8 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ width: 24, height: 24, background: C.navy, color: "#fff", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{idx + 1}</div>
+                <div style={{ width: 24, height: 24, background: grp ? grp.color : C.navy, color: "#fff", borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, flexShrink: 0 }}>{idx + 1}</div>
                 <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: C.dark }}>{t.type_name}</div>
+                {grp && grp.key && <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, fontWeight: 700, background: grp.bg, color: grp.color }}>{grp.label}</span>}
                 <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 10, fontWeight: 700, background: PAY_KIND_COLOR[t.pay_kind].bg, color: PAY_KIND_COLOR[t.pay_kind].text }}>{PAY_KIND_LABEL[t.pay_kind]}</span>
               </div>
               <div style={{ display: "flex", gap: 12, marginTop: 6, marginLeft: 32, fontSize: 11, color: C.gray, flexWrap: "wrap" }}>
                 {t.pay_kind === "fixed" && <span>⏱ {t.fixed_min}분 고정 &nbsp;💰 {fmt(t.fixed_amount)}원</span>}
                 {t.pay_kind === "hourly" && <span>⏱ 30분 단위 &nbsp;💰 {fmt(t.hourly_rate)}원/h</span>}
                 {t.meal_trigger && <span style={{ color: "#D97706", fontWeight: 700 }}>🍱 {t.meal_trigger}분 초과 시 +{fmt(t.meal_amount)}원</span>}
+                {t.includes_meal && <span style={{ color: "#D97706", fontWeight: 700 }}>🍱 식대 {fmt(t.meal_per_person)}원/인</span>}
+                {t.min_participants && <span style={{ color: "#8B5CF6", fontWeight: 700 }}>👥 {t.min_participants}명 이상 시 행사</span>}
               </div>
               <div style={{ display: "flex", gap: 6, marginTop: 8, justifyContent: "flex-end" }}>
                 <button onClick={() => moveType(idx, -1)} disabled={idx === 0} style={{ padding: "4px 8px", fontSize: 11, border: `1px solid ${C.border}`, borderRadius: 6, background: "#fff", cursor: idx === 0 ? "default" : "pointer", color: idx === 0 ? "#ccc" : C.gray, fontFamily: FONT }}>▲</button>
@@ -6098,7 +6115,7 @@ function SiteExtraConfigTab({ siteCode }) {
                 <button onClick={() => handleDelete(t.id)} style={{ padding: "4px 10px", fontSize: 11, border: `1px solid ${C.error}`, borderRadius: 6, background: "#fff", color: C.error, cursor: "pointer", fontWeight: 700, fontFamily: FONT }}>삭제</button>
               </div>
             </div>
-          ))}
+          )})}
 
           {/* 유형 추가/수정 폼 */}
           {showAdd ? (
@@ -6108,6 +6125,48 @@ function SiteExtraConfigTab({ siteCode }) {
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>유형명</label>
                 <input value={form.type_name} onChange={e => setForm(p => ({ ...p, type_name: e.target.value }))} placeholder="예: 키전달, 연장근무 (1시간)" style={{ width: "100%", padding: "9px 12px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 13, fontWeight: 600, outline: "none", fontFamily: FONT }} />
               </div>
+              {/* 그룹 분류 */}
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>그룹 분류</label>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {GROUP_OPTIONS.map(g => (
+                    <button key={g.key} onClick={() => setForm(p => ({ ...p, group_name: g.key || null }))} style={{
+                      padding: "7px 12px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+                      background: (form.group_name || "") === g.key ? g.color : "#fff",
+                      color: (form.group_name || "") === g.key ? "#fff" : g.color,
+                      border: `1.5px solid ${(form.group_name || "") === g.key ? g.color : C.border}`,
+                    }}>{g.label}</button>
+                  ))}
+                </div>
+              </div>
+              {/* 행사 설정 (연장근무(행사) 선택 시) */}
+              {form.group_name === "연장근무(행사)" && (
+                <div style={{ background: "#FEF3C7", border: "1.5px solid #F59E0B", borderRadius: 10, padding: 12, marginBottom: 10 }}>
+                  <div style={{ fontSize: 11, fontWeight: 800, color: "#D97706", marginBottom: 10 }}>🎪 행사 자동감지 설정</div>
+                  <div style={{ marginBottom: 8 }}>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>최소 적용 인원 (N명 이상 시 행사로 감지)</label>
+                    <select value={form.min_participants ?? ""} onChange={e => setForm(p => ({ ...p, min_participants: e.target.value === "" ? null : Number(e.target.value) }))} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: FONT, background: "#fff", outline: "none" }}>
+                      <option value="">미설정</option>
+                      {[2, 3, 4, 5].map(n => <option key={n} value={n}>{n}명 이상</option>)}
+                    </select>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: form.includes_meal ? 8 : 0 }}>
+                    <button onClick={() => setForm(p => ({ ...p, includes_meal: !p.includes_meal }))} style={{
+                      width: 44, height: 24, borderRadius: 12, border: "none", cursor: "pointer",
+                      background: form.includes_meal ? "#D97706" : "#ccc", position: "relative", transition: "background 0.2s", flexShrink: 0,
+                    }}>
+                      <div style={{ width: 18, height: 18, background: "#fff", borderRadius: 9, position: "absolute", top: 3, left: form.includes_meal ? 23 : 3, transition: "left 0.2s", boxShadow: "0 1px 3px rgba(0,0,0,0.2)" }} />
+                    </button>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: form.includes_meal ? "#D97706" : C.gray }}>🍱 식대 포함</span>
+                  </div>
+                  {form.includes_meal && (
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>1인당 식대 (원)</label>
+                      <NumInput value={form.meal_per_person ?? 0} onChange={v => setForm(p => ({ ...p, meal_per_person: v }))} style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontFamily: FONT, textAlign: "right" }} />
+                    </div>
+                  )}
+                </div>
+              )}
               <div style={{ marginBottom: 10 }}>
                 <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>수당 방식</label>
                 <div style={{ display: "flex", gap: 8 }}>
