@@ -10532,6 +10532,7 @@ function BugReportDashboard() {
   const [memo, setMemo] = useState("");
   const [saving, setSaving] = useState(false);
   const [aiAnalyzing, setAiAnalyzing] = useState(false);
+  const [previewImg, setPreviewImg] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -10784,9 +10785,9 @@ function BugReportDashboard() {
                   <div style={{ fontSize: 11, fontWeight: 700, color: "#666", marginBottom: 6 }}>스크린샷 ({selected.screenshots.length}장)</div>
                   <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                     {selected.screenshots.map((s, i) => (
-                      <a key={i} href={s} target="_blank" rel="noopener noreferrer">
+                      <div key={i} onClick={() => setPreviewImg(s)} style={{ cursor: "pointer" }}>
                         <img src={s} alt={`스크린샷${i+1}`} style={{ width: 90, height: 70, objectFit: "cover", borderRadius: 8, border: "1px solid #DDD", cursor: "pointer" }} />
-                      </a>
+                      </div>
                     ))}
                   </div>
                 </div>
@@ -10823,6 +10824,19 @@ function BugReportDashboard() {
           </div>
         )}
       </div>
+
+      {/* 스크린샷 프리뷰 오버레이 */}
+      {previewImg && (
+        <div onClick={() => setPreviewImg(null)} style={{
+          position: "fixed", top: 0, left: 0, right: 0, bottom: 0, zIndex: 9999,
+          background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", cursor: "zoom-out",
+        }}>
+          <div style={{ position: "absolute", top: 16, right: 20, color: "#fff", fontSize: 28, cursor: "pointer", fontWeight: 700, lineHeight: 1 }} onClick={() => setPreviewImg(null)}>✕</div>
+          <img src={previewImg} alt="스크린샷 미리보기" onClick={e => e.stopPropagation()} style={{
+            maxWidth: "90vw", maxHeight: "90vh", objectFit: "contain", borderRadius: 12, cursor: "default",
+          }} />
+        </div>
+      )}
     </div>
   );
 }
