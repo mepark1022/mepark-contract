@@ -1790,7 +1790,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   const isAdmin = myProfile?.role === "admin";
 
   const blankEmp = {
-    emp_no: "", name: "", position: "일반", site_code_1: "", work_code: "C",
+    emp_no: "", name: "", position: "일반", site_code_1: "", site_code_2: "", work_code: "C",
     hire_date: today(), status: "재직", base_salary: 0, weekend_daily: 0,
     meal_allow: 200000, leader_allow: 0, childcare_allow: 0, car_allow: 0,
     tax_type: "3.3%", employment_type: "정규직", phone: "", probation_months: 4,
@@ -2240,7 +2240,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${C.border}` }}>
           <thead>
             <tr style={{ background: C.navy }}>
-              {["사번", "이름", "직위", "사업장", "근무형태", "기본급", "일당", "연락처", "계정", "상태", "액션"].map(h => (
+              {["사번", "이름", "직위", "사업장", "사업장2", "근무형태", "기본급", "일당", "연락처", "계정", "상태", "액션"].map(h => (
                 <th key={h} style={{ padding: "10px 8px", color: C.white, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -2255,6 +2255,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                 </td>
                 <td style={{ padding: "8px", textAlign: "center", color: C.gray }}>{e.position}</td>
                 <td style={{ padding: "8px", fontSize: 11 }}>{getSiteName(e.site_code_1)}</td>
+                <td style={{ padding: "8px", fontSize: 11, color: e.site_code_2 ? C.dark : "#ccc" }}>{e.site_code_2 ? getSiteName(e.site_code_2) : "−"}</td>
                 <td style={{ padding: "8px", textAlign: "center" }}>
                   <span style={{
                     padding: "2px 8px", borderRadius: 6, fontSize: 11, fontWeight: 700,
@@ -2330,7 +2331,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
             <div style={{ background: C.navy, padding: "16px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", flexShrink: 0 }}>
               <div>
                 <div style={{ color: C.white, fontSize: 16, fontWeight: 900 }}>{se.name} <span style={{ fontSize: 12, fontWeight: 500, color: C.gold }}>{se.emp_no}</span></div>
-                <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 2 }}>{getSiteName(se.site_code_1)} · {getWorkLabel(se.work_code)} · <span style={{ color: se.status === "재직" ? "#81C784" : "#EF9A9A" }}>{se.status}</span></div>
+                <div style={{ color: "rgba(255,255,255,0.6)", fontSize: 11, marginTop: 2 }}>{getSiteName(se.site_code_1)}{se.site_code_2 ? ` + ${getSiteName(se.site_code_2)}` : ""} · {getWorkLabel(se.work_code)} · <span style={{ color: se.status === "재직" ? "#81C784" : "#EF9A9A" }}>{se.status}</span></div>
               </div>
               <button onClick={() => setSelectedEmp(null)} style={{ background: "rgba(255,255,255,0.15)", border: "none", color: "#fff", fontSize: 16, fontWeight: 700, width: 32, height: 32, borderRadius: 8, cursor: "pointer" }}>✕</button>
             </div>
@@ -2360,6 +2361,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                     {infoRow("직위", se.position)}
                     {infoRow("연락처", se.phone)}
                     {infoRow("사업장", `${se.site_code_1} ${getSiteName(se.site_code_1)}`)}
+                    {se.site_code_2 && infoRow("사업장2", `${se.site_code_2} ${getSiteName(se.site_code_2)}`)}
                     {infoRow("근무형태", `${se.work_code} — ${getWorkLabel(se.work_code)}`)}
                     {infoRow("입사일", se.hire_date || "—")}
                     {infoRow("근무조건", se.employment_type)}
@@ -2642,6 +2644,16 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                       <option value="">선택</option>
                       {SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
                     </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>사업장2 <span style={{ fontSize: 10, color: "#aaa", fontWeight: 400 }}>(복합근무)</span></label>
+                    <select value={editEmp.site_code_2 || ""} onChange={e => setEditEmp(p => ({ ...p, site_code_2: e.target.value || null }))} style={inputStyle}>
+                      <option value="">없음</option>
+                      {SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
+                    </select>
+                    {["AE","CF","CG","CPF","FPG"].includes(editEmp.work_code) && !editEmp.site_code_2 && (
+                      <div style={{ fontSize: 10, color: C.orange, marginTop: 4, fontWeight: 700 }}>⚠️ 복합근무자는 사업장2 지정을 권장합니다.</div>
+                    )}
                   </div>
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>근무형태</label>
