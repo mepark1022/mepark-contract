@@ -10203,9 +10203,13 @@ async function aiAnalyzeBug(title, description, pageName) {
       },
       body: JSON.stringify({ action: "analyze", title, description, page_name: pageName })
     });
-    if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.error || `HTTP ${res.status}`); }
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      const msg = err.error || `HTTP ${res.status}`;
+      return { _error: msg };
+    }
     return await res.json();
-  } catch { return null; }
+  } catch (e) { return { _error: e.message || "네트워크 오류" }; }
 }
 async function aiClassifyBug(title, description) {
   try {
@@ -10285,6 +10289,7 @@ function BugReportFAB({ currentPage, reporterName, reporterEmpNo, reporterRole }
       let analysis = null;
       try {
         analysis = await aiAnalyzeBug(form.title.trim(), form.description.trim(), pageLabel);
+        if (analysis?._error) analysis = null; // 에러면 무시하고 제출 진행
       } catch { /* AI 실패해도 제출은 진행 */ }
 
       const finalCategory = form.category || analysis?.category || "suggestion";
@@ -10572,7 +10577,16 @@ function BugReportDashboard() {
     setAiAnalyzing(true);
     try {
       const analysis = await aiAnalyzeBug(selected.title, selected.description, selected.page_label || selected.page);
-      if (analysis) {
+      if (analysis?._error) {
+        const msg = analysis._error;
+        if (msg.includes("404") || msg.includes("FunctionNotFound") || msg.includes("Failed to fetch")) {
+          alert("AI 분석 Edge Function이 배포되지 않았습니다.\nSupabase Dashboard → Edge Functions에서 'ai-analyze'를 배포해주세요.");
+        } else if (msg.includes("ANTHROPIC_API_KEY")) {
+          alert("ANTHROPIC_API_KEY가 설정되지 않았습니다.\nSupabase Dashboard → Edge Functions → Secrets에서 설정해주세요.");
+        } else {
+          alert("AI 분석 실패: " + msg);
+        }
+      } else if (analysis && !analysis._error) {
         const aiData = {
           cause: analysis.cause || null,
           fix_direction: analysis.fix_direction || null,
