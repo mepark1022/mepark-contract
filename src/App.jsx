@@ -10190,18 +10190,18 @@ async function fileToBase64(file) {
   });
 }
 
-// AI 분석 — Supabase Edge Function 프록시 (API 키 보안 유지)
+// AI 분석 — admin-api Edge Function 통합 (API 키 보안 유지)
 async function aiAnalyzeBug(title, description, pageName) {
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    const res = await fetch(`${supabaseUrl}/functions/v1/ai-analyze`, {
+    const res = await fetch(`${supabaseUrl}/functions/v1/admin-api`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${session?.access_token || ""}`,
         "apikey": supabaseAnonKey,
       },
-      body: JSON.stringify({ action: "analyze", title, description, page_name: pageName })
+      body: JSON.stringify({ action: "ai_analyze", title, description, page_name: pageName })
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
@@ -10214,14 +10214,14 @@ async function aiAnalyzeBug(title, description, pageName) {
 async function aiClassifyBug(title, description) {
   try {
     const { data: { session } } = await supabase.auth.getSession();
-    const res = await fetch(`${supabaseUrl}/functions/v1/ai-analyze`, {
+    const res = await fetch(`${supabaseUrl}/functions/v1/admin-api`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Authorization": `Bearer ${session?.access_token || ""}`,
         "apikey": supabaseAnonKey,
       },
-      body: JSON.stringify({ action: "classify", title, description })
+      body: JSON.stringify({ action: "ai_classify", title, description })
     });
     if (!res.ok) return null;
     return await res.json();

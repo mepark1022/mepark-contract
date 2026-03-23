@@ -1,12 +1,8 @@
 // ============================================================
-// 미팍ERP — admin-api Edge Function v8 (비밀번호 기반 로그인)
+// 미팍ERP — admin-api Edge Function v9 (AI 분석 통합)
 // ============================================================
-// v8 변경사항:
-// - phone_login: 전화번호+비밀번호 수신 (비번 강제리셋 제거)
-// - field_login: 사번+비밀번호 수신 (PIN 제거)
-// - change_password: 신규 액션 (비밀번호 변경)
-// - 초기 비밀번호: 전화번호 뒤4자리 + "12" (예: 567812)
-// - 마이그레이션: 초기비번 입력 시 기존 비번 자동 리셋
+// v9 변경: ai_classify / ai_analyze 액션 추가 (Anthropic API 프록시)
+// v8: phone_login, field_login, change_password (비밀번호 기반)
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -339,6 +335,54 @@ Deno.serve(async (req) => {
       if (updateErr) return jsonRes({ error: "비밀번호 변경 실패: " + updateErr.message }, 500);
 
       return jsonRes({ success: true, message: "비밀번호가 변경되었습니다." });
+    }
+
+    // ────────────────────────────────────────────────────────
+    // ACTION: ai_classify — 오류보고 간이 분류
+    // ACTION: ai_analyze — 오류보고 상세 분석
+    // ────────────────────────────────────────────────────────
+    if (action === "ai_classify" || action === "ai_analyze") {
+      const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY");
+      if (!ANTHROPIC_API_KEY) {
+        return jsonRes({ error: "ANTHROPIC_API_KEY가 설정되지 않았습니다. Supabase Secrets에서 설정해주세요." }, 500);
+      }
+
+      const { title, description, page_name } = body;
+      if (!title || !description) return jsonRes({ error: "title과 description이 필요합니다." }, 400);
+
+      const ERP_CONTEXT = `미팍ERP 시스템: React+Vite 단일파일(App.jsx ~14,000줄), Supabase 백엔드. 화면: 메인대시보드, HR대시보드, 직원현황, 계약서, 계약이력, 조항변경, 전체요약, 사업장PL, 비용입력, 급여대장(3탭), 월주차관리, 비교분석, 배부설정, 데이터Import, 사업장관리, 현장일보, 마감보고현황, 근태현황, 전체캘린더, 인건비견적, 오류보고. DB: profiles,employees,contracts,financial_transactions,monthly_summary,site_revenue,site_overhead,site_details,site_parking,monthly_parking,payroll_records,payslips,daily_reports,daily_report_staff,daily_report_payment,daily_report_extra,attendance_records,bug_reports. Edge Function: admin-api. 현장앱(mepark-field): 별도레포, 전화번호+비밀번호 로그인, 일보제출/급여내역서조회.`;
+
+      const isClassify = action === "ai_classify";
+      const prompt = isClassify
+        ? `다음 오류 보고를 분석해서 JSON으로만 응답하세요 (다른 텍스트 없이):\n제목: ${title}\n내용: ${description}\n\n응답 형식:\n{"category": "ui|feature|data|performance|suggestion", "priority": "low|medium|high|critical", "summary": "한줄 요약(30자 이내)"}`
+        : `${ERP_CONTEXT}\n\n다음 오류 보고를 분석해서 JSON으로만 응답하세요 (마크다운이나 다른 텍스트 없이 순수 JSON만):\n발생화면: ${page_name || "알 수 없음"}\n제목: ${title}\n내용: ${description}\n\n응답 형식:\n{\n  "category": "ui|feature|data|performance|suggestion",\n  "priority": "low|medium|high|critical",\n  "summary": "한줄 요약(30자 이내)",\n  "cause": "추정 원인 (2~3문장, 시스템 구조 기반 분석)",\n  "fix_direction": "수정 방향 (구체적 해결 방법 2~3문장)",\n  "related_components": ["관련 컴포넌트나 화면 이름 배열 (최대 3개)"]\n}`;
+
+      try {
+        const res = await fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify({
+            model: "claude-sonnet-4-20250514",
+            max_tokens: isClassify ? 200 : 600,
+            messages: [{ role: "user", content: prompt }],
+          }),
+        });
+
+        const data = await res.json();
+        const text = data.content?.[0]?.text || "";
+        try {
+          const parsed = JSON.parse(text.replace(/```json|```/g, "").trim());
+          return jsonRes(parsed);
+        } catch {
+          return jsonRes({ error: "AI 응답 파싱 실패", raw: text }, 500);
+        }
+      } catch (e: any) {
+        return jsonRes({ error: "Anthropic API 호출 실패: " + e.message }, 500);
+      }
     }
 
     // ── 아래부터 super_admin 인증 필요 ──────────────────────
