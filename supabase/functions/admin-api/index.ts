@@ -1,5 +1,12 @@
 // ============================================================
-// 미팍ERP — admin-api Edge Function v7 (site_code_2 지원)
+// 미팍ERP — admin-api Edge Function v8 (비밀번호 기반 로그인)
+// ============================================================
+// v8 변경사항:
+// - phone_login: 전화번호+비밀번호 수신 (비번 강제리셋 제거)
+// - field_login: 사번+비밀번호 수신 (PIN 제거)
+// - change_password: 신규 액션 (비밀번호 변경)
+// - 초기 비밀번호: 전화번호 뒤4자리 + "12" (예: 567812)
+// - 마이그레이션: 초기비번 입력 시 기존 비번 자동 리셋
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -9,6 +16,26 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
+
+function jsonRes(body: any, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status, headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
+function makeInitialPassword(phone: string): string {
+  const digits = (phone || "").replace(/\D/g, "");
+  const last4 = digits.length >= 4 ? digits.slice(-4) : "0000";
+  return last4 + "12";
+}
+
+function makeAdminClient() {
+  return createClient(
+    Deno.env.get("SUPABASE_URL") ?? "",
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
+    { auth: { autoRefreshToken: false, persistSession: false } }
+  );
+}
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -20,79 +47,54 @@ Deno.serve(async (req) => {
     const { action } = body;
 
     // ────────────────────────────────────────────────────────
-    // ACTION: phone_login — 전화번호 1단계 로그인 (v9.2)
-    // 클라이언트는 전화번호만 전송 → 서버에서 사번 조회 + 인증 일괄 처리
-    // PIN/비밀번호가 클라이언트에 노출되지 않음
+    // ACTION: phone_login — 전화번호 + 비밀번호 로그인 (v8)
     // ────────────────────────────────────────────────────────
     if (action === "phone_login") {
-      const { phone } = body;
-      if (!phone) {
-        return new Response(JSON.stringify({ error: "전화번호가 필요합니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      const { phone, password: userPassword } = body;
+      if (!phone) return jsonRes({ error: "전화번호가 필요합니다." }, 400);
 
       const digits = (phone || "").replace(/\D/g, "");
-      if (digits.length !== 11) {
-        return new Response(JSON.stringify({ error: "전화번호 11자리를 입력해주세요." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (digits.length !== 11) return jsonRes({ error: "전화번호 11자리를 입력해주세요." }, 400);
+      if (!userPassword) return jsonRes({ error: "비밀번호를 입력해주세요." }, 400);
 
-      const adminClient = createClient(
-        Deno.env.get("SUPABASE_URL") ?? "",
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-        { auth: { autoRefreshToken: false, persistSession: false } }
-      );
+      const adminClient = makeAdminClient();
 
-      // 1. employees에서 전화번호로 조회
-      const { data: empList, error: empErr } = await adminClient
+      // 1. employees에서 전화번호로 조회 (숫자 / 하이픈 양쪽 시도)
+      let emp: any = null;
+      const { data: empList } = await adminClient
         .from("employees")
         .select("id, name, emp_no, site_code_1, site_code_2, work_code, phone, auth_id, system_role, account_email, account_status, status")
         .eq("phone", digits)
         .limit(1);
 
-      if (empErr || !empList || empList.length === 0) {
-        // 하이픈 포함 형식도 시도 (010-1234-5678)
+      if (empList && empList.length > 0) {
+        emp = empList[0];
+      } else {
         const formatted = digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
-        const { data: empList2, error: empErr2 } = await adminClient
+        const { data: empList2 } = await adminClient
           .from("employees")
           .select("id, name, emp_no, site_code_1, site_code_2, work_code, phone, auth_id, system_role, account_email, account_status, status")
           .eq("phone", formatted)
           .limit(1);
-
-        if (empErr2 || !empList2 || empList2.length === 0) {
-          return new Response(JSON.stringify({ error: "등록되지 않은 전화번호입니다." }), {
-            status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
-        }
-        var emp = empList2[0];
-      } else {
-        var emp = empList[0];
+        if (empList2 && empList2.length > 0) emp = empList2[0];
       }
+
+      if (!emp) return jsonRes({ error: "등록되지 않은 전화번호입니다." }, 401);
 
       // 2. 퇴사자 차단
-      if (emp.status === "퇴사") {
-        return new Response(JSON.stringify({ error: "퇴사 처리된 직원입니다. 관리자에게 문의하세요." }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (emp.status === "퇴사") return jsonRes({ error: "퇴사 처리된 직원입니다. 관리자에게 문의하세요." }, 401);
 
-      // 3. PIN 생성 (전화번호 뒤 4자리)
-      const phoneDigits = (emp.phone || "").replace(/\D/g, "");
-      const pin4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : digits.slice(-4);
-      const password = `mp${pin4}`;
-
-      // 4. 역할에 따라 이메일 형식 분기
+      // 3. 이메일/역할 결정
       const role = emp.system_role || "field_member";
       const isERP = ["crew", "admin", "super_admin"].includes(role);
       const email = isERP
         ? `${emp.emp_no.toLowerCase()}@mepark.internal`
         : `${emp.emp_no.toLowerCase()}@field.mepark.internal`;
 
+      const initialPw = makeInitialPassword(emp.phone);
       let authId = emp.auth_id;
 
-      // 5. auth_id 없으면 이메일로 탐색
+      // 4. auth_id 없으면 이메일로 탐색
       if (!authId) {
         const { data: userList } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
         const existing = userList?.users?.find((u: any) => u.email === email);
@@ -102,24 +104,17 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 6. field_member 신규 계정 자동 생성
-      if (!authId && !isERP) {
+      // 5. 계정 없으면 자동 생성 (초기 비밀번호)
+      if (!authId) {
         const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
           email,
-          password,
+          password: initialPw,
           email_confirm: true,
-          user_metadata: {
-            emp_no: emp.emp_no,
-            name: emp.name,
-            role,
-            site_code: emp.site_code_1,
-          },
+          user_metadata: { emp_no: emp.emp_no, name: emp.name, role, site_code: emp.site_code_1 },
         });
 
         if (createErr && !createErr.message.includes("already been registered")) {
-          return new Response(JSON.stringify({ error: "계정 생성 실패: " + createErr.message }), {
-            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          return jsonRes({ error: "계정 생성 실패: " + createErr.message }, 500);
         }
 
         if (createErr) {
@@ -135,190 +130,221 @@ Deno.serve(async (req) => {
       }
 
       if (!authId) {
-        return new Response(JSON.stringify({
+        return jsonRes({
           error: isERP
             ? "ERP 계정이 없습니다. 관리자에게 계정 생성을 요청하세요."
             : "Auth 계정을 찾을 수 없습니다.",
-        }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }, 500);
       }
 
-      // 7. 비밀번호 최신화 → 로그인
-      await adminClient.auth.admin.updateUserById(authId, { password });
-
+      // 6. 로그인 시도
       const { data: signInData, error: signInErr } = await adminClient.auth.signInWithPassword({
-        email,
-        password,
+        email, password: userPassword,
       });
-      if (signInErr || !signInData?.session) {
-        return new Response(JSON.stringify({ error: "세션 생성 실패: " + (signInErr?.message || "unknown") }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+
+      if (!signInErr && signInData?.session) {
+        return jsonRes({
+          access_token: signInData.session.access_token,
+          refresh_token: signInData.session.refresh_token,
+          employee: {
+            id: emp.id, name: emp.name, emp_no: emp.emp_no, emp_id: emp.emp_no,
+            site_code: emp.site_code_1, site_code_2: emp.site_code_2 || null,
+            work_type: emp.work_code, role,
+          },
         });
       }
 
-      return new Response(JSON.stringify({
-        access_token: signInData.session.access_token,
-        refresh_token: signInData.session.refresh_token,
-        employee: {
-          id: emp.id,
-          name: emp.name,
-          emp_no: emp.emp_no,
-          emp_id: emp.emp_no,
-          site_code: emp.site_code_1,
-          site_code_2: emp.site_code_2 || null,
-          work_type: emp.work_code,
-          role,
-        },
-      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // 7. 로그인 실패 — 마이그레이션: 초기비번 입력 시 기존 비번 리셋
+      if (userPassword === initialPw) {
+        await adminClient.auth.admin.updateUserById(authId, { password: initialPw });
+        const { data: retryData, error: retryErr } = await adminClient.auth.signInWithPassword({
+          email, password: initialPw,
+        });
+        if (!retryErr && retryData?.session) {
+          return jsonRes({
+            access_token: retryData.session.access_token,
+            refresh_token: retryData.session.refresh_token,
+            employee: {
+              id: emp.id, name: emp.name, emp_no: emp.emp_no, emp_id: emp.emp_no,
+              site_code: emp.site_code_1, site_code_2: emp.site_code_2 || null,
+              work_type: emp.work_code, role,
+            },
+          });
+        }
+      }
+
+      return jsonRes({ error: "비밀번호가 올바르지 않습니다." }, 401);
     }
 
     // ────────────────────────────────────────────────────────
-    // ACTION: field_login — 사번+PIN 로그인 (기존 호환 유지)
-    // 역할별 이메일 형식 분기:
-    //   crew / admin / super_admin → empNo@mepark.internal
-    //   field_member (기본)        → empNo@field.mepark.internal
+    // ACTION: field_login — 사번 + 비밀번호 로그인 (v8)
     // ────────────────────────────────────────────────────────
     if (action === "field_login") {
-      const { emp_id, pin } = body;
-      if (!emp_id || !pin) {
-        return new Response(JSON.stringify({ error: "emp_id와 pin이 필요합니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      const { emp_id, password: userPassword } = body;
+      if (!emp_id) return jsonRes({ error: "사번이 필요합니다." }, 400);
+      if (!userPassword) return jsonRes({ error: "비밀번호를 입력해주세요." }, 400);
 
-      const adminClient = createClient(
-        Deno.env.get("SUPABASE_URL") ?? "",
-        Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-        { auth: { autoRefreshToken: false, persistSession: false } }
-      );
+      const adminClient = makeAdminClient();
 
-      // 1. employees 조회
       const { data: emp, error: empErr } = await adminClient
         .from("employees")
-        .select("id, name, emp_no, site_code_1, site_code_2, work_code, phone, auth_id, system_role, account_email, account_status")
+        .select("id, name, emp_no, site_code_1, site_code_2, work_code, phone, auth_id, system_role, account_email, account_status, status")
         .eq("emp_no", emp_id.trim().toUpperCase())
         .single();
 
-      if (empErr || !emp) {
-        return new Response(JSON.stringify({ error: "등록되지 않은 사번입니다." }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (empErr || !emp) return jsonRes({ error: "등록되지 않은 사번입니다." }, 401);
+      if (emp.status === "퇴사") return jsonRes({ error: "퇴사 처리된 직원입니다." }, 401);
 
-      // 2. PIN 검증 — phone 뒤 4자리
-      const phoneDigits = (emp.phone || "").replace(/\D/g, "");
-      const pin4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : "";
-      if (!pin4) {
-        return new Response(JSON.stringify({ error: "전화번호가 등록되지 않았습니다. 관리자에게 문의하세요." }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (pin !== pin4) {
-        return new Response(JSON.stringify({ error: "PIN이 올바르지 않습니다." }), {
-          status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-
-      // 3. 역할에 따라 이메일 형식 분기
       const role = emp.system_role || "field_member";
       const isERP = ["crew", "admin", "super_admin"].includes(role);
-
-      // crew/admin: mepark.internal / field_member: field.mepark.internal
       const email = isERP
         ? `${emp.emp_no.toLowerCase()}@mepark.internal`
         : `${emp.emp_no.toLowerCase()}@field.mepark.internal`;
-      const password = `mp${pin4}`;
 
+      const initialPw = makeInitialPassword(emp.phone);
       let authId = emp.auth_id;
 
-      // 4. crew/admin 계정은 ERP에서 이미 생성됨 → auth_id로 탐색
       if (!authId) {
-        // auth_id 없으면 이메일로 탐색
         const { data: userList } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
         const existing = userList?.users?.find((u: any) => u.email === email);
         if (existing) {
           authId = existing.id;
-          // employees.auth_id 동기화
           await adminClient.from("employees").update({ auth_id: authId }).eq("id", emp.id);
         }
       }
 
       if (!authId && !isERP) {
-        // field_member 신규 계정 생성
         const { data: newUser, error: createErr } = await adminClient.auth.admin.createUser({
-          email,
-          password,
-          email_confirm: true,
-          user_metadata: {
-            emp_no: emp.emp_no,
-            name: emp.name,
-            role,
-            site_code: emp.site_code_1,
-          },
+          email, password: initialPw, email_confirm: true,
+          user_metadata: { emp_no: emp.emp_no, name: emp.name, role, site_code: emp.site_code_1 },
         });
-
         if (createErr && !createErr.message.includes("already been registered")) {
-          return new Response(JSON.stringify({ error: "계정 생성 실패: " + createErr.message }), {
-            status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-          });
+          return jsonRes({ error: "계정 생성 실패: " + createErr.message }, 500);
         }
-
         if (createErr) {
           const { data: ul } = await adminClient.auth.admin.listUsers({ perPage: 1000 });
           authId = ul?.users?.find((u: any) => u.email === email)?.id ?? null;
         } else {
           authId = newUser?.user?.id ?? null;
         }
-
         if (authId) {
           await adminClient.from("employees").update({ auth_id: authId }).eq("id", emp.id);
         }
       }
 
       if (!authId) {
-        return new Response(JSON.stringify({
-          error: isERP
-            ? "ERP 계정이 없습니다. 관리자에게 계정 생성을 요청하세요."
-            : "Auth 계정을 찾을 수 없습니다.",
-        }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        return jsonRes({ error: isERP ? "ERP 계정이 없습니다." : "Auth 계정을 찾을 수 없습니다." }, 500);
       }
 
-      // 5. 비밀번호 최신화 (전화번호 변경 대응) → 로그인
-      await adminClient.auth.admin.updateUserById(authId, { password });
-
       const { data: signInData, error: signInErr } = await adminClient.auth.signInWithPassword({
-        email,
-        password,
+        email, password: userPassword,
       });
-      if (signInErr || !signInData?.session) {
-        return new Response(JSON.stringify({ error: "세션 생성 실패: " + (signInErr?.message || "unknown") }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
+
+      if (!signInErr && signInData?.session) {
+        return jsonRes({
+          access_token: signInData.session.access_token,
+          refresh_token: signInData.session.refresh_token,
+          employee: {
+            id: emp.id, name: emp.name, emp_no: emp.emp_no, emp_id: emp.emp_no,
+            site_code: emp.site_code_1, site_code_2: emp.site_code_2 || null,
+            work_type: emp.work_code, role,
+          },
         });
       }
 
-      return new Response(JSON.stringify({
-        access_token: signInData.session.access_token,
-        refresh_token: signInData.session.refresh_token,
-        employee: {
-          id: emp.id,
-          name: emp.name,
-          emp_no: emp.emp_no,
-          emp_id: emp.emp_no,
-          site_code: emp.site_code_1,
-          site_code_2: emp.site_code_2 || null,
-          work_type: emp.work_code,
-          role,
-        },
-      }), { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      // 마이그레이션
+      if (userPassword === initialPw) {
+        await adminClient.auth.admin.updateUserById(authId, { password: initialPw });
+        const { data: retryData, error: retryErr } = await adminClient.auth.signInWithPassword({
+          email, password: initialPw,
+        });
+        if (!retryErr && retryData?.session) {
+          return jsonRes({
+            access_token: retryData.session.access_token,
+            refresh_token: retryData.session.refresh_token,
+            employee: {
+              id: emp.id, name: emp.name, emp_no: emp.emp_no, emp_id: emp.emp_no,
+              site_code: emp.site_code_1, site_code_2: emp.site_code_2 || null,
+              work_type: emp.work_code, role,
+            },
+          });
+        }
+      }
+
+      return jsonRes({ error: "비밀번호가 올바르지 않습니다." }, 401);
+    }
+
+    // ────────────────────────────────────────────────────────
+    // ACTION: change_password — 비밀번호 변경
+    // ────────────────────────────────────────────────────────
+    if (action === "change_password") {
+      const { phone, emp_no, current_password, new_password } = body;
+      if (!current_password || !new_password) return jsonRes({ error: "현재 비밀번호와 새 비밀번호가 필요합니다." }, 400);
+      if (new_password.length < 6) return jsonRes({ error: "새 비밀번호는 6자 이상이어야 합니다." }, 400);
+      if (!phone && !emp_no) return jsonRes({ error: "전화번호 또는 사번이 필요합니다." }, 400);
+
+      const adminClient = makeAdminClient();
+
+      let emp: any = null;
+      if (phone) {
+        const digits = (phone || "").replace(/\D/g, "");
+        const { data: list1 } = await adminClient.from("employees")
+          .select("id, emp_no, phone, auth_id, system_role, status")
+          .eq("phone", digits).limit(1);
+        if (list1 && list1.length > 0) emp = list1[0];
+        if (!emp) {
+          const formatted = digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
+          const { data: list2 } = await adminClient.from("employees")
+            .select("id, emp_no, phone, auth_id, system_role, status")
+            .eq("phone", formatted).limit(1);
+          if (list2 && list2.length > 0) emp = list2[0];
+        }
+      } else {
+        const { data } = await adminClient.from("employees")
+          .select("id, emp_no, phone, auth_id, system_role, status")
+          .eq("emp_no", emp_no.trim().toUpperCase()).single();
+        if (data) emp = data;
+      }
+
+      if (!emp) return jsonRes({ error: "등록되지 않은 사용자입니다." }, 401);
+      if (!emp.auth_id) return jsonRes({ error: "계정이 생성되지 않았습니다. 먼저 로그인해주세요." }, 400);
+
+      const role = emp.system_role || "field_member";
+      const isERP = ["crew", "admin", "super_admin"].includes(role);
+      const email = isERP
+        ? `${emp.emp_no.toLowerCase()}@mepark.internal`
+        : `${emp.emp_no.toLowerCase()}@field.mepark.internal`;
+
+      // 현재 비밀번호 검증
+      const { error: verifyErr } = await adminClient.auth.signInWithPassword({
+        email, password: current_password,
+      });
+
+      if (verifyErr) {
+        // 마이그레이션: 초기비번으로 현재비번 검증
+        const initialPw = makeInitialPassword(emp.phone);
+        if (current_password === initialPw) {
+          await adminClient.auth.admin.updateUserById(emp.auth_id, { password: initialPw });
+          const { error: retryErr } = await adminClient.auth.signInWithPassword({ email, password: initialPw });
+          if (retryErr) return jsonRes({ error: "현재 비밀번호가 올바르지 않습니다." }, 401);
+        } else {
+          return jsonRes({ error: "현재 비밀번호가 올바르지 않습니다." }, 401);
+        }
+      }
+
+      // 새 비밀번호로 변경
+      const { error: updateErr } = await adminClient.auth.admin.updateUserById(emp.auth_id, {
+        password: new_password,
+      });
+      if (updateErr) return jsonRes({ error: "비밀번호 변경 실패: " + updateErr.message }, 500);
+
+      return jsonRes({ success: true, message: "비밀번호가 변경되었습니다." });
     }
 
     // ── 아래부터 super_admin 인증 필요 ──────────────────────
 
     const authHeader = req.headers.get("Authorization");
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: "인증이 필요합니다." }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (!authHeader) return jsonRes({ error: "인증이 필요합니다." }, 401);
 
     const supabaseAnon = createClient(
       Deno.env.get("SUPABASE_URL") ?? "",
@@ -327,55 +353,28 @@ Deno.serve(async (req) => {
     );
 
     const { data: { user: caller }, error: authError } = await supabaseAnon.auth.getUser();
-    if (authError || !caller) {
-      return new Response(JSON.stringify({ error: "인증 실패" }), {
-        status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
+    if (authError || !caller) return jsonRes({ error: "인증 실패" }, 401);
 
     const { data: callerProfile } = await supabaseAnon
       .from("profiles").select("role").eq("id", caller.id).single();
-
     if (!callerProfile || callerProfile.role !== "super_admin") {
-      return new Response(JSON.stringify({ error: "슈퍼관리자만 실행 가능합니다." }), {
-        status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes({ error: "슈퍼관리자만 실행 가능합니다." }, 403);
     }
 
-    const supabaseAdmin = createClient(
-      Deno.env.get("SUPABASE_URL") ?? "",
-      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "",
-      { auth: { autoRefreshToken: false, persistSession: false } }
-    );
+    const supabaseAdmin = makeAdminClient();
 
-    // ────────────────────────────────────────────────────────
     // ACTION: create_user
-    // ────────────────────────────────────────────────────────
     if (action === "create_user") {
       const { email, password, name, role, site_code, employee_id, emp_no, work_code } = body;
-
-      if (!email || !password || !name || !role) {
-        return new Response(JSON.stringify({ error: "필수 정보가 누락되었습니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (!email || !password || !name || !role) return jsonRes({ error: "필수 정보가 누락되었습니다." }, 400);
 
       const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
         email, password, email_confirm: true, user_metadata: { name },
       });
-
-      if (createError) {
-        return new Response(JSON.stringify({ error: "계정 생성 실패: " + createError.message }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (createError) return jsonRes({ error: "계정 생성 실패: " + createError.message }, 400);
 
       const userId = newUser?.user?.id;
-      if (!userId) {
-        return new Response(JSON.stringify({ error: "계정 생성 실패: ID를 받지 못했습니다." }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (!userId) return jsonRes({ error: "계정 생성 실패: ID를 받지 못했습니다." }, 500);
 
       const profileData: any = { id: userId, email, name, role, created_at: new Date().toISOString() };
       if (site_code) profileData.site_code = site_code;
@@ -384,103 +383,51 @@ Deno.serve(async (req) => {
       if (work_code) profileData.work_code = work_code;
 
       const { error: profErr } = await supabaseAdmin.from("profiles").upsert(profileData, { onConflict: "id" });
-      if (profErr) {
-        return new Response(JSON.stringify({ error: "프로필 저장 실패: " + profErr.message }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (profErr) return jsonRes({ error: "프로필 저장 실패: " + profErr.message }, 500);
 
-      return new Response(JSON.stringify({ success: true, userId }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes({ success: true, userId });
     }
 
-    // ────────────────────────────────────────────────────────
     // ACTION: ban_user
-    // ────────────────────────────────────────────────────────
     if (action === "ban_user") {
       const { userId } = body;
-      if (!userId) {
-        return new Response(JSON.stringify({ error: "userId가 필요합니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const { error: banError } = await supabaseAdmin.auth.admin.updateUserById(userId, { ban_duration: "876600h" });
-      if (banError) {
-        return new Response(JSON.stringify({ error: "계정 차단 실패: " + banError.message }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (!userId) return jsonRes({ error: "userId가 필요합니다." }, 400);
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { ban_duration: "876600h" });
+      if (error) return jsonRes({ error: "계정 차단 실패: " + error.message }, 500);
       await supabaseAdmin.from("profiles").delete().eq("id", userId);
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes({ success: true });
     }
 
-    // ────────────────────────────────────────────────────────
     // ACTION: reset_password
-    // ────────────────────────────────────────────────────────
     if (action === "reset_password") {
       const { userId, newPassword } = body;
-      if (!userId || !newPassword) {
-        return new Response(JSON.stringify({ error: "userId와 newPassword가 필요합니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const { error: resetError } = await supabaseAdmin.auth.admin.updateUserById(userId, { password: newPassword });
-      if (resetError) {
-        return new Response(JSON.stringify({ error: "비밀번호 리셋 실패: " + resetError.message }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      if (!userId || !newPassword) return jsonRes({ error: "userId와 newPassword가 필요합니다." }, 400);
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { password: newPassword });
+      if (error) return jsonRes({ error: "비밀번호 리셋 실패: " + error.message }, 500);
+      return jsonRes({ success: true });
     }
 
-    // ────────────────────────────────────────────────────────
     // ACTION: unban_user
-    // ────────────────────────────────────────────────────────
     if (action === "unban_user") {
       const { userId } = body;
-      if (!userId) {
-        return new Response(JSON.stringify({ error: "userId가 필요합니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      const { error: unbanError } = await supabaseAdmin.auth.admin.updateUserById(userId, { ban_duration: "none" });
-      if (unbanError) {
-        return new Response(JSON.stringify({ error: "재활성화 실패: " + unbanError.message }), {
-          status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ success: true }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      if (!userId) return jsonRes({ error: "userId가 필요합니다." }, 400);
+      const { error } = await supabaseAdmin.auth.admin.updateUserById(userId, { ban_duration: "none" });
+      if (error) return jsonRes({ error: "재활성화 실패: " + error.message }, 500);
+      return jsonRes({ success: true });
     }
 
-    // ────────────────────────────────────────────────────────
     // ACTION: bulk_create_field
-    // ────────────────────────────────────────────────────────
     if (action === "bulk_create_field") {
       const { accounts } = body;
       if (!accounts || !Array.isArray(accounts) || accounts.length === 0) {
-        return new Response(JSON.stringify({ error: "생성할 계정 목록이 필요합니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
+        return jsonRes({ error: "생성할 계정 목록이 필요합니다." }, 400);
       }
-      if (accounts.length > 50) {
-        return new Response(JSON.stringify({ error: "한 번에 최대 50개까지 생성 가능합니다." }), {
-          status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
+      if (accounts.length > 50) return jsonRes({ error: "한 번에 최대 50개까지 생성 가능합니다." }, 400);
 
       const results = [];
       for (const acc of accounts) {
         const email = `${acc.emp_no.toLowerCase()}@field.mepark.internal`;
-        const phoneDigits = (acc.phone || "").replace(/\D/g, "");
-        const pin4 = phoneDigits.length >= 4 ? phoneDigits.slice(-4) : acc.pin || "0000";
-        const password = `mp${pin4}`;
+        const password = makeInitialPassword(acc.phone || "");
 
         try {
           const { data: newUser, error: createError } = await supabaseAdmin.auth.admin.createUser({
@@ -505,18 +452,12 @@ Deno.serve(async (req) => {
       }
 
       const successCount = results.filter((r: any) => r.success).length;
-      return new Response(JSON.stringify({ success: true, results, successCount, totalCount: accounts.length }), {
-        status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return jsonRes({ success: true, results, successCount, totalCount: accounts.length });
     }
 
-    return new Response(JSON.stringify({ error: `알 수 없는 action: ${action}` }), {
-      status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes({ error: `알 수 없는 action: ${action}` }, 400);
 
   } catch (err: any) {
-    return new Response(JSON.stringify({ error: err.message || "서버 오류" }), {
-      status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return jsonRes({ error: err.message || "서버 오류" }, 500);
   }
 });

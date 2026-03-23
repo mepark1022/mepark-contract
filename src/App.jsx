@@ -1781,10 +1781,10 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   const empNoToEmail = (no) => `${no.trim().toLowerCase()}@mepark.internal`;
   const phoneToPass = (ph, empNo) => {
     const digits = (ph || "").replace(/\D/g, "").slice(-4);
-    if (digits.length >= 4) return "mp" + digits;  // "mp" + 4자리 → 6자
-    // 전화번호 미등록 시 → "mp" + 사번 뒤 4자리 (0 패딩)
+    if (digits.length >= 4) return digits + "12";  // 뒤4자리 + "12" → 6자
+    // 전화번호 미등록 시 → 사번 뒤 4자리 + "12"
     const suffix = ((empNo || "").replace(/\D/g, "") + "0000").slice(-4);
-    return "mp" + suffix;
+    return suffix + "12";
   };
   const isSuperAdmin = myProfile?.role === "super_admin";
   const isAdmin = myProfile?.role === "admin";
@@ -2485,7 +2485,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                           </div>
                           <div>
                             <label style={labelSt}>비밀번호 <span style={{ fontWeight: 400, color: C.gray }}>(mp + 전화뒷4자리)</span></label>
-                            <input type="password" value={accountForm.password} onChange={e => setAccountForm(p => ({ ...p, password: e.target.value }))} placeholder="6자 이상 (mp+뒷4자리 자동)" style={inputStyle} />
+                            <input type="password" value={accountForm.password} onChange={e => setAccountForm(p => ({ ...p, password: e.target.value }))} placeholder="6자 이상 (뒷4자리+12 자동)" style={inputStyle} />
                             {accountForm.password && accountForm.password.length < 6 && <div style={{ fontSize: 10, color: C.error, marginTop: 2 }}>⚠️ 6자 미만 — 전화번호가 등록되지 않았거나 짧습니다. 직접 입력하세요.</div>}
                           </div>
                           <div>
