@@ -1,5 +1,5 @@
 // ============================================================
-// 미팍ERP — admin-api Edge Function v5 (phone_login + field_login)
+// 미팍ERP — admin-api Edge Function v7 (site_code_2 지원)
 // ============================================================
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -48,7 +48,7 @@ Deno.serve(async (req) => {
       // 1. employees에서 전화번호로 조회
       const { data: empList, error: empErr } = await adminClient
         .from("employees")
-        .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, status")
+        .select("id, name, emp_no, site_code_1, site_code_2, work_code, phone, auth_id, system_role, account_email, account_status, status")
         .eq("phone", digits)
         .limit(1);
 
@@ -57,7 +57,7 @@ Deno.serve(async (req) => {
         const formatted = digits.replace(/(\d{3})(\d{4})(\d{4})/, "$1-$2-$3");
         const { data: empList2, error: empErr2 } = await adminClient
           .from("employees")
-          .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status, status")
+          .select("id, name, emp_no, site_code_1, site_code_2, work_code, phone, auth_id, system_role, account_email, account_status, status")
           .eq("phone", formatted)
           .limit(1);
 
@@ -164,6 +164,7 @@ Deno.serve(async (req) => {
           emp_no: emp.emp_no,
           emp_id: emp.emp_no,
           site_code: emp.site_code_1,
+          site_code_2: emp.site_code_2 || null,
           work_type: emp.work_code,
           role,
         },
@@ -193,7 +194,7 @@ Deno.serve(async (req) => {
       // 1. employees 조회
       const { data: emp, error: empErr } = await adminClient
         .from("employees")
-        .select("id, name, emp_no, site_code_1, work_code, phone, auth_id, system_role, account_email, account_status")
+        .select("id, name, emp_no, site_code_1, site_code_2, work_code, phone, auth_id, system_role, account_email, account_status")
         .eq("emp_no", emp_id.trim().toUpperCase())
         .single();
 
@@ -303,6 +304,7 @@ Deno.serve(async (req) => {
           emp_no: emp.emp_no,
           emp_id: emp.emp_no,
           site_code: emp.site_code_1,
+          site_code_2: emp.site_code_2 || null,
           work_type: emp.work_code,
           role,
         },
