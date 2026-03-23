@@ -7089,7 +7089,7 @@ function DailyReportPage({ employees, onDataChange }) {
       alert(`${selDate} ${getSiteName(site)} 일보가 이미 존재합니다.\n기존 일보를 수정해주세요.`);
       return;
     }
-    const siteEmps = employees.filter(e => e.site_code_1 === site && e.status === "재직");
+    const siteEmps = employees.filter(e => (e.site_code_1 === site || e.site_code_2 === site) && e.status === "재직");
     setForm({
       site_code: site,
       valet_count: 0, valet_amount: 0, memo: "",
@@ -7138,7 +7138,7 @@ function DailyReportPage({ employees, onDataChange }) {
       valet_count: report.valet_count || 0, valet_amount: report.valet_amount || 0, memo: report.memo || "",
       images: report.images || [],
       staffList: stf.length > 0 ? stf.map(s => ({ id: s.id, employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0 }))
-        : employees.filter(e => e.site_code_1 === report.site_code && e.status === "재직").map(e => ({ employee_id: e.id, name_raw: e.name, staff_type: "regular", work_hours: 8 })),
+        : employees.filter(e => (e.site_code_1 === report.site_code || e.site_code_2 === report.site_code) && e.status === "재직").map(e => ({ employee_id: e.id, name_raw: e.name, staff_type: "regular", work_hours: 8 })),
       payList: PAYMENT_TYPES.map(pt => {
         const existing = pay.find(p => p.payment_type === pt.key);
         return existing ? { id: existing.id, payment_type: pt.key, count: existing.count || 0, amount: existing.amount || 0, memo: existing.memo || "" } : { payment_type: pt.key, count: 0, amount: 0, memo: "" };
@@ -7426,7 +7426,7 @@ function DailyReportPage({ employees, onDataChange }) {
       const existing = reports.find(r => r.report_date === selDate && r.site_code === siteCode);
       if (existing) { setEditMode(false); }
       else {
-        const siteEmps = employees.filter(e => e.site_code_1 === siteCode && e.status === "재직");
+        const siteEmps = employees.filter(e => (e.site_code_1 === siteCode || e.site_code_2 === siteCode) && e.status === "재직");
         setForm({
           site_code: siteCode,
           valet_count: 0, valet_amount: 0, memo: "",
@@ -7484,7 +7484,7 @@ function DailyReportPage({ employees, onDataChange }) {
   const siteEmployees = useMemo(() => {
     const code = editMode ? form.site_code : selSite;
     if (!code || code === "ALL") return employees.filter(e => e.status === "재직");
-    return employees.filter(e => e.site_code_1 === code && e.status === "재직");
+    return employees.filter(e => (e.site_code_1 === code || e.site_code_2 === code) && e.status === "재직");
   }, [employees, selSite, editMode, form.site_code]);
 
   // ── 결제수단 합계 vs 발렛비 불일치 체크 ──
@@ -7884,7 +7884,7 @@ function DailyReportPage({ employees, onDataChange }) {
               <span style={{ fontSize: 10, color: C.gray, marginLeft: 4 }}>(소속 사업장)</span>
             </div>
           ) : (
-            <select value={form.site_code} onChange={e => { const code = e.target.value; setForm(f => ({ ...f, site_code: code, staffList: employees.filter(emp => emp.site_code_1 === code && emp.status === "재직").map(emp => ({ employee_id: emp.id, name_raw: emp.name, staff_type: "regular", work_hours: 8 })) })); }} style={fieldSt} disabled={!!form.id}>
+            <select value={form.site_code} onChange={e => { const code = e.target.value; setForm(f => ({ ...f, site_code: code, staffList: employees.filter(emp => (emp.site_code_1 === code || emp.site_code_2 === code) && emp.status === "재직").map(emp => ({ employee_id: emp.id, name_raw: emp.name, staff_type: "regular", work_hours: 8 })) })); }} style={fieldSt} disabled={!!form.id}>
               {FIELD_SITES.map(s => <option key={s.code} value={s.code}>{s.code} {s.name}</option>)}
             </select>
           )}
