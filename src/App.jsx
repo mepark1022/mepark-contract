@@ -6918,6 +6918,7 @@ const PAYMENT_TYPES = [
   { key: "cash", label: "현금" },
   { key: "card", label: "카드" },
   { key: "transfer", label: "계좌이체" },
+  { key: "free_valet", label: "무료발렛" },
   { key: "etc", label: "기타" },
 ];
 const EXTRA_TYPES = [
@@ -7346,6 +7347,7 @@ function DailyReportPage({ employees, onDataChange }) {
         현금: pay.find(p => p.payment_type === "cash")?.amount || 0,
         카드: pay.find(p => p.payment_type === "card")?.amount || 0,
         계좌이체: pay.find(p => p.payment_type === "transfer")?.amount || 0,
+        무료발렛: pay.find(p => p.payment_type === "free_valet")?.count || 0,
         기타결제: pay.find(p => p.payment_type === "etc")?.amount || 0,
         추가수당합계: extra.reduce((s, e) => s + toNum(e.extra_amount), 0),
         메모: r.memo || "",
@@ -7524,9 +7526,10 @@ function DailyReportPage({ employees, onDataChange }) {
           const badgeColor = isConfirmed ? "#2E7D32" : isSubmitted ? "#1565C0" : "#9A6700";
           const badgeLabel = isConfirmed ? "✅ 확정" : isSubmitted ? "📝 미확정" : "⏳ 미제출";
 
-          // 결제수단: 현금, 카드만 표시
+          // 결제수단: 현금, 카드, 무료발렛 표시
           const cash = pay.find(p => p.payment_type === "cash");
           const card = pay.find(p => p.payment_type === "card");
+          const freeValet = pay.find(p => p.payment_type === "free_valet");
 
           // 근무인원 구성 (duty별)
           const siteStaff = staff.filter(s => s.staff_type !== "substitute");
@@ -7578,8 +7581,8 @@ function DailyReportPage({ employees, onDataChange }) {
                     </div>
                   </div>
 
-                  {/* 결제수단 (현금/카드만) */}
-                  {(cash || card) && (
+                  {/* 결제수단 (현금/카드/무료발렛) */}
+                  {(cash || card || freeValet) && (
                     <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
                       {cash && cash.amount > 0 && (
                         <div style={{ flex: 1, background: "#F1F8E9", borderRadius: 6, padding: "5px 8px" }}>
@@ -7591,6 +7594,12 @@ function DailyReportPage({ employees, onDataChange }) {
                         <div style={{ flex: 1, background: "#E8EAF6", borderRadius: 6, padding: "5px 8px" }}>
                           <div style={{ fontSize: 9, color: C.gray }}>카드</div>
                           <div style={{ fontSize: 11, fontWeight: 700, color: "#3949AB" }}>{fmt(card.amount)}원</div>
+                        </div>
+                      )}
+                      {freeValet && freeValet.count > 0 && (
+                        <div style={{ flex: 1, background: "#dcfce7", borderRadius: 6, padding: "5px 8px" }}>
+                          <div style={{ fontSize: 9, color: C.gray }}>무료발렛</div>
+                          <div style={{ fontSize: 11, fontWeight: 700, color: "#16A34A" }}>{freeValet.count}건</div>
                         </div>
                       )}
                     </div>
@@ -7809,12 +7818,15 @@ function DailyReportPage({ employees, onDataChange }) {
           <div style={{ marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 800, color: C.navy, marginBottom: 6 }}>💳 결제수단</div>
             <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(pay.length, 4)}, 1fr)`, gap: 6 }}>
-              {pay.map((p, i) => (
-                <div key={i} style={{ background: C.bg, borderRadius: 6, padding: "6px 8px", textAlign: "center" }}>
-                  <div style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>{fmt(p.amount)}원</div>
+              {pay.map((p, i) => {
+                const isFV = p.payment_type === "free_valet";
+                return (
+                <div key={i} style={{ background: isFV ? "#dcfce7" : C.bg, borderRadius: 6, padding: "6px 8px", textAlign: "center" }}>
+                  <div style={{ fontSize: 12, fontWeight: 800, color: isFV ? "#16A34A" : C.navy }}>{isFV ? "무료" : `${fmt(p.amount)}원`}</div>
                   <div style={{ fontSize: 10, color: C.gray }}>{PAYMENT_TYPES.find(pt => pt.key === p.payment_type)?.label || p.payment_type} {p.count}건</div>
                 </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -7940,15 +7952,18 @@ function DailyReportPage({ employees, onDataChange }) {
         <div style={{ marginBottom: 14 }}>
           <span style={{ fontSize: 12, fontWeight: 800, color: C.navy, display: "block", marginBottom: 8 }}>💳 결제수단별 매출</span>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(2, 1fr)", gap: 8 }}>
-            {form.payList.map((p, i) => (
-              <div key={p.payment_type} style={{ background: C.bg, borderRadius: 8, padding: "8px 10px" }}>
-                <label style={{ ...labelSt, marginBottom: 6 }}>{PAYMENT_TYPES.find(pt => pt.key === p.payment_type)?.label}</label>
+            {form.payList.map((p, i) => {
+              const isFV = p.payment_type === "free_valet";
+              return (
+              <div key={p.payment_type} style={{ background: isFV ? "#f0fdf4" : C.bg, borderRadius: 8, padding: "8px 10px" }}>
+                <label style={{ ...labelSt, marginBottom: 6, color: isFV ? "#16A34A" : undefined }}>{PAYMENT_TYPES.find(pt => pt.key === p.payment_type)?.label}{isFV ? " (건수만)" : ""}</label>
                 <div style={{ display: "flex", gap: 6 }}>
                   {renderNumField(p.count, v => setForm(f => ({ ...f, payList: f.payList.map((pp, j) => j === i ? { ...pp, count: v } : pp) })), { placeholder: "건수", style: { ...fieldSt, flex: 1 } })}
-                  {renderNumField(p.amount, v => setForm(f => ({ ...f, payList: f.payList.map((pp, j) => j === i ? { ...pp, amount: v } : pp) })), { placeholder: "금액", style: { ...fieldSt, flex: 2 } })}
+                  {!isFV && renderNumField(p.amount, v => setForm(f => ({ ...f, payList: f.payList.map((pp, j) => j === i ? { ...pp, amount: v } : pp) })), { placeholder: "금액", style: { ...fieldSt, flex: 2 } })}
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
           {/* 결제수단 합계 표시 + 불일치 경고 */}
           {(() => {
