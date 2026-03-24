@@ -9628,7 +9628,7 @@ function PayrollPage({ employees, profitState }) {
                   <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
                   <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
                     style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }}
-                    disabled={isConfirmed} />
+                    /* editable even when confirmed */ />
                 </div>
               ))}
               <div style={{ marginTop: 16, padding: "12px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between" }}>
@@ -9644,11 +9644,11 @@ function PayrollPage({ employees, profitState }) {
               <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 8 }}>세금 처리방식</div>
               <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16 }}>
                 {PY_TAX_TYPES.map(t => (
-                  <button key={t.key} onClick={() => !isConfirmed && handleTaxTypeChange(t.key)}
+                  <button key={t.key} onClick={() => handleTaxTypeChange(t.key)}
                     style={{ padding: "6px 12px", borderRadius: 20, border: rec.tax_type === t.key ? `2px solid ${t.color}` : `1px solid ${C.border}`,
                       background: rec.tax_type === t.key ? `${t.color}15` : C.white,
                       color: rec.tax_type === t.key ? t.color : C.gray,
-                      fontSize: 11, fontWeight: 700, cursor: isConfirmed ? "default" : "pointer", fontFamily: FONT }}>
+                      fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
                     {t.label}
                   </button>
                 ))}
@@ -9664,7 +9664,7 @@ function PayrollPage({ employees, profitState }) {
                     <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
                       <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
                       <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
-                        style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                        style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
                     </div>
                   ))}
                 </div>
@@ -9689,12 +9689,12 @@ function PayrollPage({ employees, profitState }) {
                         <div style={{ flex: 1 }}>
                           <label style={{ fontSize: 10, color: C.gray }}>신고자명</label>
                           <input value={rec.reporter_name || ""} onChange={e => handleFieldChange("reporter_name", e.target.value)}
-                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} disabled={isConfirmed} />
+                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} /* editable even when confirmed */ />
                         </div>
                         <div style={{ flex: 1 }}>
                           <label style={{ fontSize: 10, color: C.gray }}>주민번호</label>
                           <input value={rec.reporter_rrn || ""} onChange={e => handleFieldChange("reporter_rrn", e.target.value)}
-                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} disabled={isConfirmed} />
+                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} /* editable even when confirmed */ />
                         </div>
                       </div>
                     </div>
@@ -9708,12 +9708,12 @@ function PayrollPage({ employees, profitState }) {
                   <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
                     <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>고용보험</label>
                     <NumInput value={rec.ei || 0} onChange={v => handleFieldChange("ei", v)}
-                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
                   </div>
                   <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
                     <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>산재공제</label>
                     <NumInput value={rec.accident_deduct || 0} onChange={v => handleFieldChange("accident_deduct", v)}
-                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
                   </div>
                 </div>
               )}
@@ -9731,12 +9731,12 @@ function PayrollPage({ employees, profitState }) {
                 <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
                   <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>사고공제</label>
                   <NumInput value={rec.accident_deduct || 0} onChange={v => handleFieldChange("accident_deduct", v)}
-                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed || rec.tax_type === "고용&산재"} />
+                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={rec.tax_type === "고용&산재"} />
                 </div>
                 <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
                   <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>선지급</label>
                   <NumInput value={rec.prepaid || 0} onChange={v => handleFieldChange("prepaid", v)}
-                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={isConfirmed} />
+                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
                 </div>
               </div>
 
@@ -9802,21 +9802,36 @@ function PayrollPage({ employees, profitState }) {
           )}
         </div>
 
-        {/* 하단 버튼 */}
-        {!isConfirmed && (
-          <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.lightGray}`, display: "flex", gap: 8 }}>
-            <button onClick={() => setPyEditRecord(null)} style={{ ...btnOutline, flex: 1, padding: "10px" }}>닫기</button>
-            <button onClick={() => savePayrollRecord(pyEditRecord)} disabled={pySaving}
-              style={{ ...btnPrimary, flex: 2, padding: "10px", opacity: pySaving ? 0.6 : 1 }}>
-              {pySaving ? "저장 중..." : "💾 저장"}
-            </button>
-          </div>
-        )}
+        {/* 확정 상태 경고 배너 */}
         {isConfirmed && (
-          <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.lightGray}` }}>
-            <button onClick={() => setPyEditRecord(null)} style={{ ...btnOutline, width: "100%", padding: "10px" }}>닫기</button>
+          <div style={{ padding: "8px 20px", background: "#FFF8E1", borderBottom: `1px solid #FFE082`, display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 13 }}>⚠️</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: "#E65100" }}>확정된 급여입니다. 수정 저장 시 확정이 해제됩니다.</span>
           </div>
         )}
+        {/* 하단 버튼 — 확정 여부와 무관하게 항상 저장 가능 */}
+        <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.lightGray}`, display: "flex", gap: 8 }}>
+          <button onClick={() => setPyEditRecord(null)} style={{ ...btnOutline, flex: 1, padding: "10px" }}>닫기</button>
+          <button onClick={async () => {
+            if (isConfirmed) {
+              const ok = await confirm(
+                "확정 급여 수정",
+                "확정된 급여를 수정하면 급여 확정 상태가 '초안'으로 돌아갑니다.\n수정 후 다시 확정해주세요.",
+                { okLabel: "수정 저장", okColor: C.orange }
+              );
+              if (!ok) return;
+              await supabase.from("payroll_months")
+                .update({ status: "draft", closed_at: null })
+                .eq("id", pyMonthData.id);
+            }
+            await savePayrollRecord(pyEditRecord);
+            if (isConfirmed) await loadPayrollMonth();
+          }} disabled={pySaving}
+            style={{ ...btnPrimary, flex: 2, padding: "10px", opacity: pySaving ? 0.6 : 1,
+              background: isConfirmed ? C.orange : C.navy }}>
+            {pySaving ? "저장 중..." : isConfirmed ? "✏️ 수정 저장" : "💾 저장"}
+          </button>
+        </div>
       </div>
     );
   }
