@@ -132,10 +132,13 @@ const SITE_PRESETS = {
 // ── 2. 유틸리티 ───────────────────────────────────────
 const fmt = (n) => (n == null || n === "" || isNaN(n)) ? "0" : Math.round(Number(n)).toLocaleString("ko-KR");
 const toNum = (v) => { const n = Number(v); return isNaN(n) ? 0 : n; };
-const today = () => new Date().toISOString().slice(0, 10);
+// KST(UTC+9) 기준 날짜 헬퍼 — toISOString()은 항상 UTC라 한국 자정~오전9시 날짜 오류 방지
+const kstDate = (d = new Date()) => { const kst = new Date(d.getTime() + 9 * 60 * 60 * 1000); return kst.toISOString().slice(0, 10); };
+const localDateStr = (d) => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+const today = () => kstDate();
 const uid = () => Math.random().toString(36).slice(2, 10);
 const dateFmt = (d) => d ? new Date(d).toLocaleDateString("ko-KR") : "";
-const dDay = (dateStr) => { if (!dateStr) return null; const t = new Date(dateStr + "T00:00:00"); const n = new Date(); const td = new Date(n.getFullYear(), n.getMonth(), n.getDate()); return Math.round((t - td) / 86400000); };
+const dDay = (dateStr) => { if (!dateStr) return null; const t = new Date(dateStr + "T00:00:00"); const now = new Date(); const td = new Date(now.getFullYear(), now.getMonth(), now.getDate()); return Math.round((t - td) / 86400000); };
 const getSiteName = (code) => SITES.find(s => s.code === code)?.name || "";
 const getWorkLabel = (code) => WORK_CODES.find(w => w.code === code)?.label || code;
 const getWorkCat = (code) => WORK_CODES.find(w => w.code === code)?.cat || "weekday";
@@ -1189,7 +1192,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
         const mon = getMonday(d);
         const sun = new Date(mon);
         sun.setDate(sun.getDate() + 6);
-        key = mon.toISOString().slice(0, 10); // 정렬용 (2026-03-02)
+        key = localDateStr(mon); // 정렬용 (2026-03-02)
         label = `${fmtMD(mon)}~${fmtMD(sun)}`;
       }
       if (!grouped[key]) grouped[key] = { key, label, inAmt: 0, outAmt: 0, balance: 0 };
@@ -1691,12 +1694,12 @@ function Dashboard({ employees }) {
     if (!e.probation_months || !e.hire_date) return false;
     const end = new Date(e.hire_date);
     end.setMonth(end.getMonth() + e.probation_months);
-    const d = dDay(end.toISOString().slice(0, 10));
+    const d = dDay(localDateStr(end));
     return d !== null && d >= -7 && d <= 14;
   }).map(e => {
     const end = new Date(e.hire_date);
     end.setMonth(end.getMonth() + e.probation_months);
-    return { ...e, probEnd: end.toISOString().slice(0, 10), dday: dDay(end.toISOString().slice(0, 10)) };
+    return { ...e, probEnd: localDateStr(end), dday: dDay(localDateStr(end)) };
   });
 
   const activeSites = [...new Set(active.map(e => e.site_code_1))].filter(Boolean);
@@ -1992,7 +1995,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
       ws2["!cols"] = [{ wch: 12 }, { wch: 10 }, { wch: 20 }, { wch: 16 }, { wch: 18 }, { wch: 20 }, { wch: 14 }];
       XLSX.utils.book_append_sheet(wb, ws2, "미등록직원(생성양식)");
     }
-    XLSX.writeFile(wb, `ME.PARK_계정현황_${new Date().toISOString().slice(0, 10)}.xlsx`);
+    XLSX.writeFile(wb, `ME.PARK_계정현황_${kstDate()}.xlsx`);
   };
 
   // ── v9.1: 일괄수정 파일 파싱 ──
@@ -3990,7 +3993,7 @@ function ContractWriter({ employees, initialEmp, initialContract, onSave }) {
           {contract.probation && (
             <div style={{ background: "#FFF8E1", border: `1px solid ${C.gold}`, borderRadius: 8, padding: "10px 14px", margin: "14px 0", fontSize: 12 }}>
               ※ 수습기간: 입사일로부터 {contract.probation_months}개월
-              {contract.start_date && ` (${contract.start_date} ~ ${(() => { const d = new Date(contract.start_date); d.setMonth(d.getMonth() + contract.probation_months); return d.toISOString().slice(0, 10); })()})`}
+              {contract.start_date && ` (${contract.start_date} ~ ${(() => { const d = new Date(contract.start_date); d.setMonth(d.getMonth() + contract.probation_months); return localDateStr(d); })()})`}
               <br />수습기간 중 근로조건은 본 계약과 동일하게 적용한다.
             </div>
           )}
@@ -11406,10 +11409,10 @@ function MainApp() {
 // ── 16-6-A. 마감보고현황 (v8.6) ─────────────────────────
 
 function ClosingReportPage({ employees }) {
-  const todayStr = new Date().toISOString().slice(0, 10);
+  const todayStr = kstDate();
   // 전일 계산
   const yesterdayObj = new Date(); yesterdayObj.setDate(yesterdayObj.getDate() - 1);
-  const yesterdayStr = yesterdayObj.toISOString().slice(0, 10);
+  const yesterdayStr = kstDate(yesterdayObj);
   const [year, setYear] = useState(new Date().getFullYear());
   const [month, setMonth] = useState(new Date().getMonth()); // 0-based
   const [selectedDate, setSelectedDate] = useState(todayStr); // 캘린더 선택 날짜
@@ -11840,7 +11843,7 @@ function ClosingReportPage({ employees }) {
 
 function FullCalendarPage({ employees }) {
   const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = kstDate(today);
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [viewMode, setViewMode] = useState("all"); // all / site / worker
@@ -13514,7 +13517,7 @@ function AnomalyDetectionTab({ employees, year, month, dates, getCellStatus, tod
 
 function AttendancePage({ employees }) {
   const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = kstDate(today);
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const [siteFilter, setSiteFilter] = useState("all");
@@ -14380,7 +14383,7 @@ function AttendancePage({ employees }) {
           year={year} month={month}
           dates={dates}
           getCellStatus={getCellStatus}
-          todayStr={new Date().toISOString().slice(0, 10)}
+          todayStr={kstDate()}
           staffRows={staffRows}
           reports={reports}
           extraAmountMap={extraAmountMap}
@@ -14397,7 +14400,7 @@ function AttendancePage({ employees }) {
           year={year} month={month}
           dates={dates}
           getCellStatus={getCellStatus}
-          todayStr={new Date().toISOString().slice(0, 10)}
+          todayStr={kstDate()}
           staffRows={staffRows}
           reports={reports}
           extraAmountMap={extraAmountMap}
@@ -14414,7 +14417,7 @@ function AttendancePage({ employees }) {
           year={year} month={month}
           dates={dates}
           getCellStatus={getCellStatus}
-          todayStr={new Date().toISOString().slice(0, 10)}
+          todayStr={kstDate()}
           staffRows={staffRows}
           reports={reports}
           extraAmountMap={extraAmountMap}
