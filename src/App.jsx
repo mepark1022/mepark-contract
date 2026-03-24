@@ -7178,12 +7178,10 @@ function ValetFeePage({ profitState, onNavigate }) {
   // 탭1 — 전체 캘린더 (매트릭스 피벗)
   // ══════════════════════════════════════════════
   const renderCalendar = () => {
-    // 날짜별 전체 합계
     const dayTotal = {};
     daysInMonth.forEach(d => { dayTotal[d] = 0; });
     valetReports.forEach(r => { dayTotal[r.report_date] = (dayTotal[r.report_date] || 0) + toNum(r.valet_amount); });
 
-    // 사업장별 월합계 / 일평균
     const siteMonthTotal = {};
     const siteDays = {};
     activeSites.forEach(s => { siteMonthTotal[s.code] = 0; siteDays[s.code] = 0; });
@@ -7196,14 +7194,14 @@ function ValetFeePage({ profitState, onNavigate }) {
 
     return (
       <div>
-        {/* 날짜 헤더 행 + 사업장별 행 + 합계 행 — 가로 스크롤 */}
-        <div style={{ overflowX: "auto", borderRadius: 12, border: `1px solid ${C.border}` }}>
-          <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "max-content", width: "100%" }}>
+        <div style={{ overflowX: "auto", borderRadius: 10, border: `1px solid ${C.border}` }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "max-content", width: "100%", tableLayout: "fixed" }}>
             <thead>
               <tr style={{ background: C.navy, position: "sticky", top: 0, zIndex: 2 }}>
-                {/* 사업장 컬럼 고정 */}
-                <th style={{ padding: "8px 12px", color: "#fff", fontWeight: 800, textAlign: "left", minWidth: 110, position: "sticky", left: 0, background: C.navy, zIndex: 3 }}>사업장</th>
-                {/* 날짜 헤더 */}
+                {/* 사업장 컬럼 — 고정 */}
+                <th style={{ padding: "5px 8px", color: "#fff", fontWeight: 800, textAlign: "left",
+                  width: 90, minWidth: 90, position: "sticky", left: 0, background: C.navy, zIndex: 3, fontSize: 11 }}>사업장</th>
+                {/* 날짜 헤더 — 날짜+요일 한 줄로 */}
                 {daysInMonth.map(d => {
                   const day = parseInt(d.split("-")[2]);
                   const dow = new Date(d).getDay();
@@ -7211,17 +7209,19 @@ function ValetFeePage({ profitState, onNavigate }) {
                   const holName = HOLIDAY_NAMES[d];
                   const isWknd = dow === 0 || dow === 6;
                   return (
-                    <th key={d} style={{ padding: "4px 3px", minWidth: 48, textAlign: "center",
-                      color: hol ? "#FFCDD2" : isWknd ? "#90CAF9" : "#fff", fontWeight: 700, borderLeft: `1px solid rgba(255,255,255,0.1)` }}>
-                      <div style={{ fontSize: 13, fontWeight: 900 }}>{day}</div>
-                      <div style={{ fontSize: 9 }}>{DOW_KR[dow]}</div>
-                      {hol && <div style={{ fontSize: 8, color: "#FFCDD2" }}>{holName?.slice(0,2) || "공휴"}</div>}
+                    <th key={d} style={{ padding: "3px 1px", width: 38, minWidth: 38, textAlign: "center",
+                      color: hol ? "#FFCDD2" : isWknd ? "#90CAF9" : "#fff",
+                      fontWeight: 700, borderLeft: "1px solid rgba(255,255,255,0.1)", lineHeight: 1.2 }}>
+                      <div style={{ fontSize: 11, fontWeight: 900 }}>{day}</div>
+                      <div style={{ fontSize: 8, opacity: 0.8 }}>{DOW_KR[dow]}{hol ? "☆" : ""}</div>
                     </th>
                   );
                 })}
-                {/* 우측 고정 컬럼 */}
-                <th style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, minWidth: 72, textAlign: "right", borderLeft: "2px solid rgba(255,255,255,0.3)", position: "sticky", right: 72, background: C.navy }}>월합계</th>
-                <th style={{ padding: "8px 6px", color: "#90CAF9", fontWeight: 800, minWidth: 72, textAlign: "right", position: "sticky", right: 0, background: C.navy }}>일평균</th>
+                <th style={{ padding: "5px 6px", color: C.gold, fontWeight: 800, width: 76, minWidth: 76,
+                  textAlign: "right", borderLeft: "2px solid rgba(255,255,255,0.3)",
+                  position: "sticky", right: 60, background: C.navy, fontSize: 11 }}>월합계</th>
+                <th style={{ padding: "5px 6px", color: "#90CAF9", fontWeight: 800, width: 60, minWidth: 60,
+                  textAlign: "right", position: "sticky", right: 0, background: C.navy, fontSize: 11 }}>일평균</th>
               </tr>
             </thead>
             <tbody>
@@ -7229,17 +7229,21 @@ function ValetFeePage({ profitState, onNavigate }) {
                 const monthTotal = siteMonthTotal[site.code] || 0;
                 const dayCount = siteDays[site.code] || 0;
                 const dayAvg = dayCount > 0 ? monthTotal / dayCount : 0;
+                const rowBg = si % 2 === 0 ? "#fff" : "#F8F9FF";
                 return (
-                  <tr key={site.code} style={{ background: si % 2 === 0 ? "#fff" : "#FAFBFF" }}>
-                    {/* 사업장명 — 클릭 시 탭2로 */}
-                    <td style={{ padding: "5px 10px", fontWeight: 700, fontSize: 11, color: C.navy, position: "sticky", left: 0,
-                      background: si % 2 === 0 ? "#fff" : "#FAFBFF", cursor: "pointer", borderRight: `2px solid ${C.border}`, zIndex: 1,
-                      whiteSpace: "nowrap", borderBottom: `1px solid ${C.border}` }}
+                  <tr key={site.code} style={{ background: rowBg }}>
+                    {/* 사업장명 — 1줄, 코드+이름 */}
+                    <td style={{ padding: "3px 8px", fontWeight: 700, fontSize: 10, color: C.navy,
+                      position: "sticky", left: 0, background: rowBg, cursor: "pointer",
+                      borderRight: `2px solid ${C.border}`, zIndex: 1,
+                      whiteSpace: "nowrap", borderBottom: `1px solid ${C.border}`,
+                      overflow: "hidden", textOverflow: "ellipsis" }}
+                      title={`${site.code} ${site.name}`}
                       onClick={() => { setSelSiteCode(site.code); setValetTab("site"); }}>
-                      <span style={{ fontSize: 9, color: C.gray, fontWeight: 600 }}>{site.code}</span>
-                      <br />{site.name.length > 6 ? site.name.slice(0, 6) + "…" : site.name}
+                      <span style={{ fontSize: 8, color: C.gray, fontWeight: 600 }}>{site.code} </span>
+                      {site.name.length > 5 ? site.name.slice(0, 5) + "…" : site.name}
                     </td>
-                    {/* 날짜별 셀 */}
+                    {/* 날짜별 셀 — 금액+건수 1줄 */}
                     {daysInMonth.map(d => {
                       const dow = new Date(d).getDay();
                       const hol = isHoliday(d);
@@ -7250,55 +7254,54 @@ function ValetFeePage({ profitState, onNavigate }) {
                       return (
                         <td key={d}
                           onClick={() => { if (rep || isBiz) onNavigate("daily_report", d, site.code); }}
-                          style={{ padding: "3px 2px", textAlign: "center", background: st.bg,
+                          style={{ padding: "2px 1px", textAlign: "center", background: st.bg,
                             border: `1px solid ${C.border}`, cursor: (rep || isBiz) ? "pointer" : "default",
-                            minWidth: 48, transition: "opacity 0.1s" }}>
+                            width: 38, minWidth: 38, verticalAlign: "middle" }}>
                           {hol || dow === 0 ? (
-                            <span style={{ fontSize: 9, color: C.holidayText }}>—</span>
+                            <span style={{ fontSize: 8, color: "#ccc" }}>—</span>
                           ) : rep ? (
-                            <div>
-                              <div style={{ fontSize: 11, fontWeight: 800, color: st.text, fontFamily: "'Outfit',sans-serif" }}>
+                            <div style={{ lineHeight: 1.3 }}>
+                              <div style={{ fontSize: 10, fontWeight: 900, color: st.text, fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap" }}>
                                 {fmtW(amt)}
                               </div>
-                              <div style={{ fontSize: 8, color: st.text, marginTop: 1 }}>
-                                {rep.status === "confirmed" ? "✅" : "⚠️"}{rep.valet_count || 0}건
+                              <div style={{ fontSize: 8, color: st.text, opacity: 0.85 }}>
+                                {rep.status === "confirmed" ? "✅" : "⚠️"}{rep.valet_count || 0}
                               </div>
                             </div>
                           ) : isBiz ? (
-                            <span style={{ fontSize: 10, color: C2.missingText, fontWeight: 700 }}>❌</span>
+                            <span style={{ fontSize: 11, color: C2.missingText }}>✕</span>
                           ) : (
-                            <span style={{ fontSize: 9, color: "#ccc" }}>—</span>
+                            <span style={{ fontSize: 8, color: "#ddd" }}>—</span>
                           )}
                         </td>
                       );
                     })}
-                    {/* 우측 고정: 월합계, 일평균 */}
-                    <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: C.navy,
-                      background: si % 2 === 0 ? "#EEF2FF" : "#E8ECFF", position: "sticky", right: 72,
+                    {/* 우측 고정 */}
+                    <td style={{ padding: "3px 8px", textAlign: "right", fontWeight: 800, color: C.navy,
+                      background: si % 2 === 0 ? "#EEF2FF" : "#E8ECFF", position: "sticky", right: 60,
                       borderLeft: "2px solid #C5CAE9", fontSize: 11, whiteSpace: "nowrap" }}>
                       {monthTotal > 0 ? fmt(monthTotal) : "—"}
                     </td>
-                    <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700, color: "#156082",
+                    <td style={{ padding: "3px 6px", textAlign: "right", fontWeight: 700, color: "#156082",
                       background: si % 2 === 0 ? "#E3F2FD" : "#DCEEFB", position: "sticky", right: 0,
-                      fontSize: 11, whiteSpace: "nowrap" }}>
+                      fontSize: 10, whiteSpace: "nowrap" }}>
                       {dayAvg > 0 ? fmtW(dayAvg) : "—"}
                     </td>
                   </tr>
                 );
               })}
               {/* 하단 합계 행 */}
-              <tr style={{ background: C.navy, fontWeight: 900, position: "sticky", bottom: 0 }}>
-                <td style={{ padding: "7px 10px", color: C.gold, fontWeight: 900, fontSize: 11, position: "sticky", left: 0, background: C.navy }}>일별 합계</td>
+              <tr style={{ background: C.navy, position: "sticky", bottom: 0 }}>
+                <td style={{ padding: "5px 8px", color: C.gold, fontWeight: 900, fontSize: 11,
+                  position: "sticky", left: 0, background: C.navy }}>일별 합계</td>
                 {daysInMonth.map(d => {
-                  const dow = new Date(d).getDay();
-                  const hol = isHoliday(d);
                   const total = dayTotal[d] || 0;
                   return (
-                    <td key={d} style={{ padding: "5px 2px", textAlign: "center", borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
+                    <td key={d} style={{ padding: "4px 1px", textAlign: "center", borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
                       {total > 0 ? (
-                        <span style={{ fontSize: 10, fontWeight: 800, color: C.gold, fontFamily: "'Outfit',sans-serif" }}>{fmtW(total)}</span>
+                        <span style={{ fontSize: 9, fontWeight: 800, color: C.gold, fontFamily: "'Outfit',sans-serif" }}>{fmtW(total)}</span>
                       ) : (
-                        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>—</span>
+                        <span style={{ fontSize: 8, color: "rgba(255,255,255,0.25)" }}>—</span>
                       )}
                     </td>
                   );
@@ -7666,10 +7669,10 @@ function ValetFeePage({ profitState, onNavigate }) {
   // 메인 렌더
   // ══════════════════════════════════════════════
   return (
-    <div style={{ padding: "20px 24px", fontFamily: "'Noto Sans KR', sans-serif" }}>
+    <div style={{ padding: "14px 20px", fontFamily: "'Noto Sans KR', sans-serif" }}>
       {/* 헤더 */}
-      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 900, color: C.navy }}>🎫 발렛비 관리</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: 16, fontWeight: 900, color: C.navy }}>🎫 발렛비 관리</h2>
         {/* 월 네비게이션 */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1.5px solid ${C.navy}`, borderRadius: 10, padding: "4px 10px" }}>
           <button onClick={() => moveMonth(-1)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.navy, fontWeight: 900, padding: "0 4px" }}>‹</button>
@@ -7681,27 +7684,27 @@ function ValetFeePage({ profitState, onNavigate }) {
       </div>
 
       {/* KPI 스트립 */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10, marginBottom: 18 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 14 }}>
         {[
           ["📅 영업일", `${kpi.bizDays}일`, C.navy],
-          ["💰 월합계", fmt(kpi.total) + "원", C.navy],
-          ["✅ 확정발렛비", fmt(kpi.confirmed) + "원", C.success],
-          ["⚠️ 미확정", fmt(kpi.submitted) + "원", C.orange],
-          ["📊 일평균", fmt(Math.round(kpi.dailyAvg)) + "원", "#156082"],
+          ["💰 월합계", fmt(kpi.total), C.navy],
+          ["✅ 확정", fmt(kpi.confirmed), C.success],
+          ["⚠️ 미확정", fmt(kpi.submitted), C.orange],
+          ["📊 일평균", fmt(Math.round(kpi.dailyAvg)), "#156082"],
         ].map(([lbl, val, cl]) => (
-          <div key={lbl} style={{ background: "#fff", borderRadius: 10, padding: "12px 14px",
-            border: `1px solid ${C.border}`, borderLeft: `4px solid ${cl}` }}>
-            <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>{lbl}</div>
-            <div style={{ fontSize: 14, fontWeight: 900, color: cl, fontFamily: "'Outfit',sans-serif", wordBreak: "break-all" }}>{val}</div>
+          <div key={lbl} style={{ background: "#fff", borderRadius: 8, padding: "8px 12px",
+            border: `1px solid ${C.border}`, borderLeft: `3px solid ${cl}` }}>
+            <div style={{ fontSize: 10, color: C.gray, marginBottom: 2 }}>{lbl}</div>
+            <div style={{ fontSize: 13, fontWeight: 900, color: cl, fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{val}원</div>
           </div>
         ))}
       </div>
 
       {/* 탭 버튼 */}
-      <div style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: `2px solid ${C.border}`, paddingBottom: 0 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 14, borderBottom: `2px solid ${C.border}`, paddingBottom: 0 }}>
         {[["calendar", "📅 전체 캘린더"], ["site", "🏢 업장별 캘린더"], ["analysis", "📊 분석"]].map(([k, lbl]) => (
           <button key={k} onClick={() => setValetTab(k)}
-            style={{ padding: "9px 18px", fontSize: 13, fontWeight: valetTab === k ? 900 : 700,
+            style={{ padding: "7px 16px", fontSize: 12, fontWeight: valetTab === k ? 900 : 700,
               background: "none", border: "none", cursor: "pointer",
               color: valetTab === k ? C.navy : C.gray,
               borderBottom: valetTab === k ? `3px solid ${C.navy}` : "3px solid transparent",
