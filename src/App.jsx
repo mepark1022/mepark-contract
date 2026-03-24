@@ -7026,6 +7026,700 @@ function MonthlyParkingPage({ employees, onDataChange }) {
   );
 }
 
+// ── 16-3-0. 발렛비 관리 (v9.5) ─────────────────────────
+function ValetFeePage({ profitState, onNavigate }) {
+  const { siteDetailsMap, valetFeeData } = profitState;
+  const todayStr = kstDate();
+  const [valetMonth, setValetMonth] = useState(todayStr.slice(0, 7));
+  const [valetTab, setValetTab] = useState("calendar"); // calendar | site | analysis
+  const [valetReports, setValetReports] = useState([]);
+  const [payMap, setPayMap] = useState({}); // report_id → payment rows
+  const [loading, setLoading] = useState(false);
+  // 탭2 선택 사업장
+  const [selSiteCode, setSelSiteCode] = useState(FIELD_SITES[0]?.code || "V001");
+  // 분석탭 — 6개월 추이 데이터
+  const [trendData, setTrendData] = useState([]);
+  const [trendLoading, setTrendLoading] = useState(false);
+
+  // 해당 월 daily_reports + payment 로드
+  const loadValetReports = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [y, m] = valetMonth.split("-").map(Number);
+      const start = `${valetMonth}-01`;
+      const nm = m === 12 ? 1 : m + 1; const ny = m === 12 ? y + 1 : y;
+      const end = `${ny}-${String(nm).padStart(2, "0")}-01`;
+      const { data: reps } = await supabase.from("daily_reports")
+        .select("id, report_date, site_code, valet_count, valet_amount, status")
+        .gte("report_date", start).lt("report_date", end).order("report_date");
+      setValetReports(reps || []);
+      if (reps && reps.length > 0) {
+        const ids = reps.map(r => r.id);
+        const { data: pays } = await supabase.from("daily_report_payment")
+          .select("report_id, payment_type, amount, count").in("report_id", ids);
+        const pm = {};
+        (pays || []).forEach(p => { if (!pm[p.report_id]) pm[p.report_id] = []; pm[p.report_id].push(p); });
+        setPayMap(pm);
+      } else { setPayMap({}); }
+    } catch (e) { console.error(e); }
+    setLoading(false);
+  }, [valetMonth]);
+
+  useEffect(() => { loadValetReports(); }, [loadValetReports]);
+
+  // 분석탭 — 최근 6개월 추이
+  const loadTrend = useCallback(async () => {
+    setTrendLoading(true);
+    try {
+      const [y, m] = valetMonth.split("-").map(Number);
+      const months = [];
+      for (let i = 5; i >= 0; i--) {
+        let mm = m - i; let yy = y;
+        if (mm <= 0) { mm += 12; yy -= 1; }
+        months.push(`${yy}-${String(mm).padStart(2, "0")}`);
+      }
+      const start = `${months[0]}-01`;
+      const lastM = months[months.length - 1];
+      const [ly, lm] = lastM.split("-").map(Number);
+      const nm2 = lm === 12 ? 1 : lm + 1; const ny2 = lm === 12 ? ly + 1 : ly;
+      const end = `${ny2}-${String(nm2).padStart(2, "0")}-01`;
+      const { data: reps } = await supabase.from("daily_reports")
+        .select("report_date, site_code, valet_amount, valet_count, status")
+        .gte("report_date", start).lt("report_date", end);
+      // 월별 집계
+      const byMonth = {};
+      months.forEach(mo => { byMonth[mo] = { month: mo, total: 0, count: 0, days: 0, confirmed: 0 }; });
+      (reps || []).forEach(r => {
+        const mo = r.report_date.slice(0, 7);
+        if (!byMonth[mo]) return;
+        byMonth[mo].total += toNum(r.valet_amount);
+        byMonth[mo].count += toNum(r.valet_count);
+        byMonth[mo].days++;
+        if (r.status === "confirmed") byMonth[mo].confirmed += toNum(r.valet_amount);
+      });
+      setTrendData(Object.values(byMonth));
+    } catch (e) { console.error(e); }
+    setTrendLoading(false);
+  }, [valetMonth]);
+
+  useEffect(() => { if (valetTab === "analysis") loadTrend(); }, [valetTab, loadTrend]);
+
+  // ── 날짜 목록 (해당 월 전체) ──
+  const daysInMonth = useMemo(() => {
+    const [y, m] = valetMonth.split("-").map(Number);
+    const cnt = new Date(y, m, 0).getDate();
+    return Array.from({ length: cnt }, (_, i) => {
+      const d = String(i + 1).padStart(2, "0");
+      return `${valetMonth}-${d}`;
+    });
+  }, [valetMonth]);
+
+  // report lookup: date+site → report
+  const reportByDateSite = useMemo(() => {
+    const m = {};
+    valetReports.forEach(r => { m[`${r.report_date}_${r.site_code}`] = r; });
+    return m;
+  }, [valetReports]);
+
+  // 활성 사업장 (해당 월에 일보가 있거나 기본 FIELD_SITES)
+  const activeSites = useMemo(() => FIELD_SITES, []);
+
+  // ── KPI 계산 ──
+  const kpi = useMemo(() => {
+    const [y, m] = valetMonth.split("-").map(Number);
+    const cnt = new Date(y, m, 0).getDate();
+    let bizDays = 0, total = 0, confirmed = 0, submitted = 0;
+    for (let i = 1; i <= cnt; i++) {
+      const d = `${valetMonth}-${String(i).padStart(2, "0")}`;
+      const dow = new Date(d).getDay();
+      if (dow !== 0 && !isHoliday(d)) bizDays++;
+    }
+    valetReports.forEach(r => {
+      total += toNum(r.valet_amount);
+      if (r.status === "confirmed") confirmed += toNum(r.valet_amount);
+      else if (r.status === "submitted") submitted += toNum(r.valet_amount);
+    });
+    const confirmDays = daysInMonth.filter(d => {
+      return activeSites.some(s => {
+        const r = reportByDateSite[`${d}_${s.code}`];
+        return r && r.status === "confirmed";
+      });
+    }).length;
+    const dailyAvg = confirmDays > 0 ? confirmed / confirmDays : total / Math.max(bizDays, 1);
+    return { bizDays, total, confirmed, submitted, dailyAvg };
+  }, [valetReports, daysInMonth, activeSites, reportByDateSite, valetMonth]);
+
+  // ── 월 네비게이션 ──
+  const moveMonth = (dir) => {
+    const [y, m] = valetMonth.split("-").map(Number);
+    let nm = m + dir; let ny = y;
+    if (nm > 12) { nm = 1; ny++; }
+    if (nm < 1) { nm = 12; ny--; }
+    setValetMonth(`${ny}-${String(nm).padStart(2, "0")}`);
+  };
+
+  const C2 = { confirmed: "#E8F5E9", confirmedText: "#2E7D32", confirmedBorder: "#A5D6A7",
+    submitted: "#FFF3E0", submittedText: "#E65100", submittedBorder: "#FFCC80",
+    missing: "#FFEBEE", missingText: "#C62828", missingBorder: "#FFCDD2",
+    holiday: "#F5F5F5", holidayText: "#9E9E9E",
+    weekend: "#FAFBFF", weekendText: "#9E9E9E" };
+
+  const statusStyle = (status, isHol, dow) => {
+    if (isHol || dow === 0) return { bg: C2.holiday, text: C2.holidayText, border: "#E0E0E0" };
+    if (dow === 6) return { bg: C2.weekend, text: C2.weekendText, border: "#E8EAF6" };
+    if (!status) return { bg: C2.missing, text: C2.missingText, border: C2.missingBorder };
+    if (status === "confirmed") return { bg: C2.confirmed, text: C2.confirmedText, border: C2.confirmedBorder };
+    return { bg: C2.submitted, text: C2.submittedText, border: C2.submittedBorder };
+  };
+
+  const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"];
+
+  // ══════════════════════════════════════════════
+  // 탭1 — 전체 캘린더 (매트릭스 피벗)
+  // ══════════════════════════════════════════════
+  const renderCalendar = () => {
+    // 날짜별 전체 합계
+    const dayTotal = {};
+    daysInMonth.forEach(d => { dayTotal[d] = 0; });
+    valetReports.forEach(r => { dayTotal[r.report_date] = (dayTotal[r.report_date] || 0) + toNum(r.valet_amount); });
+
+    // 사업장별 월합계 / 일평균
+    const siteMonthTotal = {};
+    const siteDays = {};
+    activeSites.forEach(s => { siteMonthTotal[s.code] = 0; siteDays[s.code] = 0; });
+    valetReports.forEach(r => {
+      siteMonthTotal[r.site_code] = (siteMonthTotal[r.site_code] || 0) + toNum(r.valet_amount);
+      siteDays[r.site_code] = (siteDays[r.site_code] || 0) + 1;
+    });
+
+    const fmtW = (n) => n >= 10000 ? `${(n / 10000).toFixed(1)}만` : n > 0 ? `${Math.round(n / 1000)}천` : "";
+
+    return (
+      <div>
+        {/* 날짜 헤더 행 + 사업장별 행 + 합계 행 — 가로 스크롤 */}
+        <div style={{ overflowX: "auto", borderRadius: 12, border: `1px solid ${C.border}` }}>
+          <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "max-content", width: "100%" }}>
+            <thead>
+              <tr style={{ background: C.navy, position: "sticky", top: 0, zIndex: 2 }}>
+                {/* 사업장 컬럼 고정 */}
+                <th style={{ padding: "8px 12px", color: "#fff", fontWeight: 800, textAlign: "left", minWidth: 110, position: "sticky", left: 0, background: C.navy, zIndex: 3 }}>사업장</th>
+                {/* 날짜 헤더 */}
+                {daysInMonth.map(d => {
+                  const day = parseInt(d.split("-")[2]);
+                  const dow = new Date(d).getDay();
+                  const hol = isHoliday(d);
+                  const holName = HOLIDAY_NAMES[d];
+                  const isWknd = dow === 0 || dow === 6;
+                  return (
+                    <th key={d} style={{ padding: "4px 3px", minWidth: 48, textAlign: "center",
+                      color: hol ? "#FFCDD2" : isWknd ? "#90CAF9" : "#fff", fontWeight: 700, borderLeft: `1px solid rgba(255,255,255,0.1)` }}>
+                      <div style={{ fontSize: 13, fontWeight: 900 }}>{day}</div>
+                      <div style={{ fontSize: 9 }}>{DOW_KR[dow]}</div>
+                      {hol && <div style={{ fontSize: 8, color: "#FFCDD2" }}>{holName?.slice(0,2) || "공휴"}</div>}
+                    </th>
+                  );
+                })}
+                {/* 우측 고정 컬럼 */}
+                <th style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, minWidth: 72, textAlign: "right", borderLeft: "2px solid rgba(255,255,255,0.3)", position: "sticky", right: 72, background: C.navy }}>월합계</th>
+                <th style={{ padding: "8px 6px", color: "#90CAF9", fontWeight: 800, minWidth: 72, textAlign: "right", position: "sticky", right: 0, background: C.navy }}>일평균</th>
+              </tr>
+            </thead>
+            <tbody>
+              {activeSites.map((site, si) => {
+                const monthTotal = siteMonthTotal[site.code] || 0;
+                const dayCount = siteDays[site.code] || 0;
+                const dayAvg = dayCount > 0 ? monthTotal / dayCount : 0;
+                return (
+                  <tr key={site.code} style={{ background: si % 2 === 0 ? "#fff" : "#FAFBFF" }}>
+                    {/* 사업장명 — 클릭 시 탭2로 */}
+                    <td style={{ padding: "5px 10px", fontWeight: 700, fontSize: 11, color: C.navy, position: "sticky", left: 0,
+                      background: si % 2 === 0 ? "#fff" : "#FAFBFF", cursor: "pointer", borderRight: `2px solid ${C.border}`, zIndex: 1,
+                      whiteSpace: "nowrap", borderBottom: `1px solid ${C.border}` }}
+                      onClick={() => { setSelSiteCode(site.code); setValetTab("site"); }}>
+                      <span style={{ fontSize: 9, color: C.gray, fontWeight: 600 }}>{site.code}</span>
+                      <br />{site.name.length > 6 ? site.name.slice(0, 6) + "…" : site.name}
+                    </td>
+                    {/* 날짜별 셀 */}
+                    {daysInMonth.map(d => {
+                      const dow = new Date(d).getDay();
+                      const hol = isHoliday(d);
+                      const rep = reportByDateSite[`${d}_${site.code}`];
+                      const st = statusStyle(rep?.status, hol, dow);
+                      const amt = toNum(rep?.valet_amount);
+                      const isBiz = dow !== 0 && !hol;
+                      return (
+                        <td key={d}
+                          onClick={() => { if (rep || isBiz) onNavigate("daily_report", d, site.code); }}
+                          style={{ padding: "3px 2px", textAlign: "center", background: st.bg,
+                            border: `1px solid ${C.border}`, cursor: (rep || isBiz) ? "pointer" : "default",
+                            minWidth: 48, transition: "opacity 0.1s" }}>
+                          {hol || dow === 0 ? (
+                            <span style={{ fontSize: 9, color: C.holidayText }}>—</span>
+                          ) : rep ? (
+                            <div>
+                              <div style={{ fontSize: 11, fontWeight: 800, color: st.text, fontFamily: "'Outfit',sans-serif" }}>
+                                {fmtW(amt)}
+                              </div>
+                              <div style={{ fontSize: 8, color: st.text, marginTop: 1 }}>
+                                {rep.status === "confirmed" ? "✅" : "⚠️"}{rep.valet_count || 0}건
+                              </div>
+                            </div>
+                          ) : isBiz ? (
+                            <span style={{ fontSize: 10, color: C2.missingText, fontWeight: 700 }}>❌</span>
+                          ) : (
+                            <span style={{ fontSize: 9, color: "#ccc" }}>—</span>
+                          )}
+                        </td>
+                      );
+                    })}
+                    {/* 우측 고정: 월합계, 일평균 */}
+                    <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 800, color: C.navy,
+                      background: si % 2 === 0 ? "#EEF2FF" : "#E8ECFF", position: "sticky", right: 72,
+                      borderLeft: "2px solid #C5CAE9", fontSize: 11, whiteSpace: "nowrap" }}>
+                      {monthTotal > 0 ? fmt(monthTotal) : "—"}
+                    </td>
+                    <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 700, color: "#156082",
+                      background: si % 2 === 0 ? "#E3F2FD" : "#DCEEFB", position: "sticky", right: 0,
+                      fontSize: 11, whiteSpace: "nowrap" }}>
+                      {dayAvg > 0 ? fmtW(dayAvg) : "—"}
+                    </td>
+                  </tr>
+                );
+              })}
+              {/* 하단 합계 행 */}
+              <tr style={{ background: C.navy, fontWeight: 900, position: "sticky", bottom: 0 }}>
+                <td style={{ padding: "7px 10px", color: C.gold, fontWeight: 900, fontSize: 11, position: "sticky", left: 0, background: C.navy }}>일별 합계</td>
+                {daysInMonth.map(d => {
+                  const dow = new Date(d).getDay();
+                  const hol = isHoliday(d);
+                  const total = dayTotal[d] || 0;
+                  return (
+                    <td key={d} style={{ padding: "5px 2px", textAlign: "center", borderLeft: "1px solid rgba(255,255,255,0.1)" }}>
+                      {total > 0 ? (
+                        <span style={{ fontSize: 10, fontWeight: 800, color: C.gold, fontFamily: "'Outfit',sans-serif" }}>{fmtW(total)}</span>
+                      ) : (
+                        <span style={{ fontSize: 9, color: "rgba(255,255,255,0.3)" }}>—</span>
+                      )}
+                    </td>
+                  );
+                })}
+                <td style={{ padding: "7px 8px", textAlign: "right", color: C.gold, fontWeight: 900, fontSize: 12, position: "sticky", right: 72, background: C.navy, whiteSpace: "nowrap" }}>
+                  {fmt(kpi.total)}
+                </td>
+                <td style={{ padding: "7px 8px", textAlign: "right", color: "#90CAF9", fontWeight: 800, fontSize: 11, position: "sticky", right: 0, background: C.navy, whiteSpace: "nowrap" }}>
+                  {fmtW(kpi.dailyAvg)}/일
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        {/* 범례 */}
+        <div style={{ display: "flex", gap: 16, marginTop: 10, fontSize: 11, color: C.gray, flexWrap: "wrap" }}>
+          {[["✅ 확정", C2.confirmedText, C2.confirmed], ["⚠️ 미확정", C2.submittedText, C2.submitted],
+            ["❌ 미제출", C2.missingText, C2.missing], ["— 휴일", C2.holidayText, C2.holiday]].map(([lbl, tc, bg]) => (
+            <span key={lbl} style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+              <span style={{ width: 12, height: 12, borderRadius: 3, background: bg, display: "inline-block" }} />
+              <span style={{ color: tc, fontWeight: 700 }}>{lbl}</span>
+            </span>
+          ))}
+          <span style={{ color: C.gray }}>· 사업장명 클릭 → 업장별 캘린더 · 셀 클릭 → 현장일보 이동</span>
+        </div>
+      </div>
+    );
+  };
+
+  // ══════════════════════════════════════════════
+  // 탭2 — 업장별 캘린더 (7열 달력)
+  // ══════════════════════════════════════════════
+  const renderSiteCalendar = () => {
+    const site = FIELD_SITES.find(s => s.code === selSiteCode) || FIELD_SITES[0];
+    const siteReps = valetReports.filter(r => r.site_code === selSiteCode);
+    const repByDate = {};
+    siteReps.forEach(r => { repByDate[r.report_date] = r; });
+
+    // 사업장 KPI
+    const siteTot = siteReps.reduce((s, r) => s + toNum(r.valet_amount), 0);
+    const siteCnt = siteReps.reduce((s, r) => s + toNum(r.valet_count), 0);
+    const confDays = siteReps.filter(r => r.status === "confirmed").length;
+    const allDays = siteReps.length;
+    const dailyAvg = allDays > 0 ? siteTot / allDays : 0;
+    const amts = siteReps.filter(r => r.valet_amount > 0).map(r => toNum(r.valet_amount));
+    const maxAmt = amts.length ? Math.max(...amts) : 0;
+    const minAmt = amts.length ? Math.min(...amts) : 0;
+    const maxDay = siteReps.find(r => toNum(r.valet_amount) === maxAmt)?.report_date || "—";
+    const minDay = siteReps.find(r => toNum(r.valet_amount) === minAmt)?.report_date || "—";
+
+    // 달력 시작 요일 계산
+    const [y, m] = valetMonth.split("-").map(Number);
+    const firstDow = new Date(y, m - 1, 1).getDay();
+    const daysCount = new Date(y, m, 0).getDate();
+    const cells = [];
+    for (let i = 0; i < firstDow; i++) cells.push(null);
+    for (let i = 1; i <= daysCount; i++) cells.push(i);
+
+    const fmtW = (n) => n >= 10000 ? `${(n / 10000).toFixed(1)}만` : n > 0 ? `${Math.round(n / 1000)}천` : "";
+
+    const PAYTYPE_COLORS = { cash: "#4CAF50", card: "#2196F3", transfer: "#FF9800", free_valet: "#9E9E9E", etc: "#9C27B0" };
+    const PAYTYPE_LABELS = { cash: "현금", card: "카드", transfer: "이체", free_valet: "무료", etc: "기타" };
+
+    return (
+      <div>
+        {/* 사업장 선택 */}
+        <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap", alignItems: "center" }}>
+          <select value={selSiteCode} onChange={e => setSelSiteCode(e.target.value)}
+            style={{ padding: "8px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, fontWeight: 800,
+              color: C.navy, fontSize: 13, background: "#fff", cursor: "pointer" }}>
+            {FIELD_SITES.map(s => <option key={s.code} value={s.code}>[{s.code}] {s.name}</option>)}
+          </select>
+          <div style={{ fontSize: 11, color: C.gray }}>· 셀 클릭 시 현장일보로 이동합니다</div>
+        </div>
+        {/* 사업장 KPI */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(6,1fr)", gap: 8, marginBottom: 16 }}>
+          {[
+            ["📅 영업일", `${allDays}일`, ""],
+            ["🎫 발렛건수", `${fmt(siteCnt)}건`, ""],
+            ["💰 발렛비합계", fmt(siteTot) + "원", ""],
+            ["📊 일평균", fmtW(dailyAvg) + "원", ""],
+            ["🔝 최고 발렛비", fmtW(maxAmt), maxDay ? maxDay.slice(5) : "—"],
+            ["🔻 최저 발렛비", fmtW(minAmt), minDay ? minDay.slice(5) : "—"],
+          ].map(([lbl, val, sub]) => (
+            <div key={lbl} style={{ background: "#fff", borderRadius: 10, padding: "10px 12px", border: `1px solid ${C.border}`, textAlign: "center" }}>
+              <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>{lbl}</div>
+              <div style={{ fontSize: 14, fontWeight: 900, color: C.navy, fontFamily: "'Outfit',sans-serif" }}>{val}</div>
+              {sub && <div style={{ fontSize: 10, color: C.gray }}>{sub}</div>}
+            </div>
+          ))}
+        </div>
+        {/* 7열 달력 */}
+        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
+          {/* 요일 헤더 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", background: C.navy }}>
+            {["일", "월", "화", "수", "목", "금", "토"].map((d, i) => (
+              <div key={d} style={{ padding: "8px", textAlign: "center", fontSize: 12, fontWeight: 800,
+                color: i === 0 ? "#FFCDD2" : i === 6 ? "#90CAF9" : "#fff" }}>{d}</div>
+            ))}
+          </div>
+          {/* 달력 셀 */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7,1fr)", gap: 1, background: C.border }}>
+            {cells.map((day, idx) => {
+              if (!day) return <div key={`empty-${idx}`} style={{ background: "#F9FAFB", minHeight: 110 }} />;
+              const dateStr = `${valetMonth}-${String(day).padStart(2, "0")}`;
+              const dow = new Date(dateStr).getDay();
+              const hol = isHoliday(dateStr);
+              const rep = repByDate[dateStr];
+              const st = statusStyle(rep?.status, hol, dow);
+              const isBiz = dow !== 0 && !hol;
+              const pays = rep ? (payMap[rep.id] || []) : [];
+              const totalPay = pays.reduce((s, p) => s + toNum(p.amount), 0);
+              return (
+                <div key={dateStr}
+                  onClick={() => (rep || isBiz) && onNavigate("daily_report", dateStr, selSiteCode)}
+                  style={{ background: st.bg, minHeight: 110, padding: "6px 8px", cursor: (rep || isBiz) ? "pointer" : "default",
+                    position: "relative", transition: "filter 0.15s" }}
+                  onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.95)"}
+                  onMouseLeave={e => e.currentTarget.style.filter = "none"}>
+                  {/* 날짜 번호 */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
+                    <span style={{ fontSize: 14, fontWeight: 900, color: hol ? C.error : dow === 0 ? C.error : dow === 6 ? C.navy : C.dark }}>
+                      {day}
+                    </span>
+                    {hol && <span style={{ fontSize: 9, color: C.error, fontWeight: 700 }}>{HOLIDAY_NAMES[dateStr]?.slice(0,3) || "공휴"}</span>}
+                  </div>
+                  {/* 발렛 데이터 */}
+                  {rep ? (
+                    <div>
+                      <div style={{ fontSize: 15, fontWeight: 900, color: st.text, fontFamily: "'Outfit',sans-serif", marginBottom: 2 }}>
+                        {toNum(rep.valet_amount) > 0 ? fmt(rep.valet_amount) + "원" : "0원"}
+                      </div>
+                      <div style={{ fontSize: 10, color: C.gray, marginBottom: 4 }}>{rep.valet_count || 0}건</div>
+                      {/* 결제수단 바 */}
+                      {totalPay > 0 && (
+                        <div style={{ marginTop: 4 }}>
+                          <div style={{ display: "flex", height: 5, borderRadius: 3, overflow: "hidden", gap: 1 }}>
+                            {pays.filter(p => p.amount > 0).map(p => (
+                              <div key={p.payment_type} style={{
+                                flex: p.amount / totalPay, background: PAYTYPE_COLORS[p.payment_type] || "#9E9E9E", borderRadius: 2 }} />
+                            ))}
+                          </div>
+                          <div style={{ display: "flex", gap: 4, marginTop: 3, flexWrap: "wrap" }}>
+                            {pays.filter(p => p.amount > 0).map(p => (
+                              <span key={p.payment_type} style={{ fontSize: 8, color: PAYTYPE_COLORS[p.payment_type] || "#9E9E9E", fontWeight: 700 }}>
+                                {PAYTYPE_LABELS[p.payment_type]}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div style={{ fontSize: 9, marginTop: 2, fontWeight: 700, color: st.text }}>
+                        {rep.status === "confirmed" ? "✅ 확정" : "⚠️ 미확정"}
+                      </div>
+                    </div>
+                  ) : isBiz ? (
+                    <div style={{ fontSize: 11, color: C2.missingText, fontWeight: 700, marginTop: 8 }}>❌ 미제출</div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  // ══════════════════════════════════════════════
+  // 탭3 — 분석
+  // ══════════════════════════════════════════════
+  const renderAnalysis = () => {
+    // 요일별 평균
+    const dowMap = { 0:[], 1:[], 2:[], 3:[], 4:[], 5:[], 6:[] };
+    valetReports.filter(r => r.valet_amount > 0).forEach(r => {
+      const dow = new Date(r.report_date).getDay();
+      dowMap[dow].push(toNum(r.valet_amount));
+    });
+    const dowAvg = [1,2,3,4,5,6,0].map(d => ({
+      name: DOW_KR[d],
+      avg: dowMap[d].length > 0 ? Math.round(dowMap[d].reduce((a,b)=>a+b,0) / dowMap[d].length) : 0,
+      days: dowMap[d].length,
+    }));
+
+    // 업장별 순위
+    const siteMap = {};
+    activeSites.forEach(s => { siteMap[s.code] = { code: s.code, name: s.name, total: 0, count: 0, days: 0, confirmed: 0 }; });
+    valetReports.forEach(r => {
+      if (!siteMap[r.site_code]) return;
+      siteMap[r.site_code].total += toNum(r.valet_amount);
+      siteMap[r.site_code].count += toNum(r.valet_count);
+      siteMap[r.site_code].days++;
+      if (r.status === "confirmed") siteMap[r.site_code].confirmed += toNum(r.valet_amount);
+    });
+    const siteRank = Object.values(siteMap).filter(s => s.total > 0).sort((a,b) => b.total - a.total);
+
+    // 결제수단 집계
+    const payTotals = {};
+    Object.values(payMap).flat().forEach(p => {
+      payTotals[p.payment_type] = (payTotals[p.payment_type] || 0) + toNum(p.amount);
+    });
+    const grandPay = Object.values(payTotals).reduce((a,b)=>a+b,0);
+    const PAYTYPE_COLORS = { cash: "#4CAF50", card: "#2196F3", transfer: "#FF9800", free_valet: "#9E9E9E", etc: "#9C27B0" };
+    const PAYTYPE_LABELS = { cash: "현금", card: "카드", transfer: "계좌이체", free_valet: "무료발렛", etc: "기타" };
+
+    const fmtW = (n) => n >= 10000 ? `${(n / 10000).toFixed(1)}만` : n > 0 ? `${Math.round(n / 1000)}천` : "0";
+    const maxDow = Math.max(...dowAvg.map(d => d.avg), 1);
+    const maxTrend = Math.max(...trendData.map(t => t.total), 1);
+
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+        {/* 섹션 A — 전체 월 요약 */}
+        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 14 }}>📋 {valetMonth} 전체 요약</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+            {[
+              ["총 발렛비", fmt(kpi.total) + "원", C.navy],
+              ["총 발렛건수", fmt(valetReports.reduce((s,r)=>s+toNum(r.valet_count),0)) + "건", C.navy],
+              ["평균 단가", valetReports.reduce((s,r)=>s+toNum(r.valet_count),0) > 0 ?
+                fmt(Math.round(kpi.total / valetReports.reduce((s,r)=>s+toNum(r.valet_count),0))) + "원/건" : "—", "#156082"],
+              ["확정 비율", kpi.total > 0 ? Math.round(kpi.confirmed / kpi.total * 100) + "%" : "—", C.success],
+            ].map(([l,v,cl]) => (
+              <div key={l} style={{ background: C.bg || "#F8F9FA", borderRadius: 8, padding: "12px 14px" }}>
+                <div style={{ fontSize: 10, color: C.gray, marginBottom: 4 }}>{l}</div>
+                <div style={{ fontSize: 16, fontWeight: 900, color: cl, fontFamily: "'Outfit',sans-serif" }}>{v}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* 섹션 B — 요일별 평균 (직접 구현 막대차트) */}
+        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 14 }}>📅 요일별 평균 발렛비</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 140, paddingBottom: 8 }}>
+            {dowAvg.map(d => {
+              const pct = maxDow > 0 ? d.avg / maxDow : 0;
+              const isWknd = d.name === "토" || d.name === "일";
+              return (
+                <div key={d.name} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                  <div style={{ fontSize: 10, color: C.navy, fontWeight: 800, fontFamily: "'Outfit',sans-serif" }}>
+                    {d.avg > 0 ? fmtW(d.avg) : ""}
+                  </div>
+                  <div style={{ width: "80%", background: isWknd ? "#90CAF9" : C.navy, borderRadius: "4px 4px 0 0",
+                    height: `${Math.round(pct * 100)}px`, minHeight: d.avg > 0 ? 4 : 0, transition: "height 0.3s" }} />
+                  <div style={{ fontSize: 11, fontWeight: 800, color: isWknd ? C.navy : C.dark }}>{d.name}</div>
+                  <div style={{ fontSize: 9, color: C.gray }}>{d.days}일</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* 섹션 C — 업장별 순위 */}
+        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 14 }}>🏆 업장별 발렛비 순위</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <thead>
+                <tr style={{ background: C.navy }}>
+                  {["순위", "코드", "사업장", "영업일", "발렛건수", "발렛비합계", "일평균", "확정률"].map(h => (
+                    <th key={h} style={{ padding: "7px 10px", color: "#fff", fontWeight: 800, textAlign: h === "사업장" ? "left" : "center", whiteSpace: "nowrap" }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {siteRank.map((s, i) => {
+                  const dayAvgS = s.days > 0 ? s.total / s.days : 0;
+                  const confRate = s.total > 0 ? Math.round(s.confirmed / s.total * 100) : 0;
+                  return (
+                    <tr key={s.code} style={{ background: i % 2 === 0 ? "#fff" : "#F8F9FF", borderBottom: `1px solid ${C.border}` }}
+                      onClick={() => { setSelSiteCode(s.code); setValetTab("site"); }} style2={{ cursor: "pointer" }}>
+                      <td style={{ padding: "7px 10px", textAlign: "center", fontWeight: 900, fontSize: 14,
+                        color: i === 0 ? "#F5B731" : i === 1 ? "#9E9E9E" : i === 2 ? "#CD7F32" : C.gray }}>
+                        {i < 3 ? ["🥇","🥈","🥉"][i] : i + 1}
+                      </td>
+                      <td style={{ padding: "7px 10px", textAlign: "center", color: C.gray, fontSize: 10 }}>{s.code}</td>
+                      <td style={{ padding: "7px 10px", fontWeight: 700, color: C.navy, cursor: "pointer" }}
+                        onClick={() => { setSelSiteCode(s.code); setValetTab("site"); }}>
+                        {s.name}
+                      </td>
+                      <td style={{ padding: "7px 10px", textAlign: "center", color: C.dark }}>{s.days}일</td>
+                      <td style={{ padding: "7px 10px", textAlign: "center", color: C.dark }}>{fmt(s.count)}건</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", fontWeight: 800, color: C.navy, fontFamily: "'Outfit',sans-serif" }}>{fmt(s.total)}원</td>
+                      <td style={{ padding: "7px 10px", textAlign: "right", color: "#156082" }}>{fmtW(dayAvgS)}원</td>
+                      <td style={{ padding: "7px 10px", textAlign: "center" }}>
+                        <span style={{ color: confRate >= 90 ? C.success : confRate >= 70 ? C.orange : C.error, fontWeight: 800 }}>
+                          {confRate}%
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+                {siteRank.length === 0 && (
+                  <tr><td colSpan={8} style={{ padding: 24, textAlign: "center", color: C.gray }}>이 달 발렛비 데이터가 없습니다.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* 섹션 D — 6개월 추이 */}
+        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 14 }}>📈 최근 6개월 추이</div>
+          {trendLoading ? (
+            <div style={{ textAlign: "center", color: C.gray, padding: 24 }}>로딩 중...</div>
+          ) : (
+            <div style={{ display: "flex", gap: 8, alignItems: "flex-end", height: 140, paddingBottom: 8 }}>
+              {trendData.map((t, i) => {
+                const pct = maxTrend > 0 ? t.total / maxTrend : 0;
+                const isCurrent = t.month === valetMonth;
+                return (
+                  <div key={t.month} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ fontSize: 9, color: isCurrent ? C.gold : C.navy, fontWeight: 800 }}>
+                      {t.total > 0 ? fmtW(t.total) : ""}
+                    </div>
+                    <div style={{ width: "80%", borderRadius: "4px 4px 0 0", transition: "height 0.3s",
+                      height: `${Math.round(pct * 100)}px`, minHeight: t.total > 0 ? 4 : 0,
+                      background: isCurrent ? C.gold : C.navy, opacity: isCurrent ? 1 : 0.55 + i * 0.07 }} />
+                    <div style={{ fontSize: 10, fontWeight: isCurrent ? 900 : 700,
+                      color: isCurrent ? C.gold : C.gray }}>{t.month.slice(5)}월</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* 섹션 E — 결제수단 */}
+        <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, padding: "18px 20px" }}>
+          <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 14 }}>💳 결제수단 분석</div>
+          {grandPay > 0 ? (
+            <div style={{ display: "flex", gap: 24, alignItems: "center", flexWrap: "wrap" }}>
+              {/* 가로 스택바 */}
+              <div style={{ flex: 1, minWidth: 200 }}>
+                <div style={{ display: "flex", height: 28, borderRadius: 8, overflow: "hidden", gap: 2 }}>
+                  {Object.entries(payTotals).filter(([,v]) => v > 0).sort((a,b)=>b[1]-a[1]).map(([k,v]) => (
+                    <div key={k} style={{ flex: v / grandPay, background: PAYTYPE_COLORS[k] || "#9E9E9E",
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      fontSize: v / grandPay > 0.1 ? 10 : 0, color: "#fff", fontWeight: 800 }}>
+                      {v / grandPay > 0.1 ? Math.round(v / grandPay * 100) + "%" : ""}
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* 범례 */}
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {Object.entries(payTotals).filter(([,v]) => v > 0).sort((a,b)=>b[1]-a[1]).map(([k,v]) => (
+                  <div key={k} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <div style={{ width: 10, height: 10, borderRadius: 2, background: PAYTYPE_COLORS[k] || "#9E9E9E" }} />
+                    <span style={{ fontSize: 12, color: C.dark, fontWeight: 700 }}>
+                      {PAYTYPE_LABELS[k]} <span style={{ color: PAYTYPE_COLORS[k], fontWeight: 900 }}>{Math.round(v / grandPay * 100)}%</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ) : (
+            <div style={{ color: C.gray, textAlign: "center", padding: 16 }}>결제수단 데이터가 없습니다.</div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  // ══════════════════════════════════════════════
+  // 메인 렌더
+  // ══════════════════════════════════════════════
+  return (
+    <div style={{ padding: "20px 24px", fontFamily: "'Noto Sans KR', sans-serif" }}>
+      {/* 헤더 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 20, flexWrap: "wrap" }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 900, color: C.navy }}>🎫 발렛비 관리</h2>
+        {/* 월 네비게이션 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, background: "#fff", border: `1.5px solid ${C.navy}`, borderRadius: 10, padding: "4px 10px" }}>
+          <button onClick={() => moveMonth(-1)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.navy, fontWeight: 900, padding: "0 4px" }}>‹</button>
+          <input type="month" value={valetMonth} onChange={e => setValetMonth(e.target.value)}
+            style={{ border: "none", outline: "none", fontSize: 14, fontWeight: 800, color: C.navy, background: "transparent" }} />
+          <button onClick={() => moveMonth(1)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: C.navy, fontWeight: 900, padding: "0 4px" }}>›</button>
+        </div>
+        {loading && <span style={{ fontSize: 12, color: C.gray }}>⏳ 로딩 중...</span>}
+      </div>
+
+      {/* KPI 스트립 */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 10, marginBottom: 18 }}>
+        {[
+          ["📅 영업일", `${kpi.bizDays}일`, C.navy],
+          ["💰 월합계", fmt(kpi.total) + "원", C.navy],
+          ["✅ 확정발렛비", fmt(kpi.confirmed) + "원", C.success],
+          ["⚠️ 미확정", fmt(kpi.submitted) + "원", C.orange],
+          ["📊 일평균", fmt(Math.round(kpi.dailyAvg)) + "원", "#156082"],
+        ].map(([lbl, val, cl]) => (
+          <div key={lbl} style={{ background: "#fff", borderRadius: 10, padding: "12px 14px",
+            border: `1px solid ${C.border}`, borderLeft: `4px solid ${cl}` }}>
+            <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>{lbl}</div>
+            <div style={{ fontSize: 14, fontWeight: 900, color: cl, fontFamily: "'Outfit',sans-serif", wordBreak: "break-all" }}>{val}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* 탭 버튼 */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 18, borderBottom: `2px solid ${C.border}`, paddingBottom: 0 }}>
+        {[["calendar", "📅 전체 캘린더"], ["site", "🏢 업장별 캘린더"], ["analysis", "📊 분석"]].map(([k, lbl]) => (
+          <button key={k} onClick={() => setValetTab(k)}
+            style={{ padding: "9px 18px", fontSize: 13, fontWeight: valetTab === k ? 900 : 700,
+              background: "none", border: "none", cursor: "pointer",
+              color: valetTab === k ? C.navy : C.gray,
+              borderBottom: valetTab === k ? `3px solid ${C.navy}` : "3px solid transparent",
+              marginBottom: -2, transition: "all 0.15s" }}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {/* 탭 컨텐츠 */}
+      {valetTab === "calendar" && renderCalendar()}
+      {valetTab === "site" && renderSiteCalendar()}
+      {valetTab === "analysis" && renderAnalysis()}
+    </div>
+  );
+}
+
+
 // ── 16-3-1. 피크 근무 유틸 (v9.4) ──────────────────────────
 const isPeakWorker = (workCode) => {
   if (!workCode) return false;
@@ -7060,15 +7754,18 @@ const EXTRA_TYPES = [
   { key: "other", label: "기타수당" },
 ];
 
-function DailyReportPage({ employees, onDataChange }) {
+function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) {
   const confirm = useConfirm();
   const { profile, isCrewRole } = useAuth();
   const todayStr = today();
   // 크루: 본인 사업장(profile.site_code)으로 고정
   const crewSiteCode = isCrewRole ? (profile?.site_code || "V001") : null;
-  const [selMonth, setSelMonth] = useState(todayStr.slice(0, 7));
-  const [selSite, setSelSite] = useState(crewSiteCode || "ALL");
-  const [selDate, setSelDate] = useState(todayStr);
+  // 발렛비 관리 → 점프 지원 (initialDate/initialSite)
+  const initDate = initialDate || todayStr;
+  const initMonth = initDate.slice(0, 7);
+  const [selMonth, setSelMonth] = useState(initMonth);
+  const [selSite, setSelSite] = useState(crewSiteCode || initialSite || "ALL");
+  const [selDate, setSelDate] = useState(initDate);
   const [reports, setReports] = useState([]);
   const [staffMap, setStaffMap] = useState({});
   const [payMap, setPayMap] = useState({});
@@ -10495,7 +11192,7 @@ const PAGE_LABELS = {
   contract: "계약서", history: "계약이력", settings: "계약서 조항변경",
   profit_summary: "분석대시보드", profit_site_pl: "사업장 PL", profit_cost_input: "비용 입력",
   payroll: "급여대장", monthly_parking: "월주차 관리", profit_comparison: "비교 분석",
-  profit_alloc: "배부 설정", profit_import: "데이터 Import",
+  profit_alloc: "배부 설정", profit_import: "데이터 Import", valet_fee: "발렛비 관리",
   site_management: "사업장 관리", daily_report: "현장 일보",
   closing_report: "마감보고현황", attendance: "근태현황", full_calendar: "전체 캘린더",
   salary_calc: "인건비 견적", bug_reports: "오류 보고",
@@ -11182,6 +11879,9 @@ function MainApp() {
   // 크루 역할: 기본 페이지를 현장일보로 고정
   const [page, setPage] = useState(isCrewRole ? "daily_report" : "profit_summary");
   const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: !isCrewRole, calc: false });
+  // 발렛비 관리 → 현장일보 날짜/사업장 점프
+  const [jumpDate, setJumpDate] = useState(null);
+  const [jumpSite, setJumpSite] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
   const [docTargetEmp, setDocTargetEmp] = useState(null);
@@ -11382,6 +12082,7 @@ function MainApp() {
     { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
     { key: "payroll", icon: "💰", label: "급여대장" },
     { key: "monthly_parking", icon: "🅿️", label: "월주차 관리" },
+    { key: "valet_fee", icon: "🎫", label: "발렛비 관리" },
     { key: "profit_comparison", icon: "📈", label: "비교 분석" },
     { key: "profit_alloc", icon: "⚙️", label: "배부 설정" },
     { key: "profit_import", icon: "📥", label: "데이터 Import" },
@@ -11567,8 +12268,9 @@ function MainApp() {
         {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
         {page === "monthly_parking" && <MonthlyParkingPage employees={employees} onDataChange={loadMonthlyParking} />}
         {page === "payroll" && <PayrollPage employees={employees} profitState={profitState} />}
+        {page === "valet_fee" && <ValetFeePage profitState={profitState} onNavigate={(pg, date, site) => { if (date) setJumpDate(date); if (site) setJumpSite(site); setPage(pg); }} />}
         {page === "site_management" && <SiteManagementPage employees={employees} onSiteChange={loadSiteDetails} />}
-        {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} />}
+        {page === "daily_report" && <DailyReportPage employees={employees} onDataChange={() => { loadDailyReportSummary(); loadCostData(); }} initialDate={jumpDate} initialSite={jumpSite} />}
         {page === "closing_report" && <ClosingReportPage employees={employees} />}
         {page === "attendance" && <AttendancePage employees={employees} />}
         {page === "full_calendar" && <FullCalendarPage employees={employees} />}
