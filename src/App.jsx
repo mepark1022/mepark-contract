@@ -14057,7 +14057,7 @@ function AttendancePage({ employees }) {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "4px 6px", fontSize: 11, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left", minWidth: 90, maxWidth: 110 }}>
+                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "4px 4px", fontSize: 11, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left" }}>
                   근무자
                 </th>
                 {dates.map(d => {
@@ -14065,7 +14065,7 @@ function AttendancePage({ employees }) {
                   return (
                     <th key={d.day} title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}`} style={{
                       padding: "3px 0", fontSize: 9, fontWeight: 700, textAlign: "center",
-                      borderBottom: "2px solid #E8ECF4", minWidth: 24, width: 24,
+                      borderBottom: "2px solid #E8ECF4", minWidth: 28, width: 28,
                       background: d.isToday ? C.navy : d.isHoliday ? "#FFF3F3" : "#F4F6FB",
                       color: d.isToday ? "#fff" : isRed ? "#C62828" : C.dark,
                       borderLeft: d.day === 1 ? "none" : "1px solid #F0F0F0",
@@ -14083,7 +14083,7 @@ function AttendancePage({ employees }) {
                   { label: "휴", color: "#C62828" },
                   { label: "계", color: C.dark },
                 ].map((col, ci) => (
-                  <th key={col.label} style={{ padding: "4px 2px", fontSize: 9, fontWeight: 800, color: col.color, background: col.label === "계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 22, width: 22 }}>
+                  <th key={col.label} style={{ padding: "4px 2px", fontSize: 9, fontWeight: 800, color: col.color, background: col.label === "계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 24, width: 24 }}>
                     {col.label}
                   </th>
                 ))}
@@ -14132,20 +14132,17 @@ function AttendancePage({ employees }) {
                     ];
                     return (
                       <tr key={emp.id} style={{ background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
-                        <td style={{
-                          position: "sticky", left: 0, zIndex: 5, padding: "3px 6px", fontSize: 11, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
-                          background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap", minWidth: 90, maxWidth: 110,
+                        <td title={`${emp.emp_no || ""} ${emp.name} ${emp.position || ""}`} style={{
+                          position: "sticky", left: 0, zIndex: 5, padding: "4px 4px", fontSize: 11, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
+                          background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap", overflow: "hidden",
                         }}>
-                          <div style={{ display: "flex", alignItems: "center", gap: 3 }}>
-                            <span style={{ fontWeight: 800, fontSize: 11 }}>{emp.name}</span>
-                            {emp.work_code && (() => {
-                              const cat = getWorkCat(emp.work_code);
-                              const wl = WORK_CODES.find(w => w.code === emp.work_code)?.label || emp.work_code;
-                              const catColor = cat === "weekday" ? { bg: "#E3F2FD", color: "#1565C0" } : cat === "weekend" ? { bg: "#FFF3E0", color: "#E65100" } : cat === "mixed" ? { bg: "#F3E5F5", color: "#7B1FA2" } : { bg: "#E8F5E9", color: "#2E7D32" };
-                              return <span style={{ fontSize: 8, padding: "0px 3px", borderRadius: 3, background: catColor.bg, color: catColor.color, fontWeight: 800 }}>{wl}</span>;
-                            })()}
-                          </div>
-                          <div style={{ fontSize: 8, color: C.gray, fontWeight: 600 }}>{emp.emp_no || "—"}</div>
+                          <span style={{ fontWeight: 800 }}>{emp.name}</span>
+                          {emp.work_code && (() => {
+                            const cat = getWorkCat(emp.work_code);
+                            const wl = WORK_CODES.find(w => w.code === emp.work_code)?.label || emp.work_code;
+                            const catColor = cat === "weekday" ? { bg: "#E3F2FD", color: "#1565C0" } : cat === "weekend" ? { bg: "#FFF3E0", color: "#E65100" } : cat === "mixed" ? { bg: "#F3E5F5", color: "#7B1FA2" } : { bg: "#E8F5E9", color: "#2E7D32" };
+                            return <span style={{ fontSize: 8, padding: "0 3px", borderRadius: 3, background: catColor.bg, color: catColor.color, fontWeight: 800, marginLeft: 2 }}>{wl}</span>;
+                          })()}
                         </td>
                         {dates.map(d => {
                           const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
@@ -14166,7 +14163,7 @@ function AttendancePage({ employees }) {
                             >
                               {st && (
                                 <div style={{
-                                  fontSize: 9, fontWeight: 700, color: info?.text || C.dark, padding: "3px 1px", lineHeight: 1.1,
+                                  fontSize: 10, fontWeight: 700, color: info?.text || C.dark, padding: "3px 0", lineHeight: 1.1,
                                   ...(isAuto ? { borderBottom: `2px solid ${st === "추가" ? "#7C3AED" : st === "피크" ? "#D81B60" : C.success}` } : {}),
                                 }}>
                                   {st === "출근" ? "출" : st === "지각" ? "지" : st === "결근" ? "결" : st === "휴무" ? "·" : st === "연차" ? "연" : st === "추가" ? "추" : st === "피크" ? "피" : st}
