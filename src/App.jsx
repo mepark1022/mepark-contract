@@ -65,8 +65,13 @@ const DEFAULT_SITES = [
 let SITES = [...DEFAULT_SITES];
 let FIELD_SITES = SITES.filter(s => s.code !== "V000");
 function _refreshGlobalSites(detailsMap) {
-  const base = [...DEFAULT_SITES];
+  const hiddenCodes = new Set();
   Object.entries(detailsMap || {}).forEach(([code, d]) => {
+    if (d.site_name === "__HIDDEN__") hiddenCodes.add(code);
+  });
+  const base = [...DEFAULT_SITES.filter(s => !hiddenCodes.has(s.code))];
+  Object.entries(detailsMap || {}).forEach(([code, d]) => {
+    if (hiddenCodes.has(code)) return;
     if (!base.find(s => s.code === code) && d.site_name) {
       base.push({ code, name: d.site_name });
     }
@@ -6242,6 +6247,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
   const [newSiteName, setNewSiteName] = useState("");
   const [addError, setAddError] = useState("");
   const [customSites, setCustomSites] = useState([]);
+  const [hiddenSites, setHiddenSites] = useState(new Set());
   const [siteTab, setSiteTab] = useState("basic"); // "basic" | "extra"
 
   useEffect(() => {
@@ -6250,7 +6256,9 @@ function SiteManagementPage({ employees, onSiteChange }) {
       if (details) {
         const map = {};
         const extras = [];
+        const hidden = new Set();
         details.forEach(d => {
+          if (d.site_name === "__HIDDEN__") { hidden.add(d.site_code); return; }
           map[d.site_code] = d;
           if (!SITES.find(s => s.code === d.site_code) && d.site_name) {
             extras.push({ code: d.site_code, name: d.site_name });
@@ -6258,6 +6266,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
         });
         setSiteDetails(map);
         setCustomSites(extras);
+        setHiddenSites(hidden);
       }
       const { data: parking } = await supabase.from("site_parking").select("*").order("created_at");
       if (parking) {
@@ -6272,16 +6281,17 @@ function SiteManagementPage({ employees, onSiteChange }) {
   }, []);
 
   const allSites = useMemo(() => {
-    const base = SITES.filter(s => s.code !== "V000");
-    return [...base, ...customSites.filter(cs => !base.find(b => b.code === cs.code))];
-  }, [customSites]);
+    const base = SITES.filter(s => s.code !== "V000" && !hiddenSites.has(s.code));
+    return [...base, ...customSites.filter(cs => !base.find(b => b.code === cs.code) && !hiddenSites.has(cs.code))];
+  }, [customSites, hiddenSites]);
 
   const nextSiteCode = useMemo(() => {
-    const codes = allSites.map(s => s.code).filter(c => /^V\d+$/.test(c));
-    const nums = codes.map(c => parseInt(c.slice(1)));
+    // 숨긴 사업장 포함해서 코드 겹치지 않도록
+    const allCodes = [...SITES.map(s => s.code), ...customSites.map(s => s.code), ...hiddenSites];
+    const nums = allCodes.filter(c => /^V\d+$/.test(c)).map(c => parseInt(c.slice(1)));
     const max = nums.length > 0 ? Math.max(...nums) : 0;
     return `V${String(max + 1).padStart(3, "0")}`;
-  }, [allSites]);
+  }, [customSites, hiddenSites]);
 
   const activeSiteEmps = useMemo(() => {
     const map = {};
@@ -6315,16 +6325,27 @@ function SiteManagementPage({ employees, onSiteChange }) {
 
   const handleDeleteSite = async (code) => {
     const siteName = allSites.find(s => s.code === code)?.name || code;
-    if (!(await confirm(`"${code} ${siteName}" 사업장을 삭제하시겠습니까?`, "⚠️ 계약정보, 외부주차장 데이터가 모두 삭제됩니다.", { okLabel: "삭제", okColor: C.error }))) return;
+    const isBuiltIn = SITES.some(s => s.code === code);
+    const msg = isBuiltIn
+      ? "⚠️ 기본 사업장 삭제 시 목록에서 숨김 처리됩니다.\n관련 데이터(계약, 주차장)가 초기화됩니다."
+      : "⚠️ 계약정보, 외부주차장 데이터가 모두 삭제됩니다.";
+    if (!(await confirm(`"${code} ${siteName}" 사업장을 삭제하시겠습니까?`, msg, { okLabel: "삭제", okColor: C.error }))) return;
     setSaving(true);
     try {
       await supabase.from("site_parking").delete().eq("site_code", code);
-      await supabase.from("site_details").delete().eq("site_code", code);
-      setCustomSites(p => p.filter(s => s.code !== code));
+      if (isBuiltIn) {
+        // 기본 사업장: 숨김 마커 저장
+        await supabase.from("site_details").upsert({ site_code: code, site_name: "__HIDDEN__", updated_at: new Date().toISOString() }, { onConflict: "site_code" });
+        setHiddenSites(p => new Set([...p, code]));
+      } else {
+        // 커스텀 사업장: 완전 삭제
+        await supabase.from("site_details").delete().eq("site_code", code);
+        setCustomSites(p => p.filter(s => s.code !== code));
+      }
       setSiteDetails(p => { const n = { ...p }; delete n[code]; return n; });
       setSiteParking(p => { const n = { ...p }; delete n[code]; return n; });
       if (selectedSite?.code === code) setSelectedSite(null);
-      onSiteChange?.(); // ★ 글로벌 SITES 갱신
+      onSiteChange?.();
     } catch (e) { alert("삭제 중 오류: " + e.message); }
     setSaving(false);
   };
@@ -6680,33 +6701,12 @@ function SiteManagementPage({ employees, onSiteChange }) {
                 }}>
                 {saving ? "💾 저장 중..." : "💾 저장"}
               </button>
-              {isCustomSite(sel.code) ? (
-                <button onClick={() => handleDeleteSite(sel.code)}
-                  style={{
-                    padding: "14px 20px", borderRadius: 14, border: `2px solid ${C.error}`,
-                    background: "#fff", color: C.error, fontSize: 15, fontWeight: 900,
-                    cursor: "pointer", fontFamily: FONT,
-                  }}>🗑 삭제</button>
-              ) : (
-                <button onClick={async () => {
-                  if (!(await confirm(`"${sel.code} ${sel.name}" 기본 사업장을 삭제하시겠습니까?`, "⚠️ 기본 사업장 삭제 시 관련 데이터(계약, 매출, 일보 등)에 영향이 있을 수 있습니다.", { okLabel: "삭제", okColor: C.error }))) return;
-                  setSaving(true);
-                  try {
-                    await supabase.from("site_parking").delete().eq("site_code", sel.code);
-                    await supabase.from("site_details").delete().eq("site_code", sel.code);
-                    setSiteDetails(p => { const n = { ...p }; delete n[sel.code]; return n; });
-                    setSiteParking(p => { const n = { ...p }; delete n[sel.code]; return n; });
-                    setSelectedSite(null);
-                    onSiteChange?.();
-                  } catch (e) { alert("삭제 중 오류: " + e.message); }
-                  setSaving(false);
-                }}
-                  style={{
-                    padding: "14px 20px", borderRadius: 14, border: `2px solid ${C.error}`,
-                    background: "#fff", color: C.error, fontSize: 15, fontWeight: 900,
-                    cursor: "pointer", fontFamily: FONT,
-                  }}>🗑 삭제</button>
-              )}
+              <button onClick={() => handleDeleteSite(sel.code)}
+                style={{
+                  padding: "14px 20px", borderRadius: 14, border: `2px solid ${C.error}`,
+                  background: "#fff", color: C.error, fontSize: 15, fontWeight: 900,
+                  cursor: "pointer", fontFamily: FONT,
+                }}>🗑 삭제</button>
             </div>
             </>)}
 
