@@ -13596,6 +13596,10 @@ function AttendancePage({ employees }) {
     const repDateMap = {};
     reports.forEach(r => { repDateMap[r.id] = r.report_date; });
 
+    // 직원 id → workCode 빠른 조회
+    const empWorkCodeMap = {};
+    employees.forEach(e => { empWorkCodeMap[e.id] = e.work_code; });
+
     staffRows.forEach(s => {
       if (!s.employee_id) return;
       const date = repDateMap[s.report_id];
@@ -13604,11 +13608,24 @@ function AttendancePage({ employees }) {
       const isPeak = s.staff_type === "peak";
       const isExtra = s.staff_type === "extra" || s.staff_type === "substitute";
 
+      // staff_type="site"(정규)인데 offDay → 잘못된 일보 데이터이므로 무시
+      // (비번투입extra/대근substitute는 offDay여도 정상 "추가"로 처리)
+      if (!isPeak && !isExtra) {
+        const wc = empWorkCodeMap[s.employee_id];
+        if (wc) {
+          const offDays = getOffDays(wc);
+          if (offDays) {
+            const dow = new Date(date + "T00:00:00").getDay();
+            if (offDays.includes(dow)) return; // offDay 정규출근 → 무시
+          }
+        }
+      }
+
       // 우선순위: 출근 > 피크 > 추가
       if (!map[key]) {
         map[key] = isPeak ? "피크" : isExtra ? "추가" : "출근";
       } else if (!isPeak && !isExtra) {
-        map[key] = "출근"; // 정규 출근이 추가되면 승격
+        map[key] = "출근";
       } else if (isPeak && map[key] === "추가") {
         map[key] = "피크";
       }
@@ -13625,7 +13642,7 @@ function AttendancePage({ employees }) {
     });
 
     return map;
-  }, [staffRows, extraRows, reports]);
+  }, [staffRows, extraRows, reports, employees]);
 
   // 직원별 추가수당 합계 맵: { empId: totalAmount }
   // daily_report_staff.extra_amount + daily_report_extra.extra_amount 모두 합산
