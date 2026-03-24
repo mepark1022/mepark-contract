@@ -14057,14 +14057,14 @@ function AttendancePage({ employees }) {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "4px 4px", fontSize: 11, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left" }}>
+                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "2px 4px", fontSize: 11, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left" }}>
                   근무자
                 </th>
                 {dates.map(d => {
                   const isRed = d.isWeekend || d.isHoliday;
                   return (
                     <th key={d.day} title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}`} style={{
-                      padding: "3px 0", fontSize: 9, fontWeight: 700, textAlign: "center",
+                      padding: "2px 0", fontSize: 9, fontWeight: 700, textAlign: "center",
                       borderBottom: "2px solid #E8ECF4", minWidth: 28, width: 28,
                       background: d.isToday ? C.navy : d.isHoliday ? "#FFF3F3" : "#F4F6FB",
                       color: d.isToday ? "#fff" : isRed ? "#C62828" : C.dark,
@@ -14075,18 +14075,25 @@ function AttendancePage({ employees }) {
                     </th>
                   );
                 })}
-                {[
-                  { label: "평", color: "#1565C0" },
-                  { label: "주", color: "#E65100" },
-                  { label: "추", color: "#7C3AED" },
-                  { label: "피", color: "#D81B60" },
-                  { label: "휴", color: "#C62828" },
-                  { label: "계", color: C.dark },
-                ].map((col, ci) => (
-                  <th key={col.label} style={{ padding: "4px 2px", fontSize: 9, fontWeight: 800, color: col.color, background: col.label === "계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 24, width: 24 }}>
-                    {col.label}
-                  </th>
-                ))}
+                {(() => {
+                  const mWd = dates.filter(d => !d.isWeekend && !d.isHoliday).length;
+                  const mWe = dates.filter(d => d.isWeekend && !d.isHoliday).length;
+                  const mHol = dates.filter(d => d.isHoliday).length;
+                  const dutyCols = [
+                    { label: "평일", color: "#1565C0", sub: mWd },
+                    { label: "주말", color: "#E65100", sub: mWe },
+                    { label: "추가", color: "#7C3AED", sub: "" },
+                    { label: "피크", color: "#D81B60", sub: "" },
+                    { label: "공휴", color: "#C62828", sub: mHol || "" },
+                    { label: "합계", color: C.dark, sub: mWd + mWe + mHol },
+                  ];
+                  return dutyCols.map((col, ci) => (
+                    <th key={col.label} style={{ padding: "2px 1px", fontSize: 9, fontWeight: 800, color: col.color, background: col.label === "합계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 28 }}>
+                      <div>{col.label}</div>
+                      {col.sub !== "" && <div style={{ fontSize: 8, fontWeight: 600, color: "#999", lineHeight: 1 }}>{col.sub}일</div>}
+                    </th>
+                  ));
+                })()}
               </tr>
             </thead>
             <tbody>
@@ -14099,7 +14106,7 @@ function AttendancePage({ employees }) {
                 <Fragment key={group.code}>
                   {/* 사업장 그룹 헤더 */}
                   <tr>
-                    <td colSpan={daysInMonth + 7} style={{ padding: "4px 8px", background: "#EEF1F8", fontSize: 10, fontWeight: 800, color: C.navy, borderBottom: "1px solid #E8ECF4" }}>
+                    <td colSpan={daysInMonth + 7} style={{ padding: "2px 6px", background: "#EEF1F8", fontSize: 10, fontWeight: 800, color: C.navy, borderBottom: "1px solid #E8ECF4" }}>
                       🏢 {group.name} <span style={{ color: C.gray, fontWeight: 600 }}>({group.code}) · {group.emps.length}명</span>
                       <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 600 }}>
                         <span style={{ color: "#1565C0" }}>평{group.emps.filter(e => getWorkCat(e.work_code) === "weekday").length}</span>
@@ -14133,7 +14140,7 @@ function AttendancePage({ employees }) {
                     return (
                       <tr key={emp.id} style={{ background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
                         <td title={`${emp.emp_no || ""} ${emp.name} ${emp.position || ""}`} style={{
-                          position: "sticky", left: 0, zIndex: 5, padding: "4px 4px", fontSize: 11, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
+                          position: "sticky", left: 0, zIndex: 5, padding: "2px 4px", fontSize: 11, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
                           background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap", overflow: "hidden",
                         }}>
                           <span style={{ fontWeight: 800 }}>{emp.name}</span>
@@ -14163,14 +14170,14 @@ function AttendancePage({ employees }) {
                             >
                               {st && (
                                 <div style={{
-                                  fontSize: 10, fontWeight: 700, color: info?.text || C.dark, padding: "3px 0", lineHeight: 1.1,
+                                  fontSize: 10, fontWeight: 700, color: info?.text || C.dark, padding: "2px 0", lineHeight: 1,
                                   ...(isAuto ? { borderBottom: `2px solid ${st === "추가" ? "#7C3AED" : st === "피크" ? "#D81B60" : C.success}` } : {}),
                                 }}>
                                   {st === "출근" ? "출" : st === "지각" ? "지" : st === "결근" ? "결" : st === "휴무" ? "·" : st === "연차" ? "연" : st === "추가" ? "추" : st === "피크" ? "피" : st}
                                 </div>
                               )}
                               {!st && d.isHoliday && (
-                                <div style={{ fontSize: 7, color: "#E57373", padding: "3px 0" }}>🎌</div>
+                                <div style={{ fontSize: 7, color: "#E57373", padding: "2px 0" }}>🎌</div>
                               )}
                             </td>
                           );
