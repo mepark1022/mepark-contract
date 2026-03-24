@@ -6332,8 +6332,8 @@ function SiteManagementPage({ employees, onSiteChange }) {
   const detailSaveTimers = useRef({});
   const updateDetail = (code, field, value) => {
     setSiteDetails(p => ({ ...p, [code]: { ...p[code], site_code: code, [field]: value } }));
-    if (field === "site_name" && isCustomSite(code)) {
-      setCustomSites(p => p.map(s => s.code === code ? { ...s, name: value } : s));
+    if (field === "site_name") {
+      if (isCustomSite(code)) setCustomSites(p => p.map(s => s.code === code ? { ...s, name: value } : s));
       setSelectedSite(p => p && p.code === code ? { ...p, name: value } : p);
     }
     const timerKey = `${code}_${field}`;
@@ -6528,13 +6528,11 @@ function SiteManagementPage({ employees, onSiteChange }) {
           <div style={{ padding: 24, flex: 1, overflowY: "auto" }}>
             {/* ── 기본정보 탭 ── */}
             {siteTab === "basic" && (<>
-            {/* 사업장명 수정 (커스텀) */}
-            {isCustomSite(sel.code) && (
-              <div style={{ marginBottom: 18 }}>
-                <label style={lbl}>사업장명</label>
-                <input value={detail.site_name || sel.name} onChange={e => updateDetail(sel.code, "site_name", e.target.value)} style={fld} />
-              </div>
-            )}
+            {/* 사업장명 수정 */}
+            <div style={{ marginBottom: 18 }}>
+              <label style={lbl}>사업장명</label>
+              <input value={detail.site_name || sel.name} onChange={e => updateDetail(sel.code, "site_name", e.target.value)} style={fld} />
+            </div>
             {/* 근무인원 */}
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: 18 }}>
               <div>
@@ -6682,13 +6680,32 @@ function SiteManagementPage({ employees, onSiteChange }) {
                 }}>
                 {saving ? "💾 저장 중..." : "💾 저장"}
               </button>
-              {isCustomSite(sel.code) && (
+              {isCustomSite(sel.code) ? (
                 <button onClick={() => handleDeleteSite(sel.code)}
                   style={{
                     padding: "14px 20px", borderRadius: 14, border: `2px solid ${C.error}`,
                     background: "#fff", color: C.error, fontSize: 15, fontWeight: 900,
                     cursor: "pointer", fontFamily: FONT,
-                  }}>🗑</button>
+                  }}>🗑 삭제</button>
+              ) : (
+                <button onClick={async () => {
+                  if (!(await confirm(`"${sel.code} ${sel.name}" 기본 사업장을 삭제하시겠습니까?`, "⚠️ 기본 사업장 삭제 시 관련 데이터(계약, 매출, 일보 등)에 영향이 있을 수 있습니다.", { okLabel: "삭제", okColor: C.error }))) return;
+                  setSaving(true);
+                  try {
+                    await supabase.from("site_parking").delete().eq("site_code", sel.code);
+                    await supabase.from("site_details").delete().eq("site_code", sel.code);
+                    setSiteDetails(p => { const n = { ...p }; delete n[sel.code]; return n; });
+                    setSiteParking(p => { const n = { ...p }; delete n[sel.code]; return n; });
+                    setSelectedSite(null);
+                    onSiteChange?.();
+                  } catch (e) { alert("삭제 중 오류: " + e.message); }
+                  setSaving(false);
+                }}
+                  style={{
+                    padding: "14px 20px", borderRadius: 14, border: `2px solid ${C.error}`,
+                    background: "#fff", color: C.error, fontSize: 15, fontWeight: 900,
+                    cursor: "pointer", fontFamily: FONT,
+                  }}>🗑 삭제</button>
               )}
             </div>
             </>)}
