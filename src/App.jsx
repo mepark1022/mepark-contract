@@ -12464,7 +12464,7 @@ function getAttendanceGrade(attRate, lateRate, absentCount) {
 
 // ── 16-6-D. 개인분석 탭 (v9.3 P1) ─────────────────────────────────
 
-function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, todayStr, staffRows, reports, extraAmountMap, moveMonth, goToday, loading }) {
+function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, todayStr, staffRows, extraRows, reports, extraAmountMap, extraAmountByDateMap, moveMonth, goToday, loading }) {
   const [selectedEmp, setSelectedEmp] = useState(null);
   const [siteFilter, setSiteFilter] = useState("all");
   const [search, setSearch] = useState("");
@@ -12546,10 +12546,10 @@ function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, to
         status: status || (d.isHoliday ? "공휴일" : d.isWeekend ? "주말" : ""),
         checkIn: staffRow?.check_in || "",
         checkOut: staffRow?.check_out || "",
-        extraAmt: staffRow ? toNum(staffRow.extra_amount) : 0,
+        extraAmt: extraAmountByDateMap?.[`${selectedEmp.id}-${d.dateStr}`] || 0,
       };
     }).reverse(); // 최신순
-  }, [selectedEmp, dates, getCellStatus, todayStr, staffRows, reports]);
+  }, [selectedEmp, dates, getCellStatus, todayStr, staffRows, extraAmountByDateMap, reports]);
 
   // 6개월 추이 데이터 (간이 계산)
   const trendData = useMemo(() => {
@@ -14494,8 +14494,10 @@ function AttendancePage({ employees }) {
           getCellStatus={getCellStatus}
           todayStr={kstDate()}
           staffRows={staffRows}
+          extraRows={extraRows}
           reports={reports}
           extraAmountMap={extraAmountMap}
+          extraAmountByDateMap={extraAmountByDateMap}
           moveMonth={moveMonth}
           goToday={goToday}
           loading={loading}
