@@ -13593,9 +13593,12 @@ function AttendancePage({ employees }) {
   // daily_report_extra에 employee_id가 있는 경우도 "추가"로 반영 (키전달 등)
   const autoAttMap = useMemo(() => {
     const map = {};
-    // repId → date 빠른 조회용
     const repDateMap = {};
     reports.forEach(r => { repDateMap[r.id] = r.report_date; });
+
+    // 직원 id → workCode 빠른 조회
+    const empWorkCodeMap = {};
+    employees.forEach(e => { empWorkCodeMap[e.id] = e.work_code; });
 
     staffRows.forEach(s => {
       if (!s.employee_id) return;
@@ -13604,10 +13607,25 @@ function AttendancePage({ employees }) {
       const key = `${s.employee_id}-${date}`;
       const isPeak = s.staff_type === "peak";
       const isExtra = s.staff_type === "extra" || s.staff_type === "substitute";
+
+      // offDays 기반 추가 판단: 직원의 workCode offDays에 해당하는 날 출근 → 비번투입이므로 "추가"
+      // (예: 주(2) 근무자가 평일에 키전달로 일보에 등록된 경우)
+      let isOffDayWork = false;
+      if (!isPeak && !isExtra) {
+        const wc = empWorkCodeMap[s.employee_id];
+        if (wc) {
+          const offDays = getOffDays(wc);
+          if (offDays) {
+            const dow = new Date(date + "T00:00:00").getDay();
+            if (offDays.includes(dow)) isOffDayWork = true;
+          }
+        }
+      }
+
       // 우선순위: 출근 > 피크 > 추가
       if (!map[key]) {
-        map[key] = isPeak ? "피크" : isExtra ? "추가" : "출근";
-      } else if (!isPeak && !isExtra) {
+        map[key] = isPeak ? "피크" : (isExtra || isOffDayWork) ? "추가" : "출근";
+      } else if (!isPeak && !isExtra && !isOffDayWork) {
         map[key] = "출근"; // 정규 출근이 추가되면 승격
       } else if (isPeak && map[key] === "추가") {
         map[key] = "피크"; // 피크가 추가보다 우선
@@ -13615,20 +13633,16 @@ function AttendancePage({ employees }) {
     });
 
     // daily_report_extra: 직원 지정된 추가항목 → 해당 날짜 "추가"로 마킹
-    // (단, 이미 정규출근/피크로 잡힌 경우는 덮어쓰지 않음)
     extraRows.forEach(e => {
       if (!e.employee_id) return;
       const date = repDateMap[e.report_id];
       if (!date) return;
       const key = `${e.employee_id}-${date}`;
-      if (!map[key]) {
-        map[key] = "추가"; // 추가항목만 있는 경우
-      }
-      // 이미 출근/피크면 유지 (덮어쓰지 않음)
+      if (!map[key]) map[key] = "추가";
     });
 
     return map;
-  }, [staffRows, extraRows, reports]);
+  }, [staffRows, extraRows, reports, employees]);
 
   // 직원별 추가수당 합계 맵: { empId: totalAmount }
   // daily_report_staff.extra_amount + daily_report_extra.extra_amount 모두 합산
@@ -14260,37 +14274,43 @@ function AttendancePage({ employees }) {
                             return <span style={{ fontSize: 11, padding: "0 3px", borderRadius: 3, background: catColor.bg, color: catColor.color, fontWeight: 800, marginLeft: 2 }}>{wl}</span>;
                           })()}
                         </td>
-                        {dates.map(d => {
-                          const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
-                          const isAuto = !manualAttMap[`${emp.id}-${d.dateStr}`] && autoAttMap[`${emp.id}-${d.dateStr}`];
-                          const info = st ? ATT_MAP[st] : null;
-                          const isFuture = d.dateStr > todayStr;
-                          return (
-                            <td key={d.day}
-                              onClick={isFuture ? undefined : (e) => handleCellClick(emp.id, d.dateStr, e, emp.work_code)}
-                              style={{
-                                padding: 0, textAlign: "center", borderBottom: "1px solid #F0F2F8",
-                                borderLeft: "1px solid #F0F0F0", cursor: isFuture ? "default" : "pointer",
-                                background: isFuture ? "#FAFAFA" : info ? info.bg : (d.isHoliday ? "#FFF8F8" : "transparent"),
-                                transition: "background 0.15s",
-                                position: "relative",
-                              }}
-                              title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}${st ? ` — ${st}` : ""}`}
-                            >
-                              {st && (
-                                <div style={{
-                                  fontSize: 13, fontWeight: 700, color: info?.text || C.dark, padding: "2px 0", lineHeight: 1,
-                                  ...(isAuto ? { borderBottom: `2px solid ${st === "추가" ? "#7C3AED" : st === "피크" ? "#D81B60" : C.success}` } : {}),
-                                }}>
-                                  {st === "출근" ? "출" : st === "지각" ? "지" : st === "결근" ? "결" : st === "휴무" ? "·" : st === "연차" ? "연" : st === "추가" ? "추" : st === "피크" ? "피" : st}
-                                </div>
-                              )}
-                              {!st && d.isHoliday && (
-                                <div style={{ fontSize: 9, color: "#E57373", padding: "2px 0" }}>🎌</div>
-                              )}
-                            </td>
-                          );
-                        })}
+                        {(() => {
+                          let workSeq = 0; // 이달 누적 근무 순서 (출근/추가/피크/지각 카운트)
+                          return dates.map(d => {
+                            const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
+                            const isAuto = !manualAttMap[`${emp.id}-${d.dateStr}`] && autoAttMap[`${emp.id}-${d.dateStr}`];
+                            const info = st ? ATT_MAP[st] : null;
+                            const isFuture = d.dateStr > todayStr;
+                            const isWorked = st === "출근" || st === "추가" || st === "피크" || st === "지각";
+                            if (isWorked && !isFuture) workSeq++;
+                            const cellText = isWorked ? workSeq : st === "휴무" ? "·" : st === "연차" ? "연" : st === "결근" ? "결" : null;
+                            return (
+                              <td key={d.day}
+                                onClick={isFuture ? undefined : (e) => handleCellClick(emp.id, d.dateStr, e, emp.work_code)}
+                                style={{
+                                  padding: 0, textAlign: "center", borderBottom: "1px solid #F0F2F8",
+                                  borderLeft: "1px solid #F0F0F0", cursor: isFuture ? "default" : "pointer",
+                                  background: isFuture ? "#FAFAFA" : info ? info.bg : (d.isHoliday ? "#FFF8F8" : "transparent"),
+                                  transition: "background 0.15s",
+                                  position: "relative",
+                                }}
+                                title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}${st ? ` — ${st}` : ""}`}
+                              >
+                                {cellText !== null && (
+                                  <div style={{
+                                    fontSize: 13, fontWeight: 700, color: info?.text || C.dark, padding: "2px 0", lineHeight: 1,
+                                    ...(isAuto ? { borderBottom: `2px solid ${st === "추가" ? "#7C3AED" : st === "피크" ? "#D81B60" : C.success}` } : {}),
+                                  }}>
+                                    {cellText}
+                                  </div>
+                                )}
+                                {!st && d.isHoliday && (
+                                  <div style={{ fontSize: 9, color: "#E57373", padding: "2px 0" }}>🎌</div>
+                                )}
+                              </td>
+                            );
+                          });
+                        })()}
                         {dutyVals.map((dv, ci) => (
                           <td key={ci} style={{
                             padding: "2px 1px", textAlign: "center", borderBottom: "1px solid #F0F2F8",
