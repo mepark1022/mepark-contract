@@ -14065,7 +14065,7 @@ function AttendancePage({ employees }) {
                           <td style={{ padding: "8px 12px" }}>
                             <span style={{ fontSize: 13, fontWeight: 700, background: typeBg, color: typeColor, borderRadius: 6, padding: "2px 8px" }}>{typeLabel}</span>
                           </td>
-                          <td style={{ padding: "8px 12px", fontSize: 14, color: C.gray }}>{row.extra_type || "—"}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 14, color: C.gray }}>{EXTRA_TYPES.find(t => t.key === row.extra_type)?.label || row.extra_type || "—"}</td>
                           <td style={{ padding: "8px 12px", fontSize: 15, fontWeight: 900, color: amt > 0 ? "#7C3AED" : C.gray, textAlign: "right", fontFamily: FONT }}>
                             {amt > 0 ? `${fmt(amt)}원` : "—"}
                           </td>
