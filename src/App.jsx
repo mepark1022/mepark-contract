@@ -7041,6 +7041,7 @@ function ValetFeePage({ profitState, onNavigate }) {
   const [trendData, setTrendData] = useState([]);
   const [trendLoading, setTrendLoading] = useState(false);
   const [showOnlyActive, setShowOnlyActive] = useState(true); // 발렛비 있는 업장만
+  const [showSubmittedModal, setShowSubmittedModal] = useState(false); // 미확정 모달
 
   // 해당 월 daily_reports + payment 로드
   const loadValetReports = useCallback(async () => {
@@ -7716,19 +7717,129 @@ function ValetFeePage({ profitState, onNavigate }) {
       {/* KPI 스트립 */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(5,1fr)", gap: 8, marginBottom: 14 }}>
         {[
-          ["📅 영업일", `${kpi.bizDays}일`, C.navy],
-          ["💰 월합계", fmt(kpi.total), C.navy],
-          ["✅ 확정", fmt(kpi.confirmed), C.success],
-          ["⚠️ 미확정", fmt(kpi.submitted), C.orange],
-          ["📊 일평균", fmt(Math.round(kpi.dailyAvg)), "#156082"],
-        ].map(([lbl, val, cl]) => (
-          <div key={lbl} style={{ background: "#fff", borderRadius: 8, padding: "8px 12px",
-            border: `1px solid ${C.border}`, borderLeft: `3px solid ${cl}` }}>
-            <div style={{ fontSize: 10, color: C.gray, marginBottom: 2 }}>{lbl}</div>
-            <div style={{ fontSize: 13, fontWeight: 900, color: cl, fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{val}원</div>
+          ["📅 영업일", `${kpi.bizDays}일`, C.navy, false],
+          ["💰 월합계", fmt(kpi.total), C.navy, false],
+          ["✅ 확정", fmt(kpi.confirmed), C.success, false],
+          ["⚠️ 미확정", fmt(kpi.submitted), C.orange, true],
+          ["📊 일평균", fmt(Math.round(kpi.dailyAvg)), "#156082", false],
+        ].map(([lbl, val, cl, clickable]) => (
+          <div key={lbl}
+            onClick={() => clickable && kpi.submitted > 0 && setShowSubmittedModal(true)}
+            style={{ background: "#fff", borderRadius: 8, padding: "8px 12px",
+              border: `1px solid ${clickable && kpi.submitted > 0 ? C.orange : C.border}`,
+              borderLeft: `3px solid ${cl}`,
+              cursor: clickable && kpi.submitted > 0 ? "pointer" : "default",
+              transition: "box-shadow 0.15s",
+              boxShadow: clickable && kpi.submitted > 0 ? "0 2px 8px rgba(233,113,50,0.15)" : "none" }}
+            onMouseEnter={e => { if (clickable && kpi.submitted > 0) e.currentTarget.style.boxShadow = "0 4px 14px rgba(233,113,50,0.25)"; }}
+            onMouseLeave={e => { if (clickable && kpi.submitted > 0) e.currentTarget.style.boxShadow = "0 2px 8px rgba(233,113,50,0.15)"; }}>
+            <div style={{ fontSize: 10, color: C.gray, marginBottom: 2, display: "flex", alignItems: "center", gap: 4 }}>
+              {lbl}
+              {clickable && kpi.submitted > 0 && <span style={{ fontSize: 9, color: C.orange, fontWeight: 700 }}>눌러서 확인 →</span>}
+            </div>
+            <div style={{ fontSize: 13, fontWeight: 900, color: cl, fontFamily: "'Outfit',sans-serif",
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{val}원</div>
           </div>
         ))}
       </div>
+
+      {/* 미확정 모달 */}
+      {showSubmittedModal && (() => {
+        const submittedList = valetReports
+          .filter(r => r.status === "submitted")
+          .sort((a, b) => a.report_date.localeCompare(b.report_date));
+        const totalAmt = submittedList.reduce((s, r) => s + toNum(r.valet_amount), 0);
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000,
+            display: "flex", alignItems: "center", justifyContent: "center" }}
+            onClick={() => setShowSubmittedModal(false)}>
+            <div style={{ background: "#fff", borderRadius: 16, width: 520, maxWidth: "92vw",
+              maxHeight: "80vh", display: "flex", flexDirection: "column",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.25)", overflow: "hidden" }}
+              onClick={e => e.stopPropagation()}>
+              {/* 모달 헤더 */}
+              <div style={{ background: C.navy, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                <div>
+                  <div style={{ color: "#fff", fontWeight: 900, fontSize: 15 }}>⚠️ 미확정 일보 목록</div>
+                  <div style={{ color: "rgba(255,255,255,0.65)", fontSize: 11, marginTop: 2 }}>
+                    {valetMonth} · {submittedList.length}건 · 합계 {fmt(totalAmt)}원
+                  </div>
+                </div>
+                <button onClick={() => setShowSubmittedModal(false)}
+                  style={{ background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 8,
+                    color: "#fff", fontSize: 18, cursor: "pointer", width: 32, height: 32,
+                    display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 700 }}>✕</button>
+              </div>
+              {/* 목록 */}
+              <div style={{ overflowY: "auto", flex: 1 }}>
+                {submittedList.length === 0 ? (
+                  <div style={{ padding: 32, textAlign: "center", color: C.gray }}>미확정 일보가 없습니다.</div>
+                ) : (
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ background: "#F8F9FF", position: "sticky", top: 0 }}>
+                        {["날짜", "사업장", "발렛건수", "발렛비", "이동"].map(h => (
+                          <th key={h} style={{ padding: "8px 12px", fontWeight: 800, color: C.navy,
+                            textAlign: h === "사업장" ? "left" : "center",
+                            borderBottom: `2px solid ${C.border}` }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {submittedList.map((r, i) => {
+                        const dow = new Date(r.report_date).getDay();
+                        const siteName = getSiteName(r.site_code);
+                        return (
+                          <tr key={r.id} style={{ background: i % 2 === 0 ? "#fff" : "#FFFBF5",
+                            borderBottom: `1px solid ${C.border}` }}>
+                            <td style={{ padding: "9px 12px", textAlign: "center", whiteSpace: "nowrap" }}>
+                              <span style={{ fontWeight: 800, color: C.dark }}>{r.report_date.slice(5)}</span>
+                              <span style={{ fontSize: 10, color: C.gray, marginLeft: 4 }}>
+                                {["일","월","화","수","목","금","토"][dow]}
+                              </span>
+                            </td>
+                            <td style={{ padding: "9px 12px", fontWeight: 700, color: C.navy }}>
+                              <span style={{ fontSize: 10, color: C.gray, marginRight: 4 }}>{r.site_code}</span>
+                              {siteName}
+                            </td>
+                            <td style={{ padding: "9px 12px", textAlign: "center", color: C.dark }}>
+                              {r.valet_count || 0}건
+                            </td>
+                            <td style={{ padding: "9px 12px", textAlign: "right",
+                              fontWeight: 900, color: C.orange, fontFamily: "'Outfit',sans-serif" }}>
+                              {fmt(r.valet_amount)}원
+                            </td>
+                            <td style={{ padding: "9px 12px", textAlign: "center" }}>
+                              <button
+                                onClick={() => { setShowSubmittedModal(false); onNavigate("daily_report", r.report_date, r.site_code); }}
+                                style={{ padding: "4px 12px", borderRadius: 6, border: `1.5px solid ${C.navy}`,
+                                  background: C.navy, color: "#fff", fontSize: 11, fontWeight: 700,
+                                  cursor: "pointer", whiteSpace: "nowrap" }}>
+                                일보 이동 →
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+              {/* 모달 푸터 */}
+              <div style={{ padding: "12px 20px", borderTop: `1px solid ${C.border}`,
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                background: "#FAFBFF" }}>
+                <span style={{ fontSize: 11, color: C.gray }}>행을 클릭하면 해당 일보로 바로 이동합니다.</span>
+                <button onClick={() => setShowSubmittedModal(false)}
+                  style={{ padding: "6px 18px", borderRadius: 8, border: `1px solid ${C.border}`,
+                    background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.gray }}>
+                  닫기
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 탭 버튼 */}
       <div style={{ display: "flex", gap: 4, marginBottom: 14, borderBottom: `2px solid ${C.border}`, paddingBottom: 0 }}>
