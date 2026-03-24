@@ -10307,9 +10307,9 @@ const BUG_PRIORITY = {
   critical: { label: "긴급", color: "#7C3AED", bg: "#f5f3ff" },
 };
 const PAGE_LABELS = {
-  main_dashboard: "메인 대시보드", dashboard: "HR 대시보드", employees: "직원현황",
+  main_dashboard: "분석대시보드", dashboard: "HR 대시보드", employees: "직원현황",
   contract: "계약서", history: "계약이력", settings: "계약서 조항변경",
-  profit_summary: "전체 요약", profit_site_pl: "사업장 PL", profit_cost_input: "비용 입력",
+  profit_summary: "분석대시보드", profit_site_pl: "사업장 PL", profit_cost_input: "비용 입력",
   payroll: "급여대장", monthly_parking: "월주차 관리", profit_comparison: "비교 분석",
   profit_alloc: "배부 설정", profit_import: "데이터 Import",
   site_management: "사업장 관리", daily_report: "현장 일보",
@@ -10996,8 +10996,8 @@ function BugReportDashboard() {
 function MainApp() {
   const { profile, signOut, can, isCrewRole } = useAuth();
   // 크루 역할: 기본 페이지를 현장일보로 고정
-  const [page, setPage] = useState(isCrewRole ? "daily_report" : "main_dashboard");
-  const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: false, calc: false });
+  const [page, setPage] = useState(isCrewRole ? "daily_report" : "profit_summary");
+  const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: !isCrewRole, calc: false });
   const [employees, setEmployees] = useState([]);
   const [contractEmp, setContractEmp] = useState(null);
   const [docTargetEmp, setDocTargetEmp] = useState(null);
@@ -11193,7 +11193,7 @@ function MainApp() {
   ];
 
   const profitNavItems = isCrewRole ? [] : [
-    { key: "profit_summary", icon: "📊", label: "전체 요약" },
+    { key: "profit_summary", icon: "📊", label: "분석대시보드" },
     { key: "profit_site_pl", icon: "🏢", label: "사업장 PL" },
     { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
     { key: "payroll", icon: "💰", label: "급여대장" },
@@ -11248,16 +11248,6 @@ function MainApp() {
 
         <nav style={{ flex: 1, padding: "12px 8px", overflowY: "auto" }}>
           {/* 메인 대시보드 — 최상위 */}
-          <button onClick={() => setPage("main_dashboard")}
-            style={{
-              display: "flex", alignItems: "center", gap: 10, width: "100%", padding: "11px 12px",
-              borderRadius: 8, border: "none", cursor: "pointer", marginBottom: 6, fontSize: 13, fontWeight: 800,
-              background: page === "main_dashboard" ? C.gold : "transparent",
-              color: page === "main_dashboard" ? C.navy : "rgba(255,255,255,0.85)",
-              fontFamily: FONT,
-            }}>
-            <span style={{ fontSize: 16 }}>🏠</span> 메인 대시보드
-          </button>
 
           <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "6px 8px 10px" }} />
 
@@ -11385,7 +11375,7 @@ function MainApp() {
         {page === "resignation" && <Resignation employees={employees} initialEmp={docTargetEmp} />}
         {page === "certificate" && <Certificate employees={employees} initialEmp={docTargetEmp} />}
         {page === "settings" && <Settings />}
-        {page === "profit_summary" && <ProfitabilityPage employees={employees} subPage="summary" profitState={profitState} />}
+        {page === "profit_summary" && <><MainDashboard employees={employees} onNavigate={setPage} profitState={profitState} /><ProfitabilityPage employees={employees} subPage="summary" profitState={profitState} /></>}
         {page === "profit_site_pl" && <ProfitabilityPage employees={employees} subPage="site_pl" profitState={profitState} />}
         {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" profitState={profitState} />}
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
