@@ -13891,146 +13891,7 @@ function AttendancePage({ employees }) {
         ))}
       </div>
 
-      {/* ── P5: 근무유형별 횟수 패널 ── */}
-      {viewMode === "calendar" && allFilteredEmps.length > 0 && (() => {
-        // 직원별 유형별 근무횟수 집계
-        const dutyRows = allFilteredEmps.map(emp => {
-          let weekday = 0, weekend = 0, extra = 0, peak = 0, holiday = 0;
-          dates.forEach(d => {
-            if (d.dateStr > todayStr) return;
-            const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
-            if (!st || st === "휴무" || st === "연차" || st === "결근") return;
-            if (st === "출근" || st === "지각") {
-              // 우선순위: peak > holiday > weekend > weekday
-              if (isPeakWorker(emp.work_code) && staffRows.some(s => s.employee_id === emp.id && s.staff_type === "peak" && reports.find(r => r.id === s.report_id)?.report_date === d.dateStr)) {
-                peak++;
-              } else if (d.isHoliday) {
-                holiday++;
-              } else if (d.isWeekend) {
-                weekend++;
-              } else {
-                weekday++;
-              }
-            } else if (st === "피크") {
-              peak++;
-            } else if (st === "추가") {
-              if (d.isHoliday) holiday++;
-              else extra++;
-            }
-          });
-          const total = weekday + weekend + extra + peak + holiday;
-          return { emp, weekday, weekend, extra, peak, holiday, total };
-        }).filter(r => r.total > 0);
-
-        // 합계
-        const totals = dutyRows.reduce((acc, r) => ({
-          weekday: acc.weekday + r.weekday, weekend: acc.weekend + r.weekend,
-          extra: acc.extra + r.extra, peak: acc.peak + r.peak,
-          holiday: acc.holiday + r.holiday, total: acc.total + r.total,
-        }), { weekday: 0, weekend: 0, extra: 0, peak: 0, holiday: 0, total: 0 });
-
-        // 사업장별 그룹
-        const dutySiteGroups = {};
-        dutyRows.forEach(r => {
-          const sc = r.emp.site_code_1 || "V000";
-          if (!dutySiteGroups[sc]) dutySiteGroups[sc] = { rows: [], weekday: 0, weekend: 0, extra: 0, peak: 0, holiday: 0, total: 0 };
-          dutySiteGroups[sc].rows.push(r);
-          dutySiteGroups[sc].weekday += r.weekday;
-          dutySiteGroups[sc].weekend += r.weekend;
-          dutySiteGroups[sc].extra += r.extra;
-          dutySiteGroups[sc].peak += r.peak;
-          dutySiteGroups[sc].holiday += r.holiday;
-          dutySiteGroups[sc].total += r.total;
-        });
-
-        const cols = [
-          { key: "weekday", label: "평일", color: "#1565C0", bg: "#E3F2FD" },
-          { key: "weekend", label: "주말", color: "#E65100", bg: "#FFF3E0" },
-          { key: "extra", label: "추가", color: "#7C3AED", bg: "#F3EDFF" },
-          { key: "peak", label: "피크", color: "#D81B60", bg: "#FCE4EC" },
-          { key: "holiday", label: "공휴", color: "#C62828", bg: "#FFEBEE" },
-          { key: "total", label: "합계", color: C.dark, bg: "#F4F6FB" },
-        ];
-
-        return (
-          <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden", marginBottom: 20 }}>
-            <div style={{ padding: "10px 16px", background: "#F4F6FB", borderBottom: "1.5px solid #E8ECF4", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>📊 근무유형별 횟수</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {cols.slice(0, 5).map(c => (
-                  <span key={c.key} style={{ fontSize: 10, fontWeight: 700, color: c.color, background: c.bg, borderRadius: 6, padding: "2px 8px" }}>
-                    {c.label} {totals[c.key]}
-                  </span>
-                ))}
-                <span style={{ fontSize: 10, fontWeight: 900, color: C.dark, background: "#E8ECF4", borderRadius: 6, padding: "2px 8px" }}>
-                  합계 {totals.total}
-                </span>
-              </div>
-            </div>
-            <div style={{ overflowX: "auto" }}>
-              <table style={{ borderCollapse: "collapse", width: "100%" }}>
-                <thead>
-                  <tr style={{ background: "#F4F6FB" }}>
-                    <th style={{ padding: "8px 12px", fontSize: 11, fontWeight: 800, color: C.dark, textAlign: "left", borderBottom: "2px solid #E8ECF4", minWidth: 60 }}>사업장</th>
-                    <th style={{ padding: "8px 12px", fontSize: 11, fontWeight: 800, color: C.dark, textAlign: "left", borderBottom: "2px solid #E8ECF4", minWidth: 80 }}>사번</th>
-                    <th style={{ padding: "8px 12px", fontSize: 11, fontWeight: 800, color: C.dark, textAlign: "left", borderBottom: "2px solid #E8ECF4", minWidth: 70 }}>이름</th>
-                    {cols.map(c => (
-                      <th key={c.key} style={{ padding: "8px 10px", fontSize: 11, fontWeight: 800, color: c.color, textAlign: "center", borderBottom: "2px solid #E8ECF4", minWidth: 50, background: c.key === "total" ? "#F0F2F8" : "transparent" }}>{c.label}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {Object.entries(dutySiteGroups).sort(([a], [b]) => a.localeCompare(b)).map(([sc, g]) => {
-                    const siteName = SITES.find(s => s.code === sc)?.name || sc;
-                    return (
-                      <Fragment key={sc}>
-                        {g.rows.map((r, i) => (
-                          <tr key={r.emp.id} style={{ background: i % 2 === 0 ? "#fff" : "#FAFBFC", borderBottom: "1px solid #F0F2F8" }}>
-                            {i === 0 && (
-                              <td rowSpan={g.rows.length} style={{ padding: "6px 12px", fontSize: 11, fontWeight: 700, color: C.navy, borderBottom: "1px solid #E8ECF4", borderRight: "1px solid #F0F2F8", verticalAlign: "top", background: "#FAFBFC" }}>
-                                <div style={{ fontSize: 10, color: C.gray }}>{sc}</div>
-                                <div>{siteName}</div>
-                              </td>
-                            )}
-                            <td style={{ padding: "6px 12px", fontSize: 11, color: C.gray }}>{r.emp.emp_no || "—"}</td>
-                            <td style={{ padding: "6px 12px", fontSize: 12, fontWeight: 700, color: C.dark }}>{r.emp.name}</td>
-                            {cols.map(c => (
-                              <td key={c.key} style={{ padding: "6px 10px", fontSize: 13, fontWeight: r[c.key] > 0 ? 800 : 400, color: r[c.key] > 0 ? c.color : "#ccc", textAlign: "center", background: c.key === "total" ? "#F8F9FC" : "transparent" }}>
-                                {r[c.key] || "·"}
-                              </td>
-                            ))}
-                          </tr>
-                        ))}
-                        {/* P7: 사업장 소계행 */}
-                        <tr style={{ background: "#F0F4FF", borderBottom: "2px solid #D8DCE3" }}>
-                          <td colSpan={3} style={{ padding: "6px 12px", fontSize: 11, fontWeight: 800, color: C.navy }}>
-                            📍 {siteName} 소계 ({g.rows.length}명)
-                          </td>
-                          {cols.map(c => (
-                            <td key={c.key} style={{ padding: "6px 10px", fontSize: 12, fontWeight: 900, color: c.color, textAlign: "center", background: c.key === "total" ? "#E8ECF4" : "transparent" }}>
-                              {g[c.key]}
-                            </td>
-                          ))}
-                        </tr>
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr style={{ background: C.navy }}>
-                    <td colSpan={3} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 900, color: "#fff" }}>전체 합계 ({dutyRows.length}명)</td>
-                    {cols.map(c => (
-                      <td key={c.key} style={{ padding: "8px 10px", fontSize: 14, fontWeight: 900, color: c.key === "total" ? C.gold : "#fff", textAlign: "center" }}>
-                        {totals[c.key]}
-                      </td>
-                    ))}
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-          </div>
-        );
-      })()}
+      {/* P5 근무유형별 횟수 → 캘린더 테이블 우측에 인라인 통합 (v9.4) */}
 
       {/* ── 추가근무 탭 ── */}
       {viewMode === "extra" && (() => {
@@ -14193,7 +14054,7 @@ function AttendancePage({ employees }) {
       {viewMode === "calendar" && (
       <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
         <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", minWidth: daysInMonth * 40 + 230, width: "100%" }}>
+          <table style={{ borderCollapse: "collapse", minWidth: daysInMonth * 40 + 430, width: "100%" }}>
             <thead>
               <tr>
                 <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left", minWidth: 150 }}>
@@ -14214,14 +14075,23 @@ function AttendancePage({ employees }) {
                     </th>
                   );
                 })}
-                <th style={{ padding: "8px 6px", fontSize: 11, fontWeight: 800, color: C.dark, background: "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: "2px solid #E8ECF4", textAlign: "center", minWidth: 52 }}>
-                  합계
-                </th>
+                {[
+                  { label: "평일", color: "#1565C0" },
+                  { label: "주말", color: "#E65100" },
+                  { label: "추가", color: "#7C3AED" },
+                  { label: "피크", color: "#D81B60" },
+                  { label: "공휴", color: "#C62828" },
+                  { label: "합계", color: C.dark },
+                ].map((col, ci) => (
+                  <th key={col.label} style={{ padding: "6px 4px", fontSize: 10, fontWeight: 800, color: col.color, background: col.label === "합계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 34 }}>
+                    {col.label}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
               {siteGroups.length === 0 && (
-                <tr><td colSpan={daysInMonth + 2} style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 14 }}>
+                <tr><td colSpan={daysInMonth + 7} style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 14 }}>
                   {loading ? "로딩 중..." : "표시할 직원이 없습니다"}
                 </td></tr>
               )}
@@ -14229,7 +14099,7 @@ function AttendancePage({ employees }) {
                 <Fragment key={group.code}>
                   {/* 사업장 그룹 헤더 */}
                   <tr>
-                    <td colSpan={daysInMonth + 2} style={{ padding: "6px 12px", background: "#EEF1F8", fontSize: 11, fontWeight: 800, color: C.navy, borderBottom: "1px solid #E8ECF4" }}>
+                    <td colSpan={daysInMonth + 7} style={{ padding: "6px 12px", background: "#EEF1F8", fontSize: 11, fontWeight: 800, color: C.navy, borderBottom: "1px solid #E8ECF4" }}>
                       🏢 {group.name} <span style={{ color: C.gray, fontWeight: 600 }}>({group.code}) · {group.emps.length}명</span>
                       <span style={{ marginLeft: 8, fontSize: 10, fontWeight: 600 }}>
                         <span style={{ color: "#1565C0" }}>평{group.emps.filter(e => getWorkCat(e.work_code) === "weekday").length}</span>
@@ -14240,13 +14110,26 @@ function AttendancePage({ employees }) {
                     </td>
                   </tr>
                   {group.emps.map((emp, idx) => {
-                    const attDays = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "출근").length;
-                    const extraDays = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "추가").length;
-                    const peakDays = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "피크").length;
-                    const lateDays = dates.filter(d => getCellStatus(emp.id, d.dateStr, emp.work_code) === "지각").length;
-                    const workableDays = dates.filter(d => !d.isWeekend && !d.isHoliday && d.dateStr <= todayStr).length;
-                    const totalWorked = attDays + extraDays + peakDays + lateDays;
-                    const rate = workableDays > 0 ? Math.round((totalWorked / workableDays) * 100) : 0;
+                    // 유형별 근무횟수 계산
+                    let wd = 0, we = 0, ex = 0, pk = 0, hol = 0;
+                    dates.forEach(d => {
+                      if (d.dateStr > todayStr) return;
+                      const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
+                      if (!st || st === "휴무" || st === "연차" || st === "결근") return;
+                      if (st === "출근" || st === "지각") {
+                        if (isPeakWorker(emp.work_code) && staffRows.some(s => s.employee_id === emp.id && s.staff_type === "peak" && reports.find(r => r.id === s.report_id)?.report_date === d.dateStr)) pk++;
+                        else if (d.isHoliday) hol++;
+                        else if (d.isWeekend) we++;
+                        else wd++;
+                      } else if (st === "피크") pk++;
+                      else if (st === "추가") { d.isHoliday ? hol++ : ex++; }
+                    });
+                    const totalWorked = wd + we + ex + pk + hol;
+                    const dutyVals = [
+                      { v: wd, color: "#1565C0" }, { v: we, color: "#E65100" },
+                      { v: ex, color: "#7C3AED" }, { v: pk, color: "#D81B60" },
+                      { v: hol, color: "#C62828" }, { v: totalWorked, color: C.dark },
+                    ];
                     return (
                       <tr key={emp.id} style={{ background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
                         <td style={{
@@ -14298,15 +14181,63 @@ function AttendancePage({ employees }) {
                             </td>
                           );
                         })}
-                        <td style={{
-                          padding: "4px 6px", textAlign: "center", borderBottom: "1px solid #F0F2F8", borderLeft: "2px solid #E8ECF4", fontSize: 11, fontWeight: 800,
-                        }}>
-                          <div style={{ color: C.dark }}>{totalWorked}일</div>
-                          <div style={{ fontSize: 10, color: rate >= 80 ? C.success : rate >= 50 ? C.orange : C.error, fontWeight: 700 }}>{rate}%</div>
-                        </td>
+                        {dutyVals.map((dv, ci) => (
+                          <td key={ci} style={{
+                            padding: "4px 2px", textAlign: "center", borderBottom: "1px solid #F0F2F8",
+                            borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0",
+                            fontSize: 12, fontWeight: dv.v > 0 ? 800 : 400, color: dv.v > 0 ? dv.color : "#ccc",
+                            background: ci === 5 ? "#F8F9FC" : "transparent",
+                          }}>
+                            {dv.v || "·"}
+                          </td>
+                        ))}
                       </tr>
                     );
                   })}
+                  {/* 사업장 소계행 */}
+                  {group.emps.length > 0 && (() => {
+                    let sWd = 0, sWe = 0, sEx = 0, sPk = 0, sHol = 0;
+                    group.emps.forEach(emp => {
+                      dates.forEach(d => {
+                        if (d.dateStr > todayStr) return;
+                        const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
+                        if (!st || st === "휴무" || st === "연차" || st === "결근") return;
+                        if (st === "출근" || st === "지각") {
+                          if (isPeakWorker(emp.work_code) && staffRows.some(s => s.employee_id === emp.id && s.staff_type === "peak" && reports.find(r => r.id === s.report_id)?.report_date === d.dateStr)) sPk++;
+                          else if (d.isHoliday) sHol++;
+                          else if (d.isWeekend) sWe++;
+                          else sWd++;
+                        } else if (st === "피크") sPk++;
+                        else if (st === "추가") { d.isHoliday ? sHol++ : sEx++; }
+                      });
+                    });
+                    const sTotal = sWd + sWe + sEx + sPk + sHol;
+                    const subVals = [
+                      { v: sWd, color: "#1565C0" }, { v: sWe, color: "#E65100" },
+                      { v: sEx, color: "#7C3AED" }, { v: sPk, color: "#D81B60" },
+                      { v: sHol, color: "#C62828" }, { v: sTotal, color: C.dark },
+                    ];
+                    return (
+                      <tr style={{ background: "#FFF8F0" }}>
+                        <td colSpan={daysInMonth + 1} style={{
+                          position: "sticky", left: 0, zIndex: 5, padding: "4px 12px", fontSize: 11, fontWeight: 800,
+                          color: C.orange, borderBottom: "2px solid #E8ECF4", background: "#FFF8F0", textAlign: "right",
+                        }}>
+                          📌 {group.name} 소계 ({group.emps.length}명)
+                        </td>
+                        {subVals.map((sv, ci) => (
+                          <td key={ci} style={{
+                            padding: "4px 2px", textAlign: "center", borderBottom: "2px solid #E8ECF4",
+                            borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0",
+                            fontSize: 12, fontWeight: 900, color: sv.v > 0 ? sv.color : "#ccc",
+                            background: ci === 5 ? "#FFF0E0" : "#FFF8F0",
+                          }}>
+                            {sv.v || "·"}
+                          </td>
+                        ))}
+                      </tr>
+                    );
+                  })()}
                 </Fragment>
               ))}
             </tbody>
