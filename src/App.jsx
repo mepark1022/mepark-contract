@@ -14233,7 +14233,7 @@ function AttendancePage({ employees }) {
                     { label: "주말", color: "#E65100", sub: mWe },
                     { label: "추가", color: "#7C3AED", sub: "" },
                     { label: "피크", color: "#D81B60", sub: "" },
-                    { label: "🤲🔑", color: C.gold, sub: "" },
+                    { label: "🔑", color: C.gold, sub: "" },
                     { label: "공휴", color: "#C62828", sub: mHol || "" },
                     { label: "합계", color: C.dark, sub: mWd + mWe + mHol },
                   ];
