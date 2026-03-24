@@ -2400,25 +2400,16 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
               {detailTab === "salary" && (
                 <div>
                   <div style={sectionBox}>
-                    {sectionTitle("💵", "기본 급여")}
-                    {infoRow("기본급(월급)", se.base_salary ? fmt(se.base_salary) + "원" : "—")}
-                    {infoRow("주말일당", se.weekend_daily ? fmt(se.weekend_daily) + "원" : "—")}
-                    {infoRow("식대", se.meal_allow ? fmt(se.meal_allow) + "원" : "—")}
-                    {infoRow("팀장수당", se.leader_allow ? fmt(se.leader_allow) + "원" : "—")}
-                    {infoRow("보육수당", se.childcare_allow ? fmt(se.childcare_allow) + "원" : "—")}
-                    {infoRow("자가운전보조금", se.car_allow ? fmt(se.car_allow) + "원" : "—")}
-                  </div>
-                  <div style={sectionBox}>
                     {sectionTitle("💰", "급여대장 연동 조건")}
-                    {infoRow("평일수당(월급)", se.weekday_pay ? fmt(se.weekday_pay) + "원" : "—")}
-                    {infoRow("주말수당(일당)", se.weekend_pay ? fmt(se.weekend_pay) + "원" : "—")}
-                    {infoRow("명절상여", se.holiday_bonus ? fmt(se.holiday_bonus) + "원" : "—")}
-                    {infoRow("인센티브", se.incentive ? fmt(se.incentive) + "원" : "—")}
-                    {infoRow("급여식대", se.meal ? fmt(se.meal) + "원" : "—")}
-                    {infoRow("보육수당", se.childcare ? fmt(se.childcare) + "원" : "—")}
-                    {infoRow("자가운전보조", se.car_allowance ? fmt(se.car_allowance) + "원" : "—")}
+                    <div style={{ fontSize: 10, color: C.navy, fontWeight: 700, marginBottom: 8 }}>★ 항목은 급여대장 생성 시 자동 반영됩니다.</div>
+                    {infoRow("★ 평일수당(월급)", (se.weekday_pay || se.base_salary) ? fmt(se.weekday_pay || se.base_salary) + "원" : "—")}
+                    {infoRow("주말수당(일당)", (se.weekend_pay || se.weekend_daily) ? fmt(se.weekend_pay || se.weekend_daily) + "원" : "—")}
+                    {infoRow("★ 급여식대", (se.meal || se.meal_allow) ? fmt(se.meal || se.meal_allow) + "원" : "—")}
+                    {infoRow("★ 보육수당", (se.childcare || se.childcare_allow) ? fmt(se.childcare || se.childcare_allow) + "원" : "—")}
+                    {infoRow("★ 자가운전보조", (se.car_allowance || se.car_allow) ? fmt(se.car_allowance || se.car_allow) + "원" : "—")}
+                    {infoRow("★ 팀장수당", (se.team_allowance || se.leader_allow) ? fmt(se.team_allowance || se.leader_allow) + "원" : "—")}
+                    {infoRow("★ 인센티브", se.incentive ? fmt(se.incentive) + "원" : "—")}
                     {infoRow("기타수당", se.extra1 ? fmt(se.extra1) + "원" : "—")}
-                    {infoRow("팀장수당(급여)", se.team_allowance ? fmt(se.team_allowance) + "원" : "—")}
                   </div>
                   <div style={sectionBox}>
                     {sectionTitle("🏦", "계좌정보")}
@@ -2736,7 +2727,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                   </div>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" }}>
                     <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>평일수당(월급)</label>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>평일수당(월급) <span style={{ color: C.navy }}>★</span></label>
                       <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} />
                     </div>
                     <div>
@@ -2744,30 +2735,31 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                       <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>명절상여</label>
-                      <NumInput value={editEmp.holiday_bonus} onChange={v => setEditEmp(p => ({ ...p, holiday_bonus: v }))} />
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>급여식대 <span style={{ color: C.navy }}>★</span></label>
+                      <NumInput value={editEmp.meal} onChange={v => setEditEmp(p => ({ ...p, meal: v }))} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>보육수당</label>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>보육수당 <span style={{ color: C.navy }}>★</span></label>
                       <NumInput value={editEmp.childcare} onChange={v => setEditEmp(p => ({ ...p, childcare: v }))} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>자가운전보조</label>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>자가운전보조 <span style={{ color: C.navy }}>★</span></label>
                       <NumInput value={editEmp.car_allowance} onChange={v => setEditEmp(p => ({ ...p, car_allowance: v }))} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>인센티브</label>
-                      <NumInput value={editEmp.incentive} onChange={v => setEditEmp(p => ({ ...p, incentive: v }))} />
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>팀장수당 <span style={{ color: C.navy }}>★</span></label>
+                      <NumInput value={editEmp.team_allowance} onChange={v => setEditEmp(p => ({ ...p, team_allowance: v }))} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>급여식대</label>
-                      <NumInput value={editEmp.meal} onChange={v => setEditEmp(p => ({ ...p, meal: v }))} />
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>인센티브 <span style={{ color: C.navy }}>★</span></label>
+                      <NumInput value={editEmp.incentive} onChange={v => setEditEmp(p => ({ ...p, incentive: v }))} />
                     </div>
                     <div>
                       <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기타수당</label>
                       <NumInput value={editEmp.extra1} onChange={v => setEditEmp(p => ({ ...p, extra1: v }))} />
                     </div>
                   </div>
+                  <div style={{ marginTop: 8, fontSize: 10, color: C.navy, fontWeight: 700 }}>★ 표시 항목은 급여대장 생성 시 자동 반영됩니다.</div>
                 </div>
 
                 {/* 계좌정보 + 세금/보험 */}
@@ -9325,12 +9317,13 @@ function PayrollPage({ employees, profitState }) {
         employee_id: e.id,
         site_code: e.site_code_1 || "V000",
         work_type: e.work_code || e.work_type || "",
-        basic_pay: e.base_salary || 0,
-        meal: e.meal_allow || 200000,
-        childcare: e.childcare_allow || 0,
-        car_allow: e.car_allow || 0,
-        team_allow: e.leader_allow || 0,
-        incentive: e.incentive || 0,
+        // 신규 필드(급여조건 편집폼 저장값) 우선, 없으면 기존 필드 fallback
+        basic_pay: toNum(e.weekday_pay) || toNum(e.base_salary) || 0,
+        meal: toNum(e.meal) || toNum(e.meal_allow) || 200000,
+        childcare: toNum(e.childcare) || toNum(e.childcare_allow) || 0,
+        car_allow: toNum(e.car_allowance) || toNum(e.car_allow) || 0,
+        team_allow: toNum(e.team_allowance) || toNum(e.leader_allow) || 0,
+        incentive: toNum(e.incentive) || 0,
         allowances: [],
         tax_type: e.tax_type || "4대보험",
         reporter_name: e.reporter_name || "",
