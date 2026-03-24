@@ -10026,12 +10026,28 @@ function PayrollPage({ employees, profitState }) {
               </button>
             )}
             {pyMonthData.status === "confirmed" && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: "#D4EDDA", borderRadius: 8 }}>
-                <span style={{ fontSize: 16 }}>✅</span>
-                <span style={{ fontSize: 13, fontWeight: 700, color: "#155724" }}>
-                  {pyYear}년 {pyMonth}월 급여가 확정되었습니다
-                  {pyMonthData.closed_at && ` (${fmtDateTime(pyMonthData.closed_at)})`}
-                </span>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 20px", background: "#D4EDDA", borderRadius: 8 }}>
+                  <span style={{ fontSize: 16 }}>✅</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: "#155724" }}>
+                    {pyYear}년 {pyMonth}월 급여가 확정되었습니다
+                    {pyMonthData.closed_at && ` (${fmtDateTime(pyMonthData.closed_at)})`}
+                  </span>
+                </div>
+                <button onClick={async () => {
+                  const ok = await confirm(
+                    "급여 확정 해제",
+                    `${pyYear}년 ${pyMonth}월 급여 확정을 해제하시겠습니까?\n확정 해제 후 내용을 수정하고 다시 확정할 수 있습니다.`,
+                    { okLabel: "확정 해제", okColor: C.error }
+                  );
+                  if (!ok) return;
+                  await supabase.from("payroll_months")
+                    .update({ status: "draft", closed_at: null })
+                    .eq("id", pyMonthData.id);
+                  await loadPayrollMonth();
+                }} style={{ ...btnOutline, padding: "10px 18px", fontSize: 13, color: C.error, borderColor: C.error }}>
+                  🔓 확정 해제
+                </button>
               </div>
             )}
           </div>
