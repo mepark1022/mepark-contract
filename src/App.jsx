@@ -13667,7 +13667,33 @@ function AttendancePage({ employees }) {
     return map;
   }, [staffRows, extraRows, reports]);
 
-  // 수동 기록 맵: { empId-date: status }
+  // { empId-date: amount } — 셀에 추가수당 골드점 표시용
+  const extraAmountByDateMap = useMemo(() => {
+    const map = {};
+    const repDateMap = {};
+    reports.forEach(r => { repDateMap[r.id] = r.report_date; });
+    // daily_report_staff.extra_amount
+    staffRows.forEach(s => {
+      if (!s.employee_id) return;
+      const amt = toNum(s.extra_amount);
+      if (!amt) return;
+      const date = repDateMap[s.report_id];
+      if (!date) return;
+      const key = `${s.employee_id}-${date}`;
+      map[key] = (map[key] || 0) + amt;
+    });
+    // daily_report_extra.extra_amount
+    extraRows.forEach(e => {
+      if (!e.employee_id) return;
+      const amt = toNum(e.extra_amount);
+      if (!amt) return;
+      const date = repDateMap[e.report_id];
+      if (!date) return;
+      const key = `${e.employee_id}-${date}`;
+      map[key] = (map[key] || 0) + amt;
+    });
+    return map;
+  }, [staffRows, extraRows, reports]);
   const manualAttMap = useMemo(() => {
     const map = {};
     (attRecords || []).forEach(a => {
@@ -14275,7 +14301,7 @@ function AttendancePage({ employees }) {
                           })()}
                         </td>
                         {(() => {
-                          let workSeq = 0; // 이달 누적 근무 순서 (출근/추가/피크/지각 카운트)
+                          let workSeq = 0; // 이달 누적 근무 순서
                           return dates.map(d => {
                             const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
                             const isAuto = !manualAttMap[`${emp.id}-${d.dateStr}`] && autoAttMap[`${emp.id}-${d.dateStr}`];
@@ -14284,6 +14310,7 @@ function AttendancePage({ employees }) {
                             const isWorked = st === "출근" || st === "추가" || st === "피크" || st === "지각";
                             if (isWorked && !isFuture) workSeq++;
                             const cellText = isWorked ? workSeq : st === "휴무" ? "·" : st === "연차" ? "연" : st === "결근" ? "결" : null;
+                            const hasExtraPay = !!extraAmountByDateMap[`${emp.id}-${d.dateStr}`];
                             return (
                               <td key={d.day}
                                 onClick={isFuture ? undefined : (e) => handleCellClick(emp.id, d.dateStr, e, emp.work_code)}
@@ -14294,7 +14321,7 @@ function AttendancePage({ employees }) {
                                   transition: "background 0.15s",
                                   position: "relative",
                                 }}
-                                title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}${st ? ` — ${st}` : ""}`}
+                                title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}${st ? ` — ${st}` : ""}${hasExtraPay ? ` 💰${fmt(extraAmountByDateMap[`${emp.id}-${d.dateStr}`])}원` : ""}`}
                               >
                                 {cellText !== null && (
                                   <div style={{
@@ -14303,6 +14330,10 @@ function AttendancePage({ employees }) {
                                   }}>
                                     {cellText}
                                   </div>
+                                )}
+                                {/* 추가수당 골드 점 */}
+                                {hasExtraPay && (
+                                  <div style={{ position: "absolute", top: 1, right: 2, width: 5, height: 5, borderRadius: "50%", background: C.gold }} />
                                 )}
                                 {!st && d.isHoliday && (
                                   <div style={{ fontSize: 9, color: "#E57373", padding: "2px 0" }}>🎌</div>
