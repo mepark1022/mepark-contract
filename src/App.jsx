@@ -7040,6 +7040,7 @@ function ValetFeePage({ profitState, onNavigate }) {
   // 분석탭 — 6개월 추이 데이터
   const [trendData, setTrendData] = useState([]);
   const [trendLoading, setTrendLoading] = useState(false);
+  const [showOnlyActive, setShowOnlyActive] = useState(true); // 발렛비 있는 업장만
 
   // 해당 월 daily_reports + payment 로드
   const loadValetReports = useCallback(async () => {
@@ -7121,8 +7122,17 @@ function ValetFeePage({ profitState, onNavigate }) {
     return m;
   }, [valetReports]);
 
-  // 활성 사업장 (해당 월에 일보가 있거나 기본 FIELD_SITES)
-  const activeSites = useMemo(() => FIELD_SITES, []);
+  // 발렛비 있는 사업장 코드 집합
+  const sitesWithValet = useMemo(() => {
+    const s = new Set();
+    valetReports.forEach(r => { if (toNum(r.valet_amount) > 0) s.add(r.site_code); });
+    return s;
+  }, [valetReports]);
+
+  // 활성 사업장 — 필터 토글 적용
+  const activeSites = useMemo(() =>
+    showOnlyActive ? FIELD_SITES.filter(s => sitesWithValet.has(s.code)) : FIELD_SITES,
+  [showOnlyActive, sitesWithValet]);
 
   // ── KPI 계산 ──
   const kpi = useMemo(() => {
@@ -7194,6 +7204,26 @@ function ValetFeePage({ profitState, onNavigate }) {
 
     return (
       <div>
+        {/* 필터 토글 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          {[
+            [true,  "📊 발렛비 있는 업장만"],
+            [false, "📋 전체 업장 보기"],
+          ].map(([val, lbl]) => (
+            <button key={String(val)} onClick={() => setShowOnlyActive(val)}
+              style={{ padding: "5px 14px", borderRadius: 7, fontSize: 12, fontWeight: 700,
+                cursor: "pointer", border: `1.5px solid ${showOnlyActive === val ? C.navy : C.border}`,
+                background: showOnlyActive === val ? C.navy : "#fff",
+                color: showOnlyActive === val ? "#fff" : C.gray }}>
+              {lbl}
+            </button>
+          ))}
+          <span style={{ fontSize: 11, color: C.gray, marginLeft: 4 }}>
+            {showOnlyActive
+              ? `${activeSites.length}개 업장 표시 중 (전체 ${FIELD_SITES.length}개)`
+              : `전체 ${FIELD_SITES.length}개 업장`}
+          </span>
+        </div>
         <div style={{ overflowX: "auto", borderRadius: 10, border: `1px solid ${C.border}` }}>
           <table style={{ borderCollapse: "collapse", fontSize: 11, minWidth: "max-content", width: "100%", tableLayout: "fixed" }}>
             <thead>
