@@ -13797,13 +13797,13 @@ function AttendancePage({ employees }) {
       {/* 헤더 */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: 10 }}>
         <div>
-          <h2 style={{ fontSize: 22, fontWeight: 900, color: C.dark, margin: 0 }}>📅 근태현황</h2>
-          <div style={{ fontSize: 12, color: C.gray, marginTop: 3 }}>현장일보 자동반영 + 수동 편집 · 셀 클릭으로 상태 선택</div>
+          <h2 style={{ fontSize: 24, fontWeight: 900, color: C.dark, margin: 0 }}>📅 근태현황</h2>
+          <div style={{ fontSize: 14, color: C.gray, marginTop: 3 }}>현장일보 자동반영 + 수동 편집 · 셀 클릭으로 상태 선택</div>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          {loading && <span style={{ fontSize: 12, color: C.gray }}>⏳ 로딩 중...</span>}
-          {saving && <span style={{ fontSize: 12, color: C.orange, fontWeight: 700 }}>💾 저장 중...</span>}
-          <button onClick={exportExcel} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 종합 Excel</button>
+          {loading && <span style={{ fontSize: 14, color: C.gray }}>⏳ 로딩 중...</span>}
+          {saving && <span style={{ fontSize: 14, color: C.orange, fontWeight: 700 }}>💾 저장 중...</span>}
+          <button onClick={exportExcel} style={{ padding: "7px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>📥 종합 Excel</button>
         </div>
       </div>
 
@@ -13811,7 +13811,7 @@ function AttendancePage({ employees }) {
       <div style={{ display: "flex", gap: 4, marginBottom: 16, background: "#F0F2F8", borderRadius: 10, padding: 3 }}>
         {[["status", "📅 근무현황"], ["personal", "👤 개인분석"], ["site", "🏢 사업장분석"], ["anomaly", "⚠️ 이상감지"]].map(([k, v]) => (
           <button key={k} onClick={() => setAttTab(k)} style={{
-            flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 13, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
+            flex: 1, padding: "9px 0", borderRadius: 8, fontSize: 15, fontWeight: 800, cursor: "pointer", fontFamily: FONT,
             background: attTab === k ? "#fff" : "transparent", color: attTab === k ? C.navy : C.gray,
             border: "none", boxShadow: attTab === k ? "0 1px 4px rgba(0,0,0,0.1)" : "none", transition: "all 0.15s",
           }}>{v}</button>
@@ -13823,28 +13823,28 @@ function AttendancePage({ employees }) {
 
       {/* 월 네비게이션 + 뷰 전환 + 검색 + 필터 */}
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 16, background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "10px 16px", flexWrap: "wrap" }}>
-        <button onClick={() => moveMonth(-1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
-        <div style={{ fontSize: 16, fontWeight: 900, color: C.dark, minWidth: 120, textAlign: "center" }}>{year}년 {month}월</div>
-        <button onClick={() => moveMonth(1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
-        <button onClick={goToday} style={{ padding: "5px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>오늘</button>
+        <button onClick={() => moveMonth(-1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>‹</button>
+        <div style={{ fontSize: 18, fontWeight: 900, color: C.dark, minWidth: 120, textAlign: "center" }}>{year}년 {month}월</div>
+        <button onClick={() => moveMonth(1)} style={{ width: 32, height: 32, borderRadius: 8, border: "1.5px solid #E8ECF4", background: "#F4F6FB", cursor: "pointer", fontSize: 18, display: "flex", alignItems: "center", justifyContent: "center" }}>›</button>
+        <button onClick={goToday} style={{ padding: "5px 14px", borderRadius: 8, border: `1.5px solid ${C.navy}`, background: "transparent", color: C.navy, fontSize: 14, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>오늘</button>
         {holidaysInMonth > 0 && (
-          <div style={{ fontSize: 11, color: "#C62828", background: "#FFEBEE", borderRadius: 6, padding: "3px 10px", fontWeight: 700 }}>
+          <div style={{ fontSize: 13, color: "#C62828", background: "#FFEBEE", borderRadius: 6, padding: "3px 10px", fontWeight: 700 }}>
             🎌 공휴일 {holidaysInMonth}일
           </div>
         )}
         <div style={{ display: "flex", background: "#F0F2F8", borderRadius: 8, padding: 2, marginLeft: 8 }}>
           {[["calendar", "📅 캘린더"], ["card", "🃏 카드"], ["extra", "💜 추가근무"]].map(([k, v]) => (
             <button key={k} onClick={() => setViewMode(k)} style={{
-              padding: "5px 12px", borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
+              padding: "5px 12px", borderRadius: 6, fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
               background: viewMode === k ? "#fff" : "transparent", color: viewMode === k ? (k === "extra" ? "#7C3AED" : C.navy) : C.gray,
               border: "none", boxShadow: viewMode === k ? "0 1px 3px rgba(0,0,0,0.1)" : "none",
             }}>{v}</button>
           ))}
         </div>
-        <input value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="🔍 이름/사번 검색" style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, width: 140, background: "#fff" }} />
+        <input value={empSearch} onChange={e => setEmpSearch(e.target.value)} placeholder="🔍 이름/사번 검색" style={{ padding: "5px 12px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 14, fontFamily: FONT, width: 140, background: "#fff" }} />
         <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: C.gray }}>사업장</span>
-          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 12, fontFamily: FONT, fontWeight: 600, background: "#fff" }}>
+          <span style={{ fontSize: 14, fontWeight: 700, color: C.gray }}>사업장</span>
+          <select value={siteFilter} onChange={e => setSiteFilter(e.target.value)} style={{ padding: "5px 10px", borderRadius: 8, border: "1.5px solid #D8DCE3", fontSize: 14, fontFamily: FONT, fontWeight: 600, background: "#fff" }}>
             <option value="all">전체 ({activeEmps.length}명)</option>
             {siteFilterOptions.map(s => {
               const cnt = activeEmps.filter(e => e.site_code_1 === s.code).length;
@@ -13858,12 +13858,12 @@ function AttendancePage({ employees }) {
       <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16, flexWrap: "wrap" }}>
         <div style={{ display: "flex", gap: 10, alignItems: "center", flex: 1, flexWrap: "wrap" }}>
           {ATT_STATUSES.map(s => (
-            <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+            <div key={s.key} style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 14 }}>
               <span style={{ display: "inline-block", width: 14, height: 14, borderRadius: 3, background: s.color, border: "1px solid #ddd" }} />
               <span style={{ fontWeight: 600, color: s.text }}>{s.label}</span>
             </div>
           ))}
-          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 14 }}>
             <span style={{ display: "inline-block", width: 14, height: 14, borderRadius: 3, background: "#fff", border: "2px solid #43A047" }} />
             <span style={{ fontWeight: 600, color: "#43A047" }}>일보 자동</span>
           </div>
@@ -13883,9 +13883,9 @@ function AttendancePage({ employees }) {
           { icon: "🏖️", label: "연차", value: `${kpiLeaveCount}건`, color: "#6A1B9A" },
         ].map(k => (
           <div key={k.label} style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 12, padding: "10px 14px", textAlign: "center" }}>
-            <div style={{ fontSize: 18, marginBottom: 2 }}>{k.icon}</div>
-            <div style={{ fontSize: 16, fontWeight: 900, color: k.color, fontFamily: FONT }}>{k.value}</div>
-            <div style={{ fontSize: 10, color: C.gray, marginTop: 2, fontWeight: 600 }}>{k.label}</div>
+            <div style={{ fontSize: 20, marginBottom: 2 }}>{k.icon}</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: k.color, fontFamily: FONT }}>{k.value}</div>
+            <div style={{ fontSize: 12, color: C.gray, marginTop: 2, fontWeight: 600 }}>{k.label}</div>
           </div>
         ))}
       </div>
@@ -13913,19 +13913,19 @@ function AttendancePage({ employees }) {
             <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
               <div style={{ background: "#F3EDFF", border: "1.5px solid #DDD0F5", borderRadius: 12, padding: "10px 20px", display: "flex", gap: 16, alignItems: "center" }}>
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{extraRows.length}건</div>
-                  <div style={{ fontSize: 11, color: C.gray }}>추가근무 총계</div>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{extraRows.length}건</div>
+                  <div style={{ fontSize: 13, color: C.gray }}>추가근무 총계</div>
                 </div>
                 <div style={{ width: 1, height: 36, background: "#DDD0F5" }} />
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 22, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{fmt(totalAmt)}원</div>
-                  <div style={{ fontSize: 11, color: C.gray }}>수당 합계</div>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{fmt(totalAmt)}원</div>
+                  <div style={{ fontSize: 13, color: C.gray }}>수당 합계</div>
                 </div>
               </div>
             </div>
 
             {extraRows.length === 0 ? (
-              <div style={{ padding: 60, textAlign: "center", color: C.gray, fontSize: 14, background: "#fff", borderRadius: 14, border: "1.5px solid #E8ECF4" }}>
+              <div style={{ padding: 60, textAlign: "center", color: C.gray, fontSize: 16, background: "#fff", borderRadius: 14, border: "1.5px solid #E8ECF4" }}>
                 {loading ? "로딩 중..." : "이번 달 추가근무 내역이 없습니다"}
               </div>
             ) : (
@@ -13934,7 +13934,7 @@ function AttendancePage({ employees }) {
                   <thead>
                     <tr style={{ background: "#F4F6FB" }}>
                       {[["날짜", 100], ["사업장", 140], ["사번", 90], ["이름", 80], ["구분", 90], ["추가수당유형", 130], ["수당(원)", 110]].map(([h, w]) => (
-                        <th key={h} style={{ padding: "9px 12px", fontSize: 11, fontWeight: 800, color: C.dark, textAlign: h === "수당(원)" ? "right" : "left", borderBottom: "2px solid #E8ECF4", minWidth: w }}>
+                        <th key={h} style={{ padding: "9px 12px", fontSize: 13, fontWeight: 800, color: C.dark, textAlign: h === "수당(원)" ? "right" : "left", borderBottom: "2px solid #E8ECF4", minWidth: w }}>
                           {h}
                         </th>
                       ))}
@@ -13949,17 +13949,17 @@ function AttendancePage({ employees }) {
                       const amt = toNum(row.extra_amount);
                       return (
                         <tr key={row.id || i} style={{ background: i % 2 === 0 ? "#fff" : "#FAFBFC", borderBottom: "1px solid #F0F2F8" }}>
-                          <td style={{ padding: "8px 12px", fontSize: 12, fontWeight: 700, color: C.dark }}>{row.report_date}</td>
-                          <td style={{ padding: "8px 12px", fontSize: 12, color: C.dark }}>
-                            <span style={{ fontSize: 10, color: C.gray, marginRight: 4 }}>{row.site_code}</span>{siteName}
+                          <td style={{ padding: "8px 12px", fontSize: 14, fontWeight: 700, color: C.dark }}>{row.report_date}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 14, color: C.dark }}>
+                            <span style={{ fontSize: 12, color: C.gray, marginRight: 4 }}>{row.site_code}</span>{siteName}
                           </td>
-                          <td style={{ padding: "8px 12px", fontSize: 11, color: C.gray }}>{row.empNo || "—"}</td>
-                          <td style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.dark }}>{row.empName}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 13, color: C.gray }}>{row.empNo || "—"}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 14, fontWeight: 800, color: C.dark }}>{row.empName}</td>
                           <td style={{ padding: "8px 12px" }}>
-                            <span style={{ fontSize: 11, fontWeight: 700, background: typeBg, color: typeColor, borderRadius: 6, padding: "2px 8px" }}>{typeLabel}</span>
+                            <span style={{ fontSize: 13, fontWeight: 700, background: typeBg, color: typeColor, borderRadius: 6, padding: "2px 8px" }}>{typeLabel}</span>
                           </td>
-                          <td style={{ padding: "8px 12px", fontSize: 12, color: C.gray }}>{row.extra_type || "—"}</td>
-                          <td style={{ padding: "8px 12px", fontSize: 13, fontWeight: 900, color: amt > 0 ? "#7C3AED" : C.gray, textAlign: "right", fontFamily: FONT }}>
+                          <td style={{ padding: "8px 12px", fontSize: 14, color: C.gray }}>{row.extra_type || "—"}</td>
+                          <td style={{ padding: "8px 12px", fontSize: 15, fontWeight: 900, color: amt > 0 ? "#7C3AED" : C.gray, textAlign: "right", fontFamily: FONT }}>
                             {amt > 0 ? `${fmt(amt)}원` : "—"}
                           </td>
                         </tr>
@@ -13968,8 +13968,8 @@ function AttendancePage({ employees }) {
                   </tbody>
                   <tfoot>
                     <tr style={{ background: "#F3EDFF", borderTop: "2px solid #DDD0F5" }}>
-                      <td colSpan={6} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: "#7C3AED" }}>합계 ({extraRows.length}건)</td>
-                      <td style={{ padding: "8px 12px", fontSize: 14, fontWeight: 900, color: "#7C3AED", textAlign: "right", fontFamily: FONT }}>{fmt(totalAmt)}원</td>
+                      <td colSpan={6} style={{ padding: "8px 12px", fontSize: 14, fontWeight: 800, color: "#7C3AED" }}>합계 ({extraRows.length}건)</td>
+                      <td style={{ padding: "8px 12px", fontSize: 16, fontWeight: 900, color: "#7C3AED", textAlign: "right", fontFamily: FONT }}>{fmt(totalAmt)}원</td>
                     </tr>
                   </tfoot>
                 </table>
@@ -13982,10 +13982,10 @@ function AttendancePage({ employees }) {
       {/* ── 카드 뷰 ── */}
       {viewMode === "card" && (
         <div>
-          {siteGroups.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 14 }}>{loading ? "로딩 중..." : "표시할 직원이 없습니다"}</div>}
+          {siteGroups.length === 0 && <div style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 16 }}>{loading ? "로딩 중..." : "표시할 직원이 없습니다"}</div>}
           {siteGroups.map(group => (
             <div key={group.code} style={{ marginBottom: 20 }}>
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.navy, marginBottom: 10, display: "flex", alignItems: "center", gap: 6 }}>
                 🏢 {group.name} <span style={{ color: C.gray, fontWeight: 600 }}>({group.code}) · {group.emps.length}명</span>
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280, 1fr))", gap: 10 }}>
@@ -13998,12 +13998,12 @@ function AttendancePage({ employees }) {
                       {/* 카드 헤더 */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                         <div>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>{emp.name}</div>
-                          <div style={{ fontSize: 11, color: C.gray }}>{emp.emp_no} · {getWorkLabel(emp.work_code)}</div>
+                          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark }}>{emp.name}</div>
+                          <div style={{ fontSize: 13, color: C.gray }}>{emp.emp_no} · {getWorkLabel(emp.work_code)}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
-                          <div style={{ fontSize: 22, fontWeight: 900, color: rateColor }}>{emp.rate}%</div>
-                          <div style={{ fontSize: 10, color: C.gray }}>출근률</div>
+                          <div style={{ fontSize: 24, fontWeight: 900, color: rateColor }}>{emp.rate}%</div>
+                          <div style={{ fontSize: 12, color: C.gray }}>출근률</div>
                         </div>
                       </div>
                       {/* 출근률 바 */}
@@ -14020,16 +14020,16 @@ function AttendancePage({ employees }) {
                           { label: "연차", val: emp.leave, color: "#6A1B9A" },
                         ].map(s => (
                           <div key={s.label}>
-                            <div style={{ fontSize: 14, fontWeight: 800, color: s.val > 0 ? s.color : "#DDD" }}>{s.val}</div>
-                            <div style={{ fontSize: 9, color: C.gray, marginTop: 1 }}>{s.label}</div>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: s.val > 0 ? s.color : "#DDD" }}>{s.val}</div>
+                            <div style={{ fontSize: 11, color: C.gray, marginTop: 1 }}>{s.label}</div>
                           </div>
                         ))}
                       </div>
                       {/* 추가수당 뱃지 */}
                       {emp.extraAmt > 0 && (
                         <div style={{ marginTop: 8, background: "#F3EDFF", border: "1px solid #DDD0F5", borderRadius: 8, padding: "5px 10px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, color: "#7C3AED" }}>💰 추가수당</span>
-                          <span style={{ fontSize: 12, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{fmt(emp.extraAmt)}원</span>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: "#7C3AED" }}>💰 추가수당</span>
+                          <span style={{ fontSize: 14, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{fmt(emp.extraAmt)}원</span>
                         </div>
                       )}
                       {/* 미니 달력 도트 */}
@@ -14056,21 +14056,21 @@ function AttendancePage({ employees }) {
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "2px 4px", fontSize: 12, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left" }}>
+                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "2px 4px", fontSize: 14, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left" }}>
                   근무자
                 </th>
                 {dates.map(d => {
                   const isRed = d.isWeekend || d.isHoliday;
                   return (
                     <th key={d.day} title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}`} style={{
-                      padding: "2px 0", fontSize: 10, fontWeight: 700, textAlign: "center",
+                      padding: "2px 0", fontSize: 12, fontWeight: 700, textAlign: "center",
                       borderBottom: "2px solid #E8ECF4", minWidth: 28, width: 28,
                       background: d.isToday ? C.navy : d.isHoliday ? "#FFF3F3" : "#F4F6FB",
                       color: d.isToday ? "#fff" : isRed ? "#C62828" : C.dark,
                       borderLeft: d.day === 1 ? "none" : "1px solid #F0F0F0",
                     }}>
                       <div style={{ lineHeight: 1.1 }}>{d.day}</div>
-                      <div style={{ fontSize: 9, fontWeight: 600, opacity: 0.7 }}>{d.dayName}</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, opacity: 0.7 }}>{d.dayName}</div>
                     </th>
                   );
                 })}
@@ -14087,9 +14087,9 @@ function AttendancePage({ employees }) {
                     { label: "합계", color: C.dark, sub: mWd + mWe + mHol },
                   ];
                   return dutyCols.map((col, ci) => (
-                    <th key={col.label} style={{ padding: "2px 1px", fontSize: 10, fontWeight: 800, color: col.color, background: col.label === "합계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 28 }}>
+                    <th key={col.label} style={{ padding: "2px 1px", fontSize: 12, fontWeight: 800, color: col.color, background: col.label === "합계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 28 }}>
                       <div>{col.label}</div>
-                      {col.sub !== "" && <div style={{ fontSize: 8, fontWeight: 600, color: "#999", lineHeight: 1 }}>{col.sub}일</div>}
+                      {col.sub !== "" && <div style={{ fontSize: 10, fontWeight: 600, color: "#999", lineHeight: 1 }}>{col.sub}일</div>}
                     </th>
                   ));
                 })()}
@@ -14097,7 +14097,7 @@ function AttendancePage({ employees }) {
             </thead>
             <tbody>
               {siteGroups.length === 0 && (
-                <tr><td colSpan={daysInMonth + 7} style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 14 }}>
+                <tr><td colSpan={daysInMonth + 7} style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 16 }}>
                   {loading ? "로딩 중..." : "표시할 직원이 없습니다"}
                 </td></tr>
               )}
@@ -14105,9 +14105,9 @@ function AttendancePage({ employees }) {
                 <Fragment key={group.code}>
                   {/* 사업장 그룹 헤더 */}
                   <tr>
-                    <td colSpan={daysInMonth + 7} style={{ padding: "2px 6px", background: "#EEF1F8", fontSize: 11, fontWeight: 800, color: C.navy, borderBottom: "1px solid #E8ECF4" }}>
+                    <td colSpan={daysInMonth + 7} style={{ padding: "2px 6px", background: "#EEF1F8", fontSize: 13, fontWeight: 800, color: C.navy, borderBottom: "1px solid #E8ECF4" }}>
                       🏢 {group.name} <span style={{ color: C.gray, fontWeight: 600 }}>({group.code}) · {group.emps.length}명</span>
-                      <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 600 }}>
+                      <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 600 }}>
                         <span style={{ color: "#1565C0" }}>평{group.emps.filter(e => getWorkCat(e.work_code) === "weekday").length}</span>
                         <span style={{ color: "#E65100", marginLeft: 3 }}>주{group.emps.filter(e => getWorkCat(e.work_code) === "weekend").length}</span>
                         {group.emps.filter(e => getWorkCat(e.work_code) === "mixed").length > 0 && <span style={{ color: "#7B1FA2", marginLeft: 3 }}>복합{group.emps.filter(e => getWorkCat(e.work_code) === "mixed").length}</span>}
@@ -14139,7 +14139,7 @@ function AttendancePage({ employees }) {
                     return (
                       <tr key={emp.id} style={{ background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
                         <td title={`${emp.emp_no || ""} ${emp.name} ${emp.position || ""}`} style={{
-                          position: "sticky", left: 0, zIndex: 5, padding: "2px 4px", fontSize: 12, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
+                          position: "sticky", left: 0, zIndex: 5, padding: "2px 4px", fontSize: 14, fontWeight: 700, color: C.dark, borderBottom: "1px solid #F0F2F8", borderRight: "2px solid #E8ECF4",
                           background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap", overflow: "hidden",
                         }}>
                           <span style={{ fontWeight: 800 }}>{emp.name}</span>
@@ -14147,7 +14147,7 @@ function AttendancePage({ employees }) {
                             const cat = getWorkCat(emp.work_code);
                             const wl = WORK_CODES.find(w => w.code === emp.work_code)?.label || emp.work_code;
                             const catColor = cat === "weekday" ? { bg: "#E3F2FD", color: "#1565C0" } : cat === "weekend" ? { bg: "#FFF3E0", color: "#E65100" } : cat === "mixed" ? { bg: "#F3E5F5", color: "#7B1FA2" } : { bg: "#E8F5E9", color: "#2E7D32" };
-                            return <span style={{ fontSize: 9, padding: "0 3px", borderRadius: 3, background: catColor.bg, color: catColor.color, fontWeight: 800, marginLeft: 2 }}>{wl}</span>;
+                            return <span style={{ fontSize: 11, padding: "0 3px", borderRadius: 3, background: catColor.bg, color: catColor.color, fontWeight: 800, marginLeft: 2 }}>{wl}</span>;
                           })()}
                         </td>
                         {dates.map(d => {
@@ -14169,14 +14169,14 @@ function AttendancePage({ employees }) {
                             >
                               {st && (
                                 <div style={{
-                                  fontSize: 11, fontWeight: 700, color: info?.text || C.dark, padding: "2px 0", lineHeight: 1,
+                                  fontSize: 13, fontWeight: 700, color: info?.text || C.dark, padding: "2px 0", lineHeight: 1,
                                   ...(isAuto ? { borderBottom: `2px solid ${st === "추가" ? "#7C3AED" : st === "피크" ? "#D81B60" : C.success}` } : {}),
                                 }}>
                                   {st === "출근" ? "출" : st === "지각" ? "지" : st === "결근" ? "결" : st === "휴무" ? "·" : st === "연차" ? "연" : st === "추가" ? "추" : st === "피크" ? "피" : st}
                                 </div>
                               )}
                               {!st && d.isHoliday && (
-                                <div style={{ fontSize: 7, color: "#E57373", padding: "2px 0" }}>🎌</div>
+                                <div style={{ fontSize: 9, color: "#E57373", padding: "2px 0" }}>🎌</div>
                               )}
                             </td>
                           );
@@ -14185,7 +14185,7 @@ function AttendancePage({ employees }) {
                           <td key={ci} style={{
                             padding: "2px 1px", textAlign: "center", borderBottom: "1px solid #F0F2F8",
                             borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0",
-                            fontSize: 11, fontWeight: dv.v > 0 ? 800 : 400, color: dv.v > 0 ? dv.color : "#ddd",
+                            fontSize: 13, fontWeight: dv.v > 0 ? 800 : 400, color: dv.v > 0 ? dv.color : "#ddd",
                             background: ci === 5 ? "#F8F9FC" : "transparent",
                           }}>
                             {dv.v || "·"}
@@ -14220,7 +14220,7 @@ function AttendancePage({ employees }) {
                     return (
                       <tr style={{ background: "#FFF8F0" }}>
                         <td colSpan={daysInMonth + 1} style={{
-                          position: "sticky", left: 0, zIndex: 5, padding: "2px 6px", fontSize: 10, fontWeight: 800,
+                          position: "sticky", left: 0, zIndex: 5, padding: "2px 6px", fontSize: 12, fontWeight: 800,
                           color: C.orange, borderBottom: "2px solid #E8ECF4", background: "#FFF8F0", textAlign: "right",
                         }}>
                           📌 {group.name} 소계 ({group.emps.length}명)
@@ -14229,7 +14229,7 @@ function AttendancePage({ employees }) {
                           <td key={ci} style={{
                             padding: "2px 1px", textAlign: "center", borderBottom: "2px solid #E8ECF4",
                             borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0",
-                            fontSize: 11, fontWeight: 900, color: sv.v > 0 ? sv.color : "#ccc",
+                            fontSize: 13, fontWeight: 900, color: sv.v > 0 ? sv.color : "#ccc",
                             background: ci === 5 ? "#FFF0E0" : "#FFF8F0",
                           }}>
                             {sv.v || "·"}
@@ -14245,7 +14245,7 @@ function AttendancePage({ employees }) {
         </div>
         {/* 하단 요약 */}
         {allFilteredEmps.length > 0 && (
-          <div style={{ padding: "10px 16px", background: "#F8F9FC", borderTop: "1.5px solid #EEF1F8", fontSize: 12, color: C.gray, display: "flex", gap: 16, flexWrap: "wrap" }}>
+          <div style={{ padding: "10px 16px", background: "#F8F9FC", borderTop: "1.5px solid #EEF1F8", fontSize: 14, color: C.gray, display: "flex", gap: 16, flexWrap: "wrap" }}>
             <span>👥 총 {totalEmps}명</span>
             <span>📊 출근률 {overallAttRate}%</span>
             <span>💜 추가 {kpiExtraCount}건</span>
@@ -14262,10 +14262,10 @@ function AttendancePage({ employees }) {
       {/* 공휴일 목록 */}
       {holidaysInMonth > 0 && (
         <div style={{ marginTop: 16, background: "#FFF3E0", border: "1.5px solid #FFE0B2", borderRadius: 12, padding: "10px 16px" }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: "#E65100", marginBottom: 6 }}>🎌 이번 달 공휴일</div>
+          <div style={{ fontSize: 14, fontWeight: 800, color: "#E65100", marginBottom: 6 }}>🎌 이번 달 공휴일</div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
             {dates.filter(d => d.isHoliday).map(d => (
-              <span key={d.dateStr} style={{ fontSize: 11, background: "#fff", border: "1px solid #FFE0B2", borderRadius: 8, padding: "2px 10px", color: "#C62828", fontWeight: 700 }}>
+              <span key={d.dateStr} style={{ fontSize: 13, background: "#fff", border: "1px solid #FFE0B2", borderRadius: 8, padding: "2px 10px", color: "#C62828", fontWeight: 700 }}>
                 {d.day}일({d.dayName}) {d.holidayName}
               </span>
             ))}
@@ -14280,7 +14280,7 @@ function AttendancePage({ employees }) {
           zIndex: 9999, background: "#fff", border: "1.5px solid #D8DCE3", borderRadius: 12, padding: 8, minWidth: 130,
           boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
         }}>
-          <div style={{ fontSize: 10, color: C.gray, padding: "2px 8px 6px", fontWeight: 700, borderBottom: "1px solid #eee", marginBottom: 4 }}>
+          <div style={{ fontSize: 12, color: C.gray, padding: "2px 8px 6px", fontWeight: 700, borderBottom: "1px solid #eee", marginBottom: 4 }}>
             {popup.dateStr.slice(5)} 상태 변경
           </div>
           {ATT_STATUSES.map(s => {
@@ -14289,7 +14289,7 @@ function AttendancePage({ employees }) {
               <button key={s.key} onClick={() => saveStatus(popup.empId, popup.dateStr, s.key)}
                 style={{
                   display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 10px", border: "none",
-                  background: isActive ? s.bg : "transparent", borderRadius: 6, cursor: "pointer", fontSize: 12,
+                  background: isActive ? s.bg : "transparent", borderRadius: 6, cursor: "pointer", fontSize: 14,
                   fontWeight: isActive ? 800 : 600, color: s.text, fontFamily: FONT,
                   transition: "background 0.1s",
                 }}
@@ -14298,7 +14298,7 @@ function AttendancePage({ employees }) {
               >
                 <span style={{ width: 14, height: 14, borderRadius: 3, background: s.color, border: "1px solid #ddd", flexShrink: 0 }} />
                 {s.label}
-                {isActive && <span style={{ marginLeft: "auto", fontSize: 11 }}>✓</span>}
+                {isActive && <span style={{ marginLeft: "auto", fontSize: 13 }}>✓</span>}
               </button>
             );
           })}
@@ -14309,7 +14309,7 @@ function AttendancePage({ employees }) {
               <button onClick={() => saveStatus(popup.empId, popup.dateStr, null)}
                 style={{
                   display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 10px", border: "none",
-                  background: "transparent", borderRadius: 6, cursor: "pointer", fontSize: 12,
+                  background: "transparent", borderRadius: 6, cursor: "pointer", fontSize: 14,
                   fontWeight: 600, color: C.error, fontFamily: FONT,
                 }}
                 onMouseEnter={e => { e.currentTarget.style.background = "#FFF0F0"; }}
@@ -14407,21 +14407,21 @@ function AppRouter() {
   const { user, profile, loading } = useAuth();
   if (loading) return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, background: C.bg }}>
     <div style={{ textAlign: "center" }}>
-      <div style={{ width: 48, height: 48, borderRadius: 12, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 22, fontWeight: 900, color: C.navy, marginBottom: 12 }}>MP</div>
-      <div style={{ color: C.gray, fontSize: 13 }}>로딩 중...</div>
+      <div style={{ width: 48, height: 48, borderRadius: 12, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 24, fontWeight: 900, color: C.navy, marginBottom: 12 }}>MP</div>
+      <div style={{ color: C.gray, fontSize: 15 }}>로딩 중...</div>
     </div>
   </div>;
   // field_member(마감앱 전용) 차단 — crew는 ERP 접근 허용
   if (user && profile && profile.role === "field_member") {
     return <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", fontFamily: FONT, background: C.bg }}>
       <div style={{ textAlign: "center", maxWidth: 400, padding: 32 }}>
-        <div style={{ width: 64, height: 64, borderRadius: 16, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 28, fontWeight: 900, color: C.navy, marginBottom: 16 }}>MP</div>
-        <h2 style={{ fontSize: 18, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>관리자 전용 시스템</h2>
-        <p style={{ fontSize: 14, color: C.gray, lineHeight: 1.6, margin: "0 0 24px" }}>
+        <div style={{ width: 64, height: 64, borderRadius: 16, background: C.gold, display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 30, fontWeight: 900, color: C.navy, marginBottom: 16 }}>MP</div>
+        <h2 style={{ fontSize: 20, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>관리자 전용 시스템</h2>
+        <p style={{ fontSize: 16, color: C.gray, lineHeight: 1.6, margin: "0 0 24px" }}>
           현장 계정({profile.emp_no || profile.name})은 이 시스템에 접근할 수 없습니다.<br/>
           현장일보 앱(마감앱)을 이용해주세요.
         </p>
-        <button onClick={() => supabase.auth.signOut()} style={{ ...btnPrimary, padding: "12px 32px", fontSize: 14 }}>로그아웃</button>
+        <button onClick={() => supabase.auth.signOut()} style={{ ...btnPrimary, padding: "12px 32px", fontSize: 16 }}>로그아웃</button>
       </div>
     </div>;
   }
