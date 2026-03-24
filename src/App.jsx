@@ -13596,10 +13596,6 @@ function AttendancePage({ employees }) {
     const repDateMap = {};
     reports.forEach(r => { repDateMap[r.id] = r.report_date; });
 
-    // 직원 id → workCode 빠른 조회
-    const empWorkCodeMap = {};
-    employees.forEach(e => { empWorkCodeMap[e.id] = e.work_code; });
-
     staffRows.forEach(s => {
       if (!s.employee_id) return;
       const date = repDateMap[s.report_id];
@@ -13608,31 +13604,18 @@ function AttendancePage({ employees }) {
       const isPeak = s.staff_type === "peak";
       const isExtra = s.staff_type === "extra" || s.staff_type === "substitute";
 
-      // offDays 기반 추가 판단: 직원의 workCode offDays에 해당하는 날 출근 → 비번투입이므로 "추가"
-      // (예: 주(2) 근무자가 평일에 키전달로 일보에 등록된 경우)
-      let isOffDayWork = false;
-      if (!isPeak && !isExtra) {
-        const wc = empWorkCodeMap[s.employee_id];
-        if (wc) {
-          const offDays = getOffDays(wc);
-          if (offDays) {
-            const dow = new Date(date + "T00:00:00").getDay();
-            if (offDays.includes(dow)) isOffDayWork = true;
-          }
-        }
-      }
-
       // 우선순위: 출근 > 피크 > 추가
       if (!map[key]) {
-        map[key] = isPeak ? "피크" : (isExtra || isOffDayWork) ? "추가" : "출근";
-      } else if (!isPeak && !isExtra && !isOffDayWork) {
+        map[key] = isPeak ? "피크" : isExtra ? "추가" : "출근";
+      } else if (!isPeak && !isExtra) {
         map[key] = "출근"; // 정규 출근이 추가되면 승격
       } else if (isPeak && map[key] === "추가") {
-        map[key] = "피크"; // 피크가 추가보다 우선
+        map[key] = "피크";
       }
     });
 
-    // daily_report_extra: 직원 지정된 추가항목 → 해당 날짜 "추가"로 마킹
+    // daily_report_extra: 직원 지정된 추가항목 → 해당 날짜 마킹
+    // (이미 출근/피크로 잡힌 날은 덮어쓰지 않음)
     extraRows.forEach(e => {
       if (!e.employee_id) return;
       const date = repDateMap[e.report_id];
@@ -13642,7 +13625,7 @@ function AttendancePage({ employees }) {
     });
 
     return map;
-  }, [staffRows, extraRows, reports, employees]);
+  }, [staffRows, extraRows, reports]);
 
   // 직원별 추가수당 합계 맵: { empId: totalAmount }
   // daily_report_staff.extra_amount + daily_report_extra.extra_amount 모두 합산
