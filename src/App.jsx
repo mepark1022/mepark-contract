@@ -71,8 +71,11 @@ function _refreshGlobalSites(detailsMap) {
   });
   const base = [...DEFAULT_SITES.filter(s => !hiddenCodes.has(s.code))];
   Object.entries(detailsMap || {}).forEach(([code, d]) => {
-    if (hiddenCodes.has(code)) return;
-    if (!base.find(s => s.code === code) && d.site_name) {
+    if (hiddenCodes.has(code) || !d.site_name) return;
+    const existing = base.find(s => s.code === code);
+    if (existing) {
+      existing.name = d.site_name; // DB 이름으로 덮어쓰기
+    } else {
       base.push({ code, name: d.site_name });
     }
   });
@@ -6472,7 +6475,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 }}>
                   <div style={{ display: "flex", alignItems: "center", gap: 8, flex: 1, minWidth: 0 }}>
                     <span style={{ fontSize: 11, fontWeight: 800, color: "#fff", background: C.navy, padding: "3px 8px", borderRadius: 6, flexShrink: 0 }}>{site.code}</span>
-                    <span style={{ fontSize: 15, fontWeight: 900, color: C.dark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{site.name}</span>
+                    <span style={{ fontSize: 15, fontWeight: 900, color: C.dark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{siteDetails[site.code]?.site_name || site.name}</span>
                     {isCustomSite(site.code) && <span style={{ fontSize: 9, background: C.gold, color: C.navy, padding: "2px 6px", borderRadius: 4, fontWeight: 800, flexShrink: 0 }}>추가</span>}
                   </div>
                   {emp.total > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: C.navy, background: "#EEF0FF", padding: "3px 8px", borderRadius: 6, flexShrink: 0 }}>{emp.total}명</span>}
@@ -6549,7 +6552,7 @@ function SiteManagementPage({ employees, onSiteChange }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
               <div>
                 <div style={{ fontSize: 11, opacity: 0.55, marginBottom: 4 }}>{sel.code}</div>
-                <div style={{ fontSize: 20, fontWeight: 900 }}>{sel.name}</div>
+                <div style={{ fontSize: 20, fontWeight: 900 }}>{detail.site_name || sel.name}</div>
               </div>
               <button onClick={() => setSelectedSite(null)} style={{
                 background: "rgba(255,255,255,0.15)", border: "none", borderRadius: 10,
