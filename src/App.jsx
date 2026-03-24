@@ -13875,7 +13875,6 @@ function AttendancePage({ employees }) {
         {[
           { icon: "👥", label: "표시 인원", value: `${totalEmps}명`, color: C.navy },
           { icon: "📊", label: "출근률", value: `${overallAttRate}%`, color: overallAttRate >= 80 ? C.success : overallAttRate >= 60 ? C.orange : C.error },
-          { icon: "✅", label: "출근", value: `${kpiAttCount}건`, color: C.success },
           { icon: "💜", label: "추가근무", value: `${kpiExtraCount}건`, color: "#7C3AED" },
           { icon: "🔺", label: "피크", value: `${kpiPeakCount}건`, color: "#D81B60" },
           { icon: "💰", label: "추가수당합계", value: kpiExtraAmount > 0 ? `${pFmt(kpiExtraAmount)}원` : "0원", color: "#7C3AED" },
@@ -14249,7 +14248,6 @@ function AttendancePage({ employees }) {
           <div style={{ padding: "10px 16px", background: "#F8F9FC", borderTop: "1.5px solid #EEF1F8", fontSize: 12, color: C.gray, display: "flex", gap: 16, flexWrap: "wrap" }}>
             <span>👥 총 {totalEmps}명</span>
             <span>📊 출근률 {overallAttRate}%</span>
-            <span>✅ 출근 {kpiAttCount}건</span>
             <span>💜 추가 {kpiExtraCount}건</span>
             {kpiPeakCount > 0 && <span style={{ color: "#D81B60", fontWeight: 700 }}>🔺 피크 {kpiPeakCount}건</span>}
             {kpiExtraAmount > 0 && <span style={{ color: "#7C3AED", fontWeight: 700 }}>💰 추가수당 {fmt(kpiExtraAmount)}원</span>}
