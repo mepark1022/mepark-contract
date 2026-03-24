@@ -13524,6 +13524,7 @@ function AttendancePage({ employees }) {
   const [attRecords, setAttRecords] = useState([]);
   const [reports, setReports] = useState([]);
   const [staffRows, setStaffRows] = useState([]);
+  const [extraRows, setExtraRows] = useState([]); // daily_report_extra (키전달 등 추가항목)
   const [loading, setLoading] = useState(false);
   const [popup, setPopup] = useState(null); // { empId, date, x, y }
   const [saving, setSaving] = useState(false);
@@ -13572,26 +13573,35 @@ function AttendancePage({ employees }) {
         setReports(repList);
         if (repList.length > 0) {
           const ids = repList.map(r => r.id);
-          const { data: staff } = await supabase
-            .from("daily_report_staff").select("*").in("report_id", ids);
+          const [{ data: staff }, { data: extras }] = await Promise.all([
+            supabase.from("daily_report_staff").select("*").in("report_id", ids),
+            supabase.from("daily_report_extra").select("*").in("report_id", ids),
+          ]);
           setStaffRows(staff || []);
+          setExtraRows(extras || []);
         } else {
           setStaffRows([]);
+          setExtraRows([]);
         }
       } catch (e) { console.error("근태 로드 오류:", e); }
       setLoading(false);
     })();
   }, [year, month, daysInMonth]);
 
-  // 일보 기반 자동 출근 맵: { empId-date: "출근" | "추가" }
+  // 일보 기반 자동 출근 맵: { empId-date: "출근" | "추가" | "피크" }
   // staff_type: field앱 "extra"(비번투입) / ERP "substitute"(대근) 모두 "추가"로 처리
+  // daily_report_extra에 employee_id가 있는 경우도 "추가"로 반영 (키전달 등)
   const autoAttMap = useMemo(() => {
     const map = {};
+    // repId → date 빠른 조회용
+    const repDateMap = {};
+    reports.forEach(r => { repDateMap[r.id] = r.report_date; });
+
     staffRows.forEach(s => {
       if (!s.employee_id) return;
-      const rep = reports.find(r => r.id === s.report_id);
-      if (!rep) return;
-      const key = `${s.employee_id}-${rep.report_date}`;
+      const date = repDateMap[s.report_id];
+      if (!date) return;
+      const key = `${s.employee_id}-${date}`;
       const isPeak = s.staff_type === "peak";
       const isExtra = s.staff_type === "extra" || s.staff_type === "substitute";
       // 우선순위: 출근 > 피크 > 추가
@@ -13603,20 +13613,45 @@ function AttendancePage({ employees }) {
         map[key] = "피크"; // 피크가 추가보다 우선
       }
     });
+
+    // daily_report_extra: 직원 지정된 추가항목 → 해당 날짜 "추가"로 마킹
+    // (단, 이미 정규출근/피크로 잡힌 경우는 덮어쓰지 않음)
+    extraRows.forEach(e => {
+      if (!e.employee_id) return;
+      const date = repDateMap[e.report_id];
+      if (!date) return;
+      const key = `${e.employee_id}-${date}`;
+      if (!map[key]) {
+        map[key] = "추가"; // 추가항목만 있는 경우
+      }
+      // 이미 출근/피크면 유지 (덮어쓰지 않음)
+    });
+
     return map;
-  }, [staffRows, reports]);
+  }, [staffRows, extraRows, reports]);
 
   // 직원별 추가수당 합계 맵: { empId: totalAmount }
+  // daily_report_staff.extra_amount + daily_report_extra.extra_amount 모두 합산
   const extraAmountMap = useMemo(() => {
     const map = {};
+    const repDateMap = {};
+    reports.forEach(r => { repDateMap[r.id] = r.report_date; });
+
     staffRows.forEach(s => {
       if (!s.employee_id) return;
       const amt = toNum(s.extra_amount);
       if (!amt) return;
       map[s.employee_id] = (map[s.employee_id] || 0) + amt;
     });
+    // daily_report_extra에서도 합산
+    extraRows.forEach(e => {
+      if (!e.employee_id) return;
+      const amt = toNum(e.extra_amount);
+      if (!amt) return;
+      map[e.employee_id] = (map[e.employee_id] || 0) + amt;
+    });
     return map;
-  }, [staffRows]);
+  }, [staffRows, extraRows, reports]);
 
   // 수동 기록 맵: { empId-date: status }
   const manualAttMap = useMemo(() => {
@@ -13946,18 +13981,44 @@ function AttendancePage({ employees }) {
 
       {/* ── 추가근무 탭 ── */}
       {viewMode === "extra" && (() => {
-        // staffRows에서 extra_amount 또는 staff_type=extra/substitute 인 행만 추출
-        const extraRows = staffRows
+        // ① daily_report_staff에서 extra/substitute 또는 extra_amount 있는 행
+        const staffExtra = staffRows
           .filter(s => s.employee_id && (toNum(s.extra_amount) > 0 || s.staff_type === "extra" || s.staff_type === "substitute"))
           .map(s => {
             const rep = reports.find(r => r.id === s.report_id);
             const emp = employees.find(e => e.id === s.employee_id);
-            return { ...s, report_date: rep?.report_date || "", site_code: rep?.site_code || "", empName: emp?.name || s.name_raw || "?", empNo: emp?.emp_no || "" };
-          })
-          .filter(s => s.report_date)
+            return {
+              id: s.id, report_date: rep?.report_date || "", site_code: rep?.site_code || "",
+              empName: emp?.name || s.name_raw || "?", empNo: emp?.emp_no || "",
+              extra_amount: toNum(s.extra_amount), extra_type: s.extra_type || "",
+              source: "staff",
+              typeLabel: s.staff_type === "extra" ? "비번투입" : s.staff_type === "substitute" ? "대근" : s.staff_type === "hq" ? "본사지원" : s.staff_type === "part" ? "알바지원" : "추가",
+              typeBg: s.staff_type === "extra" ? "#F3EDFF" : s.staff_type === "substitute" ? "#FFF3E0" : "#F0F4FF",
+              typeColor: s.staff_type === "extra" ? "#7C3AED" : s.staff_type === "substitute" ? "#E65100" : C.navy,
+            };
+          });
+
+        // ② daily_report_extra에서 직원 지정된 항목 (키전달 등)
+        const extraExtra = extraRows
+          .filter(e => e.employee_id && (toNum(e.extra_amount) > 0 || toNum(e.extra_hours) > 0))
+          .map(e => {
+            const rep = reports.find(r => r.id === e.report_id);
+            const emp = employees.find(em => em.id === e.employee_id);
+            return {
+              id: e.id, report_date: rep?.report_date || "", site_code: rep?.site_code || "",
+              empName: emp?.name || "?", empNo: emp?.emp_no || "",
+              extra_amount: toNum(e.extra_amount), extra_type: e.extra_type || "",
+              source: "extra",
+              typeLabel: "추가항목",
+              typeBg: "#E8F5E9", typeColor: "#2E7D32",
+            };
+          });
+
+        const allExtraRows = [...staffExtra, ...extraExtra]
+          .filter(r => r.report_date)
           .sort((a, b) => b.report_date.localeCompare(a.report_date));
 
-        const totalAmt = extraRows.reduce((s, r) => s + toNum(r.extra_amount), 0);
+        const totalAmt = allExtraRows.reduce((s, r) => s + r.extra_amount, 0);
 
         return (
           <div>
@@ -13965,7 +14026,7 @@ function AttendancePage({ employees }) {
             <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
               <div style={{ background: "#F3EDFF", border: "1.5px solid #DDD0F5", borderRadius: 12, padding: "10px 20px", display: "flex", gap: 16, alignItems: "center" }}>
                 <div style={{ textAlign: "center" }}>
-                  <div style={{ fontSize: 24, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{extraRows.length}건</div>
+                  <div style={{ fontSize: 24, fontWeight: 900, color: "#7C3AED", fontFamily: FONT }}>{allExtraRows.length}건</div>
                   <div style={{ fontSize: 13, color: C.gray }}>추가근무 총계</div>
                 </div>
                 <div style={{ width: 1, height: 36, background: "#DDD0F5" }} />
@@ -13976,7 +14037,7 @@ function AttendancePage({ employees }) {
               </div>
             </div>
 
-            {extraRows.length === 0 ? (
+            {allExtraRows.length === 0 ? (
               <div style={{ padding: 60, textAlign: "center", color: C.gray, fontSize: 16, background: "#fff", borderRadius: 14, border: "1.5px solid #E8ECF4" }}>
                 {loading ? "로딩 중..." : "이번 달 추가근무 내역이 없습니다"}
               </div>
@@ -13993,10 +14054,7 @@ function AttendancePage({ employees }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {extraRows.map((row, i) => {
-                      const typeLabel = row.staff_type === "extra" ? "비번투입" : row.staff_type === "substitute" ? "대근" : row.staff_type === "hq" ? "본사지원" : row.staff_type === "part" ? "알바지원" : "추가";
-                      const typeBg = row.staff_type === "extra" ? "#F3EDFF" : row.staff_type === "substitute" ? "#FFF3E0" : "#F0F4FF";
-                      const typeColor = row.staff_type === "extra" ? "#7C3AED" : row.staff_type === "substitute" ? "#E65100" : C.navy;
+                    {allExtraRows.map((row, i) => {
                       const siteName = SITES.find(s => s.code === row.site_code)?.name || row.site_code || "—";
                       const amt = toNum(row.extra_amount);
                       return (
@@ -14020,7 +14078,7 @@ function AttendancePage({ employees }) {
                   </tbody>
                   <tfoot>
                     <tr style={{ background: "#F3EDFF", borderTop: "2px solid #DDD0F5" }}>
-                      <td colSpan={6} style={{ padding: "8px 12px", fontSize: 14, fontWeight: 800, color: "#7C3AED" }}>합계 ({extraRows.length}건)</td>
+                      <td colSpan={6} style={{ padding: "8px 12px", fontSize: 14, fontWeight: 800, color: "#7C3AED" }}>합계 ({allExtraRows.length}건)</td>
                       <td style={{ padding: "8px 12px", fontSize: 16, fontWeight: 900, color: "#7C3AED", textAlign: "right", fontFamily: FONT }}>{fmt(totalAmt)}원</td>
                     </tr>
                   </tfoot>
