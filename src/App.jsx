@@ -6295,8 +6295,13 @@ function SiteManagementPage({ employees, onSiteChange }) {
 
   const activeSiteEmps = useMemo(() => {
     const map = {};
-    allSites.forEach(s => { map[s.code] = 0; });
-    employees.filter(e => e.status === "재직" && e.site_code_1).forEach(e => { map[e.site_code_1] = (map[e.site_code_1] || 0) + 1; });
+    allSites.forEach(s => { map[s.code] = { weekday: 0, weekend: 0, mixed: 0, parttime: 0, total: 0 }; });
+    employees.filter(e => e.status === "재직" && e.site_code_1).forEach(e => {
+      if (!map[e.site_code_1]) map[e.site_code_1] = { weekday: 0, weekend: 0, mixed: 0, parttime: 0, total: 0 };
+      const cat = getWorkCat(e.work_code);
+      map[e.site_code_1][cat] = (map[e.site_code_1][cat] || 0) + 1;
+      map[e.site_code_1].total++;
+    });
     return map;
   }, [employees, allSites]);
 
@@ -6451,10 +6456,10 @@ function SiteManagementPage({ employees, onSiteChange }) {
           {allSites.map(site => {
             const d = siteDetails[site.code] || {};
             const isSel = sel?.code === site.code;
-            const empCount = activeSiteEmps[site.code] || 0;
+            const emp = activeSiteEmps[site.code] || { weekday: 0, weekend: 0, mixed: 0, parttime: 0, total: 0 };
             const hasContract = toNum(d.monthly_contract) > 0;
-            const weekdayStaff = toNum(d.weekday_staff);
-            const weekendStaff = toNum(d.weekend_staff);
+            const wdCount = emp.weekday + emp.mixed;
+            const weCount = emp.weekend + emp.mixed + emp.parttime;
             return (
               <div key={site.code} onClick={() => handleSelectSite(site)}
                 style={{
@@ -6470,8 +6475,9 @@ function SiteManagementPage({ employees, onSiteChange }) {
                     <span style={{ fontSize: 15, fontWeight: 900, color: C.dark, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{site.name}</span>
                     {isCustomSite(site.code) && <span style={{ fontSize: 9, background: C.gold, color: C.navy, padding: "2px 6px", borderRadius: 4, fontWeight: 800, flexShrink: 0 }}>추가</span>}
                   </div>
+                  {emp.total > 0 && <span style={{ fontSize: 11, fontWeight: 800, color: C.navy, background: "#EEF0FF", padding: "3px 8px", borderRadius: 6, flexShrink: 0 }}>{emp.total}명</span>}
                 </div>
-                {/* KPI 3칸: 월계약금 + 평일 + 주말 */}
+                {/* KPI 3칸: 월계약금 + 평일인원 + 주말인원 */}
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
                   <div style={{ background: hasContract ? "#F0F4FF" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
                     <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>월 계약금</div>
@@ -6479,16 +6485,16 @@ function SiteManagementPage({ employees, onSiteChange }) {
                       {hasContract ? pFmt(d.monthly_contract) : "-"}
                     </div>
                   </div>
-                  <div style={{ background: weekdayStaff > 0 ? "#E8F5E9" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ background: wdCount > 0 ? "#E8F5E9" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
                     <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>평일</div>
-                    <div style={{ fontSize: 15, fontWeight: 900, color: weekdayStaff > 0 ? C.success : "#ccc" }}>
-                      {weekdayStaff > 0 ? `${weekdayStaff}명` : "-"}
+                    <div style={{ fontSize: 15, fontWeight: 900, color: wdCount > 0 ? C.success : "#ccc" }}>
+                      {wdCount > 0 ? `${wdCount}명` : "-"}
                     </div>
                   </div>
-                  <div style={{ background: weekendStaff > 0 ? "#FFF3E0" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
+                  <div style={{ background: weCount > 0 ? "#FFF3E0" : C.lightGray, borderRadius: 10, padding: "10px 12px" }}>
                     <div style={{ fontSize: 10, color: C.gray, marginBottom: 3 }}>주말</div>
-                    <div style={{ fontSize: 15, fontWeight: 900, color: weekendStaff > 0 ? C.orange : "#ccc" }}>
-                      {weekendStaff > 0 ? `${weekendStaff}명` : "-"}
+                    <div style={{ fontSize: 15, fontWeight: 900, color: weCount > 0 ? C.orange : "#ccc" }}>
+                      {weCount > 0 ? `${weCount}명` : "-"}
                     </div>
                   </div>
                 </div>
@@ -6496,6 +6502,39 @@ function SiteManagementPage({ employees, onSiteChange }) {
             );
           })}
         </div>
+
+        {/* 숨긴 사업장 복구 */}
+        {hiddenSites.size > 0 && (
+          <div style={{ marginTop: 16, background: "#FFF8F0", border: `1.5px solid #FFE0B2`, borderRadius: 14, padding: "12px 16px" }}>
+            <div style={{ fontSize: 13, fontWeight: 800, color: "#E65100", marginBottom: 8 }}>🔄 삭제된 사업장 ({hiddenSites.size}개)</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+              {[...hiddenSites].sort().map(code => {
+                const defaultName = DEFAULT_SITES.find(s => s.code === code)?.name || code;
+                return (
+                  <button key={code} onClick={async () => {
+                    if (!(await confirm(`"${code} ${defaultName}" 사업장을 복구하시겠습니까?`, "카드 목록에 다시 표시됩니다."))) return;
+                    setSaving(true);
+                    try {
+                      await supabase.from("site_details").upsert({ site_code: code, site_name: defaultName, updated_at: new Date().toISOString() }, { onConflict: "site_code" });
+                      setHiddenSites(p => { const n = new Set(p); n.delete(code); return n; });
+                      setSiteDetails(p => ({ ...p, [code]: { ...p[code], site_code: code, site_name: defaultName } }));
+                      onSiteChange?.();
+                    } catch (e) { alert("복구 오류: " + e.message); }
+                    setSaving(false);
+                  }} style={{
+                    padding: "6px 14px", borderRadius: 8, border: "1.5px solid #FFB74D",
+                    background: "#fff", fontSize: 12, fontWeight: 700, color: "#E65100",
+                    cursor: "pointer", fontFamily: FONT, display: "flex", alignItems: "center", gap: 6,
+                  }}>
+                    <span style={{ fontSize: 10, fontWeight: 800, color: "#fff", background: "#E65100", padding: "1px 5px", borderRadius: 4 }}>{code}</span>
+                    {defaultName}
+                    <span style={{ fontSize: 11 }}>↩️</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ─── 우: 슬라이드 상세 패널 ─── */}
