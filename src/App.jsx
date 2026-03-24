@@ -14233,6 +14233,7 @@ function AttendancePage({ employees }) {
                     { label: "주말", color: "#E65100", sub: mWe },
                     { label: "추가", color: "#7C3AED", sub: "" },
                     { label: "피크", color: "#D81B60", sub: "" },
+                    { label: "💰", color: C.gold, sub: "" },
                     { label: "공휴", color: "#C62828", sub: mHol || "" },
                     { label: "합계", color: C.dark, sub: mWd + mWe + mHol },
                   ];
@@ -14267,7 +14268,7 @@ function AttendancePage({ employees }) {
                   </tr>
                   {group.emps.map((emp, idx) => {
                     // 유형별 근무횟수 계산
-                    let wd = 0, we = 0, ex = 0, pk = 0, hol = 0;
+                    let wd = 0, we = 0, ex = 0, pk = 0, kd = 0, hol = 0;
                     dates.forEach(d => {
                       if (d.dateStr > todayStr) return;
                       const st = getCellStatus(emp.id, d.dateStr, emp.work_code);
@@ -14279,12 +14280,14 @@ function AttendancePage({ employees }) {
                         else wd++;
                       } else if (st === "피크") pk++;
                       else if (st === "추가") { d.isHoliday ? hol++ : ex++; }
+                      // 키전달(추가수당): staff_type 무관, 해당 날짜 extra_amount 있으면 카운트
+                      if (extraAmountByDateMap[`${emp.id}-${d.dateStr}`]) kd++;
                     });
                     const totalWorked = wd + we + ex + pk + hol;
                     const dutyVals = [
                       { v: wd, color: "#1565C0" }, { v: we, color: "#E65100" },
                       { v: ex, color: "#7C3AED" }, { v: pk, color: "#D81B60" },
-                      { v: hol, color: "#C62828" }, { v: totalWorked, color: C.dark },
+                      { v: kd, color: C.gold }, { v: hol, color: "#C62828" }, { v: totalWorked, color: C.dark },
                     ];
                     return (
                       <tr key={emp.id} style={{ background: idx % 2 === 0 ? "#fff" : "#FAFBFC" }}>
@@ -14347,7 +14350,7 @@ function AttendancePage({ employees }) {
                             padding: "2px 1px", textAlign: "center", borderBottom: "1px solid #F0F2F8",
                             borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0",
                             fontSize: 13, fontWeight: dv.v > 0 ? 800 : 400, color: dv.v > 0 ? dv.color : "#ddd",
-                            background: ci === 5 ? "#F8F9FC" : "transparent",
+                            background: ci === 6 ? "#F8F9FC" : "transparent",
                           }}>
                             {dv.v || "·"}
                           </td>
@@ -14357,7 +14360,7 @@ function AttendancePage({ employees }) {
                   })}
                   {/* 사업장 소계행 */}
                   {group.emps.length > 0 && (() => {
-                    let sWd = 0, sWe = 0, sEx = 0, sPk = 0, sHol = 0;
+                    let sWd = 0, sWe = 0, sEx = 0, sPk = 0, sKd = 0, sHol = 0;
                     group.emps.forEach(emp => {
                       dates.forEach(d => {
                         if (d.dateStr > todayStr) return;
@@ -14370,13 +14373,14 @@ function AttendancePage({ employees }) {
                           else sWd++;
                         } else if (st === "피크") sPk++;
                         else if (st === "추가") { d.isHoliday ? sHol++ : sEx++; }
+                        if (extraAmountByDateMap[`${emp.id}-${d.dateStr}`]) sKd++;
                       });
                     });
                     const sTotal = sWd + sWe + sEx + sPk + sHol;
                     const subVals = [
                       { v: sWd, color: "#1565C0" }, { v: sWe, color: "#E65100" },
                       { v: sEx, color: "#7C3AED" }, { v: sPk, color: "#D81B60" },
-                      { v: sHol, color: "#C62828" }, { v: sTotal, color: C.dark },
+                      { v: sKd, color: C.gold }, { v: sHol, color: "#C62828" }, { v: sTotal, color: C.dark },
                     ];
                     return (
                       <tr style={{ background: "#FFF8F0" }}>
@@ -14391,7 +14395,7 @@ function AttendancePage({ employees }) {
                             padding: "2px 1px", textAlign: "center", borderBottom: "2px solid #E8ECF4",
                             borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0",
                             fontSize: 13, fontWeight: 900, color: sv.v > 0 ? sv.color : "#ccc",
-                            background: ci === 5 ? "#FFF0E0" : "#FFF8F0",
+                            background: ci === 6 ? "#FFF0E0" : "#FFF8F0",
                           }}>
                             {sv.v || "·"}
                           </td>
