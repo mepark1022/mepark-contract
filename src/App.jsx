@@ -9083,13 +9083,17 @@ const PY_PAY_FIELDS = [
   { key: "childcare", label: "보육수당" },
   { key: "car_allow", label: "자가운전" },
   { key: "team_allow", label: "팀장수당" },
-  { key: "holiday_bonus", label: "명절상여" },
   { key: "incentive", label: "인센티브" },
-  { key: "extra_work", label: "추가근무" },
-  { key: "key_delivery", label: "🔑 키전달" },
   { key: "manual_write", label: "수기수당" },
-  { key: "extra1", label: "기타수당" },
 ];
+
+// allowances JSONB 합산 헬퍼
+const calcAllowancesSum = (allowances) =>
+  (allowances || []).reduce((s, a) => s + (toNum(a.amount) || 0), 0);
+
+// extra_type key → 한글 라벨
+const EXTRA_TYPE_LABEL = { overtime: "연장근무", night: "야간근무", holiday: "휴일근무", other: "기타수당" };
+const extraTypeLabel = (key) => EXTRA_TYPE_LABEL[key] || key || "기타수당";
 
 const PY_DED_FIELDS_4 = [
   { key: "np", label: "국민연금" },
@@ -9102,9 +9106,9 @@ const PY_DED_FIELDS_4 = [
 
 function calcPyDeductions(record) {
   const gross = (record.basic_pay || 0) + (record.meal || 0) + (record.childcare || 0) +
-    (record.car_allow || 0) + (record.team_allow || 0) + (record.holiday_bonus || 0) +
-    (record.incentive || 0) + (record.extra_work || 0) + (record.key_delivery || 0) +
-    (record.manual_write || 0) + (record.extra1 || 0);
+    (record.car_allow || 0) + (record.team_allow || 0) +
+    (record.incentive || 0) + (record.manual_write || 0) +
+    calcAllowancesSum(record.allowances);
 
   let np=0, hi=0, lt=0, ei=0, income_tax=0, local_tax=0;
 
@@ -9166,10 +9170,10 @@ function PayrollPage({ employees, profitState }) {
       site_code: r.site_code || "",
       basic_pay: r.basic_pay || 0, meal: r.meal || 0,
       childcare: r.childcare || 0, car_allow: r.car_allow || 0,
-      team_allow: r.team_allow || 0, holiday_bonus: r.holiday_bonus || 0,
-      incentive: r.incentive || 0, extra_work: r.extra_work || 0,
-      key_delivery: r.key_delivery || 0,
-      manual_write: r.manual_write || 0, extra1: r.extra1 || 0,
+      team_allow: r.team_allow || 0,
+      incentive: r.incentive || 0,
+      manual_write: r.manual_write || 0,
+      allowances: r.allowances || [],
       gross_pay: gross,
       tax_type: r.tax_type || "4대보험",
       np: r.np || 0, hi: r.hi || 0, lt: r.lt || 0, ei: r.ei || 0,
@@ -9228,7 +9232,71 @@ function PayrollPage({ employees, profitState }) {
     if (mData) {
       const { data: recs } = await supabase.from("payroll_records")
         .select("*").eq("month_id", mData.id).order("site_code");
-      setPyRecords(recs || []);
+      const recList = recs || [];
+
+      // ── 일보 추가수당 자동 동기화 ──
+      const monthStart = `${pyYear}-${String(pyMonth).padStart(2, "0")}-01`;
+      const nextM = pyMonth === 12 ? 1 : pyMonth + 1;
+      const nextY = pyMonth === 12 ? pyYear + 1 : pyYear;
+      const monthEnd = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
+
+      // daily_reports id 목록
+      const { data: repsData } = await supabase.from("daily_reports")
+        .select("id").gte("report_date", monthStart).lt("report_date", monthEnd);
+      const repIds = (repsData || []).map(r => r.id);
+
+      if (repIds.length > 0) {
+        // daily_report_extra (키전달 등)
+        const { data: extraData } = await supabase.from("daily_report_extra")
+          .select("employee_id, extra_type, extra_amount")
+          .in("report_id", repIds).not("employee_id", "is", null);
+        // daily_report_staff (extra_amount > 0 인 경우)
+        const { data: staffData } = await supabase.from("daily_report_staff")
+          .select("employee_id, extra_type, extra_amount")
+          .in("report_id", repIds).not("employee_id", "is", null).gt("extra_amount", 0);
+
+        // 직원별 extra_type별 합산 map: { empId: { label: amount } }
+        const autoMap = {};
+        const addToMap = (empId, rawType, amount) => {
+          if (!empId || !amount) return;
+          const label = extraTypeLabel(rawType);
+          if (!autoMap[empId]) autoMap[empId] = {};
+          autoMap[empId][label] = (autoMap[empId][label] || 0) + toNum(amount);
+        };
+        (extraData || []).forEach(e => addToMap(e.employee_id, e.extra_type, e.extra_amount));
+        (staffData || []).forEach(s => addToMap(s.employee_id, s.extra_type, s.extra_amount));
+
+        // 각 레코드 allowances 업데이트 (source=auto 항목만 교체, manual은 유지)
+        const updatedRecs = recList.map(rec => {
+          const autoItems = autoMap[rec.employee_id];
+          if (!autoItems) {
+            // auto 항목 없으면 기존 auto 제거, manual만 유지
+            const manualOnly = (rec.allowances || []).filter(a => a.source === "manual");
+            return { ...rec, allowances: manualOnly };
+          }
+          const manualItems = (rec.allowances || []).filter(a => a.source === "manual");
+          const newAutoItems = Object.entries(autoItems).map(([label, amount]) => ({ label, amount, source: "auto" }));
+          return { ...rec, allowances: [...newAutoItems, ...manualItems] };
+        });
+
+        // allowances + gross 업데이트 (변경된 것만)
+        for (const rec of updatedRecs) {
+          const orig = recList.find(r => r.id === rec.id);
+          const origAllowStr = JSON.stringify(orig?.allowances || []);
+          const newAllowStr = JSON.stringify(rec.allowances || []);
+          if (origAllowStr !== newAllowStr) {
+            const newGross = (rec.basic_pay || 0) + (rec.meal || 0) + (rec.childcare || 0) +
+              (rec.car_allow || 0) + (rec.team_allow || 0) + (rec.incentive || 0) +
+              (rec.manual_write || 0) + calcAllowancesSum(rec.allowances);
+            await supabase.from("payroll_records")
+              .update({ allowances: rec.allowances, gross_pay: newGross, net_pay: newGross - ((rec.gross_pay || 0) - (rec.net_pay || 0)) })
+              .eq("id", rec.id);
+          }
+        }
+        setPyRecords(updatedRecs);
+      } else {
+        setPyRecords(recList);
+      }
     } else {
       setPyRecords([]);
     }
@@ -9249,26 +9317,8 @@ function PayrollPage({ employees, profitState }) {
         .select().single();
       if (mErr) throw mErr;
 
-      // 2. 재직 직원 기준 레코드 생성
+      // 2. 재직 직원 기준 레코드 생성 (allowances는 loadPayrollMonth에서 자동 동기화)
       const activeEmps = employees.filter(e => e.status === "재직");
-
-      // 해당 월 daily_report_extra에서 직원별 키전달 합산
-      const monthStart = `${pyYear}-${String(pyMonth).padStart(2, "0")}-01`;
-      const monthEnd = pyMonth === 12 ? `${pyYear + 1}-01-01` : `${pyYear}-${String(pyMonth + 1).padStart(2, "0")}-01`;
-      const { data: extraData } = await supabase
-        .from("daily_report_extra")
-        .select("employee_id, extra_amount, report_id")
-        .not("employee_id", "is", null);
-      const { data: repData } = await supabase
-        .from("daily_reports")
-        .select("id")
-        .gte("report_date", monthStart).lt("report_date", monthEnd);
-      const repIds = new Set((repData || []).map(r => r.id));
-      const keyDeliveryMap = {};
-      (extraData || []).forEach(e => {
-        if (!e.employee_id || !repIds.has(e.report_id)) return;
-        keyDeliveryMap[e.employee_id] = (keyDeliveryMap[e.employee_id] || 0) + (e.extra_amount || 0);
-      });
 
       const records = activeEmps.map(e => ({
         month_id: newMonth.id,
@@ -9280,10 +9330,8 @@ function PayrollPage({ employees, profitState }) {
         childcare: e.childcare_allow || 0,
         car_allow: e.car_allow || 0,
         team_allow: e.leader_allow || 0,
-        holiday_bonus: e.holiday_bonus || 0,
         incentive: e.incentive || 0,
-        extra1: e.extra1 || 0,
-        key_delivery: keyDeliveryMap[e.id] || 0,
+        allowances: [],
         tax_type: e.tax_type || "4대보험",
         reporter_name: e.reporter_name || "",
         reporter_rrn: e.reporter_rrn || "",
@@ -9311,7 +9359,8 @@ function PayrollPage({ employees, profitState }) {
   const savePayrollRecord = async (rec) => {
     setPySaving(true);
     try {
-      const gross = PY_PAY_FIELDS.reduce((s, f) => s + (rec[f.key] || 0), 0);
+      const fixedGross = PY_PAY_FIELDS.reduce((s, f) => s + (rec[f.key] || 0), 0);
+      const gross = fixedGross + calcAllowancesSum(rec.allowances);
       const totDed = (rec.np || 0) + (rec.hi || 0) + (rec.lt || 0) + (rec.ei || 0) +
         (rec.income_tax || 0) + (rec.local_tax || 0) + (rec.accident_deduct || 0) + (rec.prepaid || 0);
       const net = gross - totDed;
@@ -9478,6 +9527,11 @@ function PayrollPage({ employees, profitState }) {
       const emp = empMap[r.employee_id];
       const gross = r.gross_pay || 0;
       const net = r.net_pay || 0;
+      // allowances를 개별 컬럼으로 펼치기
+      const allowancesCols = {};
+      (r.allowances || []).forEach(a => {
+        if (a.label && a.amount > 0) allowancesCols[a.label] = (allowancesCols[a.label] || 0) + toNum(a.amount);
+      });
       return {
         "#": idx + 1,
         "사번": emp?.emp_no || "",
@@ -9490,12 +9544,9 @@ function PayrollPage({ employees, profitState }) {
         "보육수당": r.childcare || 0,
         "자가운전": r.car_allow || 0,
         "팀장수당": r.team_allow || 0,
-        "명절상여": r.holiday_bonus || 0,
         "인센티브": r.incentive || 0,
-        "추가근무": r.extra_work || 0,
-        "키전달": r.key_delivery || 0,
+        ...allowancesCols,
         "수기수당": r.manual_write || 0,
-        "기타수당": r.extra1 || 0,
         "총지급액": gross,
         "국민연금": r.np || 0,
         "건강보험": r.hi || 0,
@@ -9572,11 +9623,26 @@ function PayrollPage({ employees, profitState }) {
     if (!pyEditRecord) return null;
     const rec = pyEditRecord;
     const emp = empMap[rec.employee_id];
-    const gross = PY_PAY_FIELDS.reduce((s, f) => s + (rec[f.key] || 0), 0);
+    const fixedGross = PY_PAY_FIELDS.reduce((s, f) => s + (rec[f.key] || 0), 0);
+    const gross = fixedGross + calcAllowancesSum(rec.allowances);
     const totDed = (rec.np || 0) + (rec.hi || 0) + (rec.lt || 0) + (rec.ei || 0) +
       (rec.income_tax || 0) + (rec.local_tax || 0) + (rec.accident_deduct || 0) + (rec.prepaid || 0);
     const net = gross - totDed;
     const isConfirmed = pyMonthData?.status === "confirmed" || pyMonthData?.status === "locked";
+
+    // allowances 핸들러
+    const updateAllowance = (i, field, val) => {
+      const next = (rec.allowances || []).map((a, idx) => idx === i ? { ...a, [field]: field === "amount" ? toNum(val) : val } : a);
+      setPyEditRecord(prev => ({ ...prev, allowances: next }));
+    };
+    const removeAllowance = (i) => {
+      const next = (rec.allowances || []).filter((_, idx) => idx !== i);
+      setPyEditRecord(prev => ({ ...prev, allowances: next }));
+    };
+    const addAllowance = () => {
+      const next = [...(rec.allowances || []), { label: "", amount: 0, source: "manual" }];
+      setPyEditRecord(prev => ({ ...prev, allowances: next }));
+    };
 
     return (
       <div style={{ position: "fixed", top: 0, right: 0, width: 480, height: "100vh", background: C.white,
@@ -9622,16 +9688,54 @@ function PayrollPage({ employees, profitState }) {
         <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
           {pyEditTab === "pay" && (
             <div>
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 12 }}>급여 항목</div>
+              {/* 고정 급여항목 */}
+              <div style={{ fontSize: 12, fontWeight: 800, color: C.gray, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>기본 급여</div>
               {PY_PAY_FIELDS.map(f => (
                 <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
                   <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
                   <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
-                    style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }}
-                    /* editable even when confirmed */ />
+                    style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }} />
                 </div>
               ))}
-              <div style={{ marginTop: 16, padding: "12px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between" }}>
+
+              {/* 구분선 */}
+              <div style={{ height: 1, background: C.lightGray, margin: "14px 0 10px" }} />
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+                <div style={{ fontSize: 12, fontWeight: 800, color: C.gray, textTransform: "uppercase", letterSpacing: 1 }}>추가수당</div>
+                <span style={{ fontSize: 10, color: C.gray }}>↻ = 일보 자동반영</span>
+              </div>
+
+              {/* allowances 목록 */}
+              {(rec.allowances || []).length === 0 && (
+                <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: "12px 0", background: C.lightGray, borderRadius: 8, marginBottom: 10 }}>
+                  추가수당 없음 (일보에 수당 기록 시 자동 반영)
+                </div>
+              )}
+              {(rec.allowances || []).map((a, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", marginBottom: 7, gap: 6 }}>
+                  {a.source === "auto"
+                    ? <span style={{ width: 80, fontSize: 12, color: C.navy, fontWeight: 700, flexShrink: 0, display: "flex", alignItems: "center", gap: 3 }}>
+                        <span style={{ fontSize: 10, color: C.gold }}>↻</span>{a.label}
+                      </span>
+                    : <input value={a.label} onChange={e => updateAllowance(i, "label", e.target.value)}
+                        style={{ width: 80, fontSize: 12, padding: "5px 8px", border: `1.5px solid ${C.border}`, borderRadius: 6, flexShrink: 0 }}
+                        placeholder="수당명" />
+                  }
+                  <NumInput value={a.amount || 0} onChange={v => updateAllowance(i, "amount", v)}
+                    style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13,
+                      background: a.source === "auto" ? "#F0F4FF" : "#fff" }} />
+                  <button onClick={() => removeAllowance(i)}
+                    style={{ width: 24, height: 24, borderRadius: "50%", border: `1px solid ${C.border}`, background: "#fff", cursor: "pointer", fontSize: 14, color: C.gray, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>×</button>
+                </div>
+              ))}
+
+              {/* 항목 추가 버튼 */}
+              <button onClick={addAllowance}
+                style={{ width: "100%", padding: "8px", border: `1.5px dashed ${C.navy}`, borderRadius: 8, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>
+                + 수당 항목 추가
+              </button>
+
+              <div style={{ marginTop: 14, padding: "12px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between" }}>
                 <span style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>총 지급액</span>
                 <span style={{ fontSize: 16, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(gross)}원</span>
               </div>
@@ -9757,6 +9861,16 @@ function PayrollPage({ employees, profitState }) {
                   <div key={f.key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
                     <span style={{ color: C.gray }}>{f.label}</span>
                     <span style={{ fontWeight: 700, fontFamily: "monospace" }}>{fmt(rec[f.key])}원</span>
+                  </div>
+                ))}
+                {/* 추가수당 항목 */}
+                {(rec.allowances || []).filter(a => a.amount > 0).map((a, i) => (
+                  <div key={`a-${i}`} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
+                    <span style={{ color: C.gray, display: "flex", alignItems: "center", gap: 4 }}>
+                      {a.source === "auto" && <span style={{ fontSize: 10, color: C.gold }}>↻</span>}
+                      {a.label}
+                    </span>
+                    <span style={{ fontWeight: 700, fontFamily: "monospace", color: C.blue }}>{fmt(a.amount)}원</span>
                   </div>
                 ))}
                 <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", marginTop: 8, borderTop: `2px solid ${C.navy}`, fontSize: 14, fontWeight: 900, color: C.navy }}>
@@ -9945,7 +10059,7 @@ function PayrollPage({ employees, profitState }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr>
-                    {["#", "사번", "성명", "사업장", "근무형태", "세금처리", "기본급", "식대", "수당계", "총지급", "공제합계", "실입금", ""].map((h, i) => (
+                    {["#", "사번", "성명", "사업장", "근무형태", "세금처리", "기본급", "식대", "추가수당", "총지급", "공제합계", "실입금", ""].map((h, i) => (
                       <th key={i} style={{ ...pyThStyle, textAlign: i >= 6 ? "right" : "left", ...(i === 0 ? { width: 30 } : {}) }}>{h}</th>
                     ))}
                   </tr>
@@ -9956,9 +10070,10 @@ function PayrollPage({ employees, profitState }) {
                     const gross = r.gross_pay || 0;
                     const net = r.net_pay || 0;
                     const totD = gross - net;
-                    const extras = (r.childcare || 0) + (r.car_allow || 0) + (r.team_allow || 0) +
-                      (r.holiday_bonus || 0) + (r.incentive || 0) + (r.extra_work || 0) +
-                      (r.key_delivery || 0) + (r.manual_write || 0) + (r.extra1 || 0);
+                    const allowances = r.allowances || [];
+                    const allowancesSum = calcAllowancesSum(allowances);
+                    const fixedExtras = (r.childcare || 0) + (r.car_allow || 0) + (r.team_allow || 0) + (r.incentive || 0) + (r.manual_write || 0);
+                    const totalExtras = fixedExtras + allowancesSum;
                     const taxInfo = PY_TAX_TYPES.find(t => t.key === r.tax_type);
                     return (
                       <tr key={r.id} style={{ background: idx % 2 ? "#FAFBFC" : C.white, cursor: "pointer" }}
@@ -9976,7 +10091,24 @@ function PayrollPage({ employees, profitState }) {
                         </td>
                         <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace" }}>{fmt(r.basic_pay)}</td>
                         <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace" }}>{fmt(r.meal)}</td>
-                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", color: extras > 0 ? C.blue : C.gray }}>{fmt(extras)}</td>
+                        <td style={{ ...pyTdStyle, textAlign: "left", minWidth: 160 }}>
+                          {allowances.filter(a => a.amount > 0).length === 0 && fixedExtras === 0
+                            ? <span style={{ color: C.gray }}>—</span>
+                            : <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
+                                {allowances.filter(a => a.amount > 0).map((a, i) => (
+                                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#EEF2FF", borderRadius: 3, padding: "1px 6px", fontSize: 10, color: "#4338CA", fontWeight: 500, whiteSpace: "nowrap" }}>
+                                    {a.source === "auto" && <span style={{ fontSize: 9, color: C.gold }}>↻</span>}
+                                    {a.label} {fmt(a.amount)}
+                                  </span>
+                                ))}
+                                {fixedExtras > 0 && (
+                                  <span style={{ display: "inline-flex", alignItems: "center", background: "#F0F4FF", borderRadius: 3, padding: "1px 6px", fontSize: 10, color: C.blue, fontWeight: 500 }}>
+                                    기타 {fmt(fixedExtras)}
+                                  </span>
+                                )}
+                              </div>
+                          }
+                        </td>
                         <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.navy }}>{fmt(gross)}</td>
                         <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", color: C.error }}>{totD > 0 ? `-${fmt(totD)}` : "0"}</td>
                         <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.success }}>{fmt(net)}</td>
@@ -10000,7 +10132,7 @@ function PayrollPage({ employees, profitState }) {
                       {fmt(filteredRecords.reduce((s, r) => s + (r.meal || 0), 0))}
                     </td>
                     <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
-                      {fmt(filteredRecords.reduce((s, r) => s + ((r.childcare||0)+(r.car_allow||0)+(r.team_allow||0)+(r.holiday_bonus||0)+(r.incentive||0)+(r.extra_work||0)+(r.key_delivery||0)+(r.manual_write||0)+(r.extra1||0)), 0))}
+                      {fmt(filteredRecords.reduce((s, r) => s + ((r.childcare||0)+(r.car_allow||0)+(r.team_allow||0)+(r.incentive||0)+(r.manual_write||0)) + calcAllowancesSum(r.allowances), 0))}
                     </td>
                     <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>
                       {fmt(filteredRecords.reduce((s, r) => s + (r.gross_pay || 0), 0))}
