@@ -9086,6 +9086,7 @@ const PY_PAY_FIELDS = [
   { key: "holiday_bonus", label: "명절상여" },
   { key: "incentive", label: "인센티브" },
   { key: "extra_work", label: "추가근무" },
+  { key: "key_delivery", label: "🔑 키전달" },
   { key: "manual_write", label: "수기수당" },
   { key: "extra1", label: "기타수당" },
 ];
@@ -9102,7 +9103,8 @@ const PY_DED_FIELDS_4 = [
 function calcPyDeductions(record) {
   const gross = (record.basic_pay || 0) + (record.meal || 0) + (record.childcare || 0) +
     (record.car_allow || 0) + (record.team_allow || 0) + (record.holiday_bonus || 0) +
-    (record.incentive || 0) + (record.extra_work || 0) + (record.manual_write || 0) + (record.extra1 || 0);
+    (record.incentive || 0) + (record.extra_work || 0) + (record.key_delivery || 0) +
+    (record.manual_write || 0) + (record.extra1 || 0);
 
   let np=0, hi=0, lt=0, ei=0, income_tax=0, local_tax=0;
 
@@ -9166,6 +9168,7 @@ function PayrollPage({ employees, profitState }) {
       childcare: r.childcare || 0, car_allow: r.car_allow || 0,
       team_allow: r.team_allow || 0, holiday_bonus: r.holiday_bonus || 0,
       incentive: r.incentive || 0, extra_work: r.extra_work || 0,
+      key_delivery: r.key_delivery || 0,
       manual_write: r.manual_write || 0, extra1: r.extra1 || 0,
       gross_pay: gross,
       tax_type: r.tax_type || "4대보험",
@@ -9248,6 +9251,25 @@ function PayrollPage({ employees, profitState }) {
 
       // 2. 재직 직원 기준 레코드 생성
       const activeEmps = employees.filter(e => e.status === "재직");
+
+      // 해당 월 daily_report_extra에서 직원별 키전달 합산
+      const monthStart = `${pyYear}-${String(pyMonth).padStart(2, "0")}-01`;
+      const monthEnd = pyMonth === 12 ? `${pyYear + 1}-01-01` : `${pyYear}-${String(pyMonth + 1).padStart(2, "0")}-01`;
+      const { data: extraData } = await supabase
+        .from("daily_report_extra")
+        .select("employee_id, extra_amount, report_id")
+        .not("employee_id", "is", null);
+      const { data: repData } = await supabase
+        .from("daily_reports")
+        .select("id")
+        .gte("report_date", monthStart).lt("report_date", monthEnd);
+      const repIds = new Set((repData || []).map(r => r.id));
+      const keyDeliveryMap = {};
+      (extraData || []).forEach(e => {
+        if (!e.employee_id || !repIds.has(e.report_id)) return;
+        keyDeliveryMap[e.employee_id] = (keyDeliveryMap[e.employee_id] || 0) + (e.extra_amount || 0);
+      });
+
       const records = activeEmps.map(e => ({
         month_id: newMonth.id,
         employee_id: e.id,
@@ -9261,6 +9283,7 @@ function PayrollPage({ employees, profitState }) {
         holiday_bonus: e.holiday_bonus || 0,
         incentive: e.incentive || 0,
         extra1: e.extra1 || 0,
+        key_delivery: keyDeliveryMap[e.id] || 0,
         tax_type: e.tax_type || "4대보험",
         reporter_name: e.reporter_name || "",
         reporter_rrn: e.reporter_rrn || "",
@@ -9470,6 +9493,7 @@ function PayrollPage({ employees, profitState }) {
         "명절상여": r.holiday_bonus || 0,
         "인센티브": r.incentive || 0,
         "추가근무": r.extra_work || 0,
+        "키전달": r.key_delivery || 0,
         "수기수당": r.manual_write || 0,
         "기타수당": r.extra1 || 0,
         "총지급액": gross,
@@ -9918,7 +9942,8 @@ function PayrollPage({ employees, profitState }) {
                     const net = r.net_pay || 0;
                     const totD = gross - net;
                     const extras = (r.childcare || 0) + (r.car_allow || 0) + (r.team_allow || 0) +
-                      (r.holiday_bonus || 0) + (r.incentive || 0) + (r.extra_work || 0) + (r.manual_write || 0) + (r.extra1 || 0);
+                      (r.holiday_bonus || 0) + (r.incentive || 0) + (r.extra_work || 0) +
+                      (r.key_delivery || 0) + (r.manual_write || 0) + (r.extra1 || 0);
                     const taxInfo = PY_TAX_TYPES.find(t => t.key === r.tax_type);
                     return (
                       <tr key={r.id} style={{ background: idx % 2 ? "#FAFBFC" : C.white, cursor: "pointer" }}
@@ -9960,7 +9985,7 @@ function PayrollPage({ employees, profitState }) {
                       {fmt(filteredRecords.reduce((s, r) => s + (r.meal || 0), 0))}
                     </td>
                     <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
-                      {fmt(filteredRecords.reduce((s, r) => s + ((r.childcare||0)+(r.car_allow||0)+(r.team_allow||0)+(r.holiday_bonus||0)+(r.incentive||0)+(r.extra_work||0)+(r.manual_write||0)+(r.extra1||0)), 0))}
+                      {fmt(filteredRecords.reduce((s, r) => s + ((r.childcare||0)+(r.car_allow||0)+(r.team_allow||0)+(r.holiday_bonus||0)+(r.incentive||0)+(r.extra_work||0)+(r.key_delivery||0)+(r.manual_write||0)+(r.extra1||0)), 0))}
                     </td>
                     <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>
                       {fmt(filteredRecords.reduce((s, r) => s + (r.gross_pay || 0), 0))}
