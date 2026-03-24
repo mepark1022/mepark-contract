@@ -7672,8 +7672,8 @@ function DailyReportPage({ employees, onDataChange }) {
           const freeValet = pay.find(p => p.payment_type === "free_valet");
 
           // 근무인원 구성 (duty별)
-          const siteStaff = staff.filter(s => s.staff_type !== "substitute");
-          const extraStaff = staff.filter(s => s.staff_type === "substitute");
+          const siteStaff = staff.filter(s => s.staff_type !== "substitute" && s.staff_type !== "extra");
+          const extraStaff = staff.filter(s => s.staff_type === "substitute" || s.staff_type === "extra");
 
           return (
             <div
@@ -7752,9 +7752,9 @@ function DailyReportPage({ employees, onDataChange }) {
                         👥 {staff.length}명
                       </span>
                     )}
-                    {staff.filter(s => s.staff_type === "substitute").length > 0 && (
+                    {staff.filter(s => s.staff_type === "substitute" || s.staff_type === "extra").length > 0 && (
                       <span style={{ fontSize: 10, padding: "2px 7px", borderRadius: 20, background: "#FFF4EC", color: "#E97132", fontWeight: 700 }}>
-                        추가 {staff.filter(s => s.staff_type === "substitute").length}명
+                        추가 {staff.filter(s => s.staff_type === "substitute" || s.staff_type === "extra").length}명
                       </span>
                     )}
                     {hasMemo && (
@@ -12911,7 +12911,7 @@ function SiteAnalyticsTab({ employees, year, month, dates, getCellStatus, todayS
             if (!s.employee_id) return;
             const rep = repMap[s.report_id];
             if (!rep) return;
-            stMap[`${s.employee_id}-${rep.report_date}`] = s.staff_type === "peak" ? "피크" : s.staff_type === "extra" ? "추가" : "출근";
+            stMap[`${s.employee_id}-${rep.report_date}`] = s.staff_type === "peak" ? "피크" : (s.staff_type === "extra" || s.staff_type === "substitute") ? "추가" : "출근";
           });
           let totalWorkable = 0, totalWorked = 0;
           siteEmps.forEach(emp => {
