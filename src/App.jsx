@@ -10053,6 +10053,98 @@ function PayrollPage({ employees, profitState }) {
   const [psSending, setPsSending] = useState(false);
   const [psSelectedIds, setPsSelectedIds] = useState(new Set()); // employee_id Set
 
+  // ── 공제 인라인 편집 ──
+  const pyRecordsRef = useRef(pyRecords);
+  useEffect(() => { pyRecordsRef.current = pyRecords; }, [pyRecords]);
+  const pyPendingRef = useRef(new Set());
+  const pyInlineSaveRef = useRef(null);
+  const [pyInlineSaving, setPyInlineSaving] = useState(false);
+
+  const flushInlineSaves = useCallback(async () => {
+    const ids = [...pyPendingRef.current];
+    pyPendingRef.current.clear();
+    if (!ids.length) return;
+    setPyInlineSaving(true);
+    try {
+      for (const id of ids) {
+        const rec = pyRecordsRef.current.find(r => r.id === id);
+        if (!rec) continue;
+        const upd = { ...rec };
+        delete upd.created_at;
+        await supabase.from("payroll_records").update(upd).eq("id", id);
+      }
+    } catch (err) { console.error("인라인 저장 오류:", err); }
+    setPyInlineSaving(false);
+  }, []);
+
+  const scheduleInlineSave = useCallback((recordId) => {
+    pyPendingRef.current.add(recordId);
+    if (pyInlineSaveRef.current) clearTimeout(pyInlineSaveRef.current);
+    pyInlineSaveRef.current = setTimeout(() => flushInlineSaves(), 800);
+  }, [flushInlineSaves]);
+
+  const handleInlineDedChange = useCallback((recordId, field, value) => {
+    setPyRecords(prev => {
+      const next = prev.map(r => {
+        if (r.id !== recordId) return r;
+        const updated = { ...r, [field]: value };
+        // 3.3% 자동계산
+        if ((updated.tax_type === "3.3%" || updated.tax_type === "3.3%(타인)") &&
+            field !== "income_tax" && field !== "local_tax") {
+          const gr = PY_PAY_FIELDS.reduce((s, f) => s + (updated[f.key] || 0), 0) + calcAllowancesSum(updated.allowances);
+          updated.income_tax = Math.round(gr * 0.03);
+          updated.local_tax = Math.round(gr * 0.003);
+        }
+        const totDed = (updated.np||0)+(updated.hi||0)+(updated.lt||0)+(updated.ei||0)+
+          (updated.income_tax||0)+(updated.local_tax||0)+(updated.accident_deduct||0)+(updated.prepaid||0);
+        updated.net_pay = (updated.gross_pay||0) - totDed;
+        return updated;
+      });
+      pyRecordsRef.current = next;
+      return next;
+    });
+    scheduleInlineSave(recordId);
+  }, [scheduleInlineSave]);
+
+  const handleInlineTaxTypeChange = useCallback((recordId, newType) => {
+    setPyRecords(prev => {
+      const next = prev.map(r => {
+        if (r.id !== recordId) return r;
+        const updated = { ...r, tax_type: newType };
+        if (newType === "미신고") {
+          updated.np=0; updated.hi=0; updated.lt=0; updated.ei=0;
+          updated.income_tax=0; updated.local_tax=0;
+        } else if (newType === "3.3%" || newType === "3.3%(타인)") {
+          updated.np=0; updated.hi=0; updated.lt=0; updated.ei=0;
+          updated.income_tax = Math.round((updated.gross_pay||0) * 0.03);
+          updated.local_tax = Math.round((updated.gross_pay||0) * 0.003);
+        } else if (newType === "고용&산재") {
+          updated.np=0; updated.hi=0; updated.lt=0;
+          updated.income_tax=0; updated.local_tax=0;
+        }
+        const totDed = (updated.np||0)+(updated.hi||0)+(updated.lt||0)+(updated.ei||0)+
+          (updated.income_tax||0)+(updated.local_tax||0)+(updated.accident_deduct||0)+(updated.prepaid||0);
+        updated.net_pay = (updated.gross_pay||0) - totDed;
+        return updated;
+      });
+      pyRecordsRef.current = next;
+      return next;
+    });
+    scheduleInlineSave(recordId);
+  }, [scheduleInlineSave]);
+
+  // 공제 필드 편집 가능 여부 (editable/auto/disabled)
+  const isDedEditable = (taxType, field) => {
+    if (field === "accident_deduct" || field === "prepaid") return "editable";
+    if (taxType === "4대보험") return "editable";
+    if (taxType === "3.3%" || taxType === "3.3%(타인)") {
+      if (field === "income_tax" || field === "local_tax") return "auto";
+      return "disabled";
+    }
+    if (taxType === "고용&산재") return field === "ei" ? "editable" : "disabled";
+    return "disabled"; // 미신고
+  };
+
   // 급여내역서 로딩
   const loadPayslips = useCallback(async () => {
     setPsLoading(true);
@@ -10984,6 +11076,7 @@ function PayrollPage({ employees, profitState }) {
                     ))}
                     <th style={{ ...amtTh, background: "#8B2020" }}>
                       📊공제합계
+                      {pyInlineSaving && <span style={{ fontSize: 9, color: C.gold, marginLeft: 3 }}>💾저장중...</span>}
                       <button onClick={(e) => { e.stopPropagation(); setDedGroupOpen(p => !p); }} style={grpBtn(dedGroupOpen)}>
                         {dedGroupOpen ? "◂접기" : "▸펼치기"}
                       </button>
@@ -11013,11 +11106,21 @@ function PayrollPage({ employees, profitState }) {
                         <td style={{ ...stickyTd(2, rowBg), fontWeight: 700, borderRight: `2px solid ${C.lightGray}` }}>{emp?.name || "-"}</td>
                         <td style={{ ...pyTdStyle, fontSize: 11, color: C.gray }}>{getSiteName(r.site_code)}</td>
                         <td style={pyTdStyle}>{getWorkLabel(r.work_type)}</td>
-                        <td style={pyTdStyle}>
+                        <td style={pyTdStyle} onClick={dedGroupOpen ? (e) => e.stopPropagation() : undefined}>
+                          {dedGroupOpen ? (
+                            <select value={r.tax_type || "4대보험"}
+                              onChange={e => handleInlineTaxTypeChange(r.id, e.target.value)}
+                              style={{ padding: "2px 4px", borderRadius: 6, border: `1.5px solid ${taxInfo?.color || C.border}`,
+                                fontSize: 10, fontWeight: 700, background: `${taxInfo?.color || C.gray}10`,
+                                color: taxInfo?.color || C.gray, cursor: "pointer", fontFamily: FONT, width: "100%" }}>
+                              {PY_TAX_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
+                            </select>
+                          ) : (
                           <span style={{ display: "inline-block", padding: "2px 8px", borderRadius: 10, fontSize: 10, fontWeight: 700,
                             background: `${taxInfo?.color || C.gray}15`, color: taxInfo?.color || C.gray }}>
                             {r.tax_type || "-"}
                           </span>
+                          )}
                         </td>
                         {/* 지급 그룹 */}
                         <td style={amtTd}>{fmt(r.basic_pay)}</td>
@@ -11051,12 +11154,27 @@ function PayrollPage({ employees, profitState }) {
                           }
                         </td>
                         <td style={{ ...amtTd, fontWeight: 800, color: C.navy, borderLeft: `2px solid ${C.lightGray}` }}>{fmt(gross)}</td>
-                        {/* 공제 그룹 */}
-                        {dedGroupOpen && DED_EX_COLS.map(c => (
-                          <td key={c.key} style={{ ...amtTd, fontSize: 11, background: idx % 2 ? "#FFF5F5" : "#FFFAFA" }}>
-                            {(r[c.key] || 0) > 0 ? <span style={{ color: C.error }}>-{fmt(r[c.key])}</span> : <span style={{ color: "#CCC" }}>—</span>}
+                        {/* 공제 그룹 — 인라인 편집 */}
+                        {dedGroupOpen && DED_EX_COLS.map(c => {
+                          const editState = isDedEditable(r.tax_type, c.key);
+                          const cellBg = idx % 2 ? "#FFF5F5" : "#FFFAFA";
+                          return (
+                          <td key={c.key} style={{ ...amtTd, fontSize: 11, background: cellBg, padding: "2px 3px" }}
+                            onClick={e => e.stopPropagation()}>
+                            {editState === "editable" ? (
+                              <NumInput value={r[c.key] || 0} onChange={v => handleInlineDedChange(r.id, c.key, v)}
+                                style={{ width: "100%", textAlign: "right", fontSize: 11, padding: "3px 5px",
+                                  border: `1px solid ${C.border}`, borderRadius: 4, background: "#fff", fontFamily: "monospace" }} />
+                            ) : editState === "auto" ? (
+                              <span style={{ color: C.error, fontSize: 11 }}>{(r[c.key]||0) > 0 ? `-${fmt(r[c.key])}` : "—"}
+                                <span style={{ fontSize: 8, color: C.gold, marginLeft: 2 }}>↻</span>
+                              </span>
+                            ) : (
+                              <span style={{ color: "#CCC" }}>—</span>
+                            )}
                           </td>
-                        ))}
+                          );
+                        })}
                         <td style={{ ...amtTd, color: C.error }}>{totD > 0 ? `-${fmt(totD)}` : "0"}</td>
                         {/* 실지급 + 편집 */}
                         <td style={{ ...amtTd, fontWeight: 800, color: C.success, borderLeft: `2px solid ${C.lightGray}` }}>{fmt(net)}</td>
