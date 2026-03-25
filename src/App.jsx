@@ -14885,10 +14885,10 @@ function AttendancePage({ employees }) {
       const isExtra = s.staff_type === "extra" || s.staff_type === "substitute";
       const isSupport = s.staff_type === "support";
 
-      // 타사업장 지원 감지: staff_type="support" OR (정규근무인데 일보사업장 !== 소속사업장)
+      // 타사업장 지원 감지: staff_type="support" OR (일보사업장 !== 소속사업장 → 어떤 유형이든 지원)
       const reportSite = repSiteMap[s.report_id];
       const empSite = empSiteMap[s.employee_id];
-      const isCrossSite = !isPeak && !isExtra && !isSupport && reportSite && empSite && reportSite !== empSite;
+      const isCrossSite = !isSupport && reportSite && empSite && reportSite !== empSite;
 
       // staff_type="site"(정규)인데 offDay → 잘못된 일보 데이터이므로 무시
       // (비번투입extra/대근substitute는 offDay여도 정상 "추가"로 처리)
