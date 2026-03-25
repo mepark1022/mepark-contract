@@ -10504,248 +10504,199 @@ function PayrollPage({ employees, profitState }) {
           ))}
         </div>
 
-        {/* 탭 */}
-        <div style={{ display: "flex", borderBottom: `2px solid ${C.lightGray}` }}>
-          {[{ k: "pay", label: "💰 급여항목" }, { k: "deduct", label: "📊 공제내역" }, { k: "summary", label: "📋 요약" }].map(t => (
-            <button key={t.k} onClick={() => setPyEditTab(t.k)}
-              style={{ flex: 1, padding: "10px 0", border: "none", cursor: "pointer", fontSize: 12, fontWeight: 700,
-                background: pyEditTab === t.k ? C.white : "#F4F5F7",
-                color: pyEditTab === t.k ? C.navy : C.gray,
-                borderBottom: pyEditTab === t.k ? `3px solid ${C.navy}` : "3px solid transparent",
-                fontFamily: FONT }}>
-              {t.label}
-            </button>
-          ))}
-        </div>
 
-        {/* 탭 콘텐츠 */}
+        {/* 통합 급여 편집 (1화면 스크롤) */}
         <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
-          {pyEditTab === "pay" && (
-            <div>
-              {/* 고정 급여항목 */}
-              <div style={{ fontSize: 12, fontWeight: 800, color: C.gray, marginBottom: 8, textTransform: "uppercase", letterSpacing: 1 }}>기본 급여</div>
-              {PY_PAY_FIELDS.map(f => (
-                <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-                  <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
-                  <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
-                    style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }} />
-                </div>
-              ))}
 
-              {/* 구분선 */}
-              <div style={{ height: 1, background: C.lightGray, margin: "14px 0 10px" }} />
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-                <div style={{ fontSize: 12, fontWeight: 800, color: C.gray, textTransform: "uppercase", letterSpacing: 1 }}>추가수당</div>
-                <span style={{ fontSize: 10, color: C.gray }}>↻ = 일보 자동반영</span>
-              </div>
-
-              {/* allowances 목록 */}
-              {(rec.allowances || []).length === 0 && (
-                <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: "12px 0", background: C.lightGray, borderRadius: 8, marginBottom: 10 }}>
-                  추가수당 없음 (일보에 수당 기록 시 자동 반영)
-                </div>
-              )}
-              {(rec.allowances || []).map((a, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", marginBottom: 7, gap: 6 }}>
-                  {a.source === "auto"
-                    ? <span style={{ width: 80, fontSize: 12, color: C.navy, fontWeight: 700, flexShrink: 0, display: "flex", alignItems: "center", gap: 3 }}>
-                        <span style={{ fontSize: 10, color: C.gold }}>↻</span>{a.label}
-                      </span>
-                    : <input value={a.label} onChange={e => updateAllowance(i, "label", e.target.value)}
-                        style={{ width: 80, fontSize: 12, padding: "5px 8px", border: `1.5px solid ${C.border}`, borderRadius: 6, flexShrink: 0 }}
-                        placeholder="수당명" />
-                  }
-                  <NumInput value={a.amount || 0} onChange={v => updateAllowance(i, "amount", v)}
-                    style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13,
-                      background: a.source === "auto" ? "#F0F4FF" : "#fff" }} />
-                  <button onClick={() => removeAllowance(i)}
-                    style={{ width: 24, height: 24, borderRadius: "50%", border: `1px solid ${C.border}`, background: "#fff", cursor: "pointer", fontSize: 14, color: C.gray, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>×</button>
-                </div>
-              ))}
-
-              {/* 항목 추가 버튼 */}
-              <button onClick={addAllowance}
-                style={{ width: "100%", padding: "8px", border: `1.5px dashed ${C.navy}`, borderRadius: 8, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>
-                + 수당 항목 추가
-              </button>
-
-              <div style={{ marginTop: 14, padding: "12px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>총 지급액</span>
-                <span style={{ fontSize: 16, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(gross)}원</span>
-              </div>
+          {/* ── 기본 급여 ── */}
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.navy, marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${C.navy}` }}>기본 급여</div>
+          {PY_PAY_FIELDS.map(f => (
+            <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
+              <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
+              <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
+                style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }} />
             </div>
-          )}
+          ))}
 
-          {pyEditTab === "deduct" && (
-            <div>
-              {/* 세금처리방식 선택 */}
-              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, marginBottom: 8 }}>세금 처리방식</div>
-              <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 16 }}>
-                {PY_TAX_TYPES.map(t => (
-                  <button key={t.key} onClick={() => handleTaxTypeChange(t.key)}
-                    style={{ padding: "6px 12px", borderRadius: 20, border: rec.tax_type === t.key ? `2px solid ${t.color}` : `1px solid ${C.border}`,
-                      background: rec.tax_type === t.key ? `${t.color}15` : C.white,
-                      color: rec.tax_type === t.key ? t.color : C.gray,
-                      fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
-                    {t.label}
-                  </button>
-                ))}
+          {/* ── 추가수당 ── */}
+          <div style={{ marginTop: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${C.gold}` }}>
+              <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>추가수당</span>
+              <span style={{ fontSize: 10, color: C.gray }}>↻ = 일보 자동반영</span>
+            </div>
+
+            {(rec.allowances || []).length === 0 && (
+              <div style={{ fontSize: 12, color: C.gray, textAlign: "center", padding: "10px 0", background: C.lightGray, borderRadius: 8, marginBottom: 8 }}>
+                추가수당 없음 (일보에 수당 기록 시 자동 반영)
               </div>
+            )}
+            {(rec.allowances || []).map((a, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", marginBottom: 7, gap: 6 }}>
+                {a.source === "auto"
+                  ? <span style={{ width: 80, fontSize: 12, color: C.navy, fontWeight: 700, flexShrink: 0, display: "flex", alignItems: "center", gap: 3 }}>
+                      <span style={{ fontSize: 10, color: C.gold }}>↻</span>{a.label}
+                    </span>
+                  : <input value={a.label} onChange={e => updateAllowance(i, "label", e.target.value)}
+                      style={{ width: 80, fontSize: 12, padding: "5px 8px", border: `1.5px solid ${C.border}`, borderRadius: 6, flexShrink: 0 }}
+                      placeholder="수당명" />
+                }
+                <NumInput value={a.amount || 0} onChange={v => updateAllowance(i, "amount", v)}
+                  style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13,
+                    background: a.source === "auto" ? "#F0F4FF" : "#fff" }} />
+                <button onClick={() => removeAllowance(i)}
+                  style={{ width: 24, height: 24, borderRadius: "50%", border: `1px solid ${C.border}`, background: "#fff", cursor: "pointer", fontSize: 14, color: C.gray, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>×</button>
+              </div>
+            ))}
 
-              {/* 4대보험: 수동입력 */}
-              {rec.tax_type === "4대보험" && (
-                <div>
-                  <div style={{ fontSize: 11, color: C.gray, marginBottom: 8, padding: "6px 10px", background: "#FFF8E1", borderRadius: 6 }}>
-                    ⚠️ 4대보험 공제액은 수동 입력해주세요 (합계만 자동 계산)
-                  </div>
+            <button onClick={addAllowance}
+              style={{ width: "100%", padding: "8px", border: `1.5px dashed ${C.navy}`, borderRadius: 8, background: "transparent", color: C.navy, fontSize: 12, fontWeight: 700, cursor: "pointer", marginTop: 4 }}>
+              + 수당 항목 추가
+            </button>
+          </div>
+
+          {/* ── 총 지급액 ── */}
+          <div style={{ marginTop: 14, padding: "12px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>총 지급액</span>
+            <span style={{ fontSize: 16, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(gross)}원</span>
+          </div>
+
+          {/* ── 공제 내역 ── */}
+          <div style={{ marginTop: 20, padding: "16px", background: "#FAFBFC", borderRadius: 10, border: `1px solid ${C.lightGray}` }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.error, marginBottom: 10, paddingBottom: 6, borderBottom: `2px solid ${C.error}` }}>공제 내역</div>
+
+            {/* 세금처리방식 */}
+            <div style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 6 }}>세금 처리방식</div>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 14 }}>
+              {PY_TAX_TYPES.map(t => (
+                <button key={t.key} onClick={() => handleTaxTypeChange(t.key)}
+                  style={{ padding: "5px 10px", borderRadius: 20, border: rec.tax_type === t.key ? `2px solid ${t.color}` : `1px solid ${C.border}`,
+                    background: rec.tax_type === t.key ? `${t.color}15` : C.white,
+                    color: rec.tax_type === t.key ? t.color : C.gray,
+                    fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT }}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {/* 4대보험 수동입력 (2열 그리드) */}
+            {rec.tax_type === "4대보험" && (
+              <div>
+                <div style={{ fontSize: 10, color: C.gray, marginBottom: 8, padding: "5px 8px", background: "#FFF8E1", borderRadius: 6 }}>
+                  ⚠️ 4대보험 공제액은 수동 입력 (합계만 자동 계산)
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px" }}>
                   {PY_DED_FIELDS_4.map(f => (
-                    <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
-                      <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
+                    <div key={f.key} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                      <label style={{ width: 56, fontSize: 11, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
                       <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
-                        style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
+                        style={{ flex: 1, textAlign: "right", fontSize: 12 }} />
                     </div>
                   ))}
                 </div>
-              )}
+              </div>
+            )}
 
-              {/* 3.3% */}
-              {(rec.tax_type === "3.3%" || rec.tax_type === "3.3%(타인)") && (
-                <div>
-                  <div style={{ fontSize: 11, color: C.orange, marginBottom: 8 }}>총지급액 × 3.3% 자동계산</div>
-                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
-                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>소득세(3%)</label>
-                    <div style={{ flex: 1, textAlign: "right", fontSize: 13, fontWeight: 700, color: C.error }}>{fmt(rec.income_tax || 0)}원</div>
+            {/* 3.3% */}
+            {(rec.tax_type === "3.3%" || rec.tax_type === "3.3%(타인)") && (
+              <div>
+                <div style={{ fontSize: 10, color: C.orange, marginBottom: 8 }}>총지급액 × 3.3% 자동계산</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 14px" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+                    <span style={{ color: C.gray }}>소득세(3%)</span>
+                    <span style={{ fontWeight: 700, color: C.error }}>{fmt(rec.income_tax || 0)}원</span>
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
-                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>지방세(0.3%)</label>
-                    <div style={{ flex: 1, textAlign: "right", fontSize: 13, fontWeight: 700, color: C.error }}>{fmt(rec.local_tax || 0)}원</div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 }}>
+                    <span style={{ color: C.gray }}>지방세(0.3%)</span>
+                    <span style={{ fontWeight: 700, color: C.error }}>{fmt(rec.local_tax || 0)}원</span>
                   </div>
-                  {rec.tax_type === "3.3%(타인)" && (
-                    <div style={{ marginTop: 12, padding: 12, background: "#FFF3E0", borderRadius: 8 }}>
-                      <div style={{ fontSize: 11, fontWeight: 800, color: C.orange, marginBottom: 6 }}>타인신고 정보</div>
-                      <div style={{ display: "flex", gap: 8, marginBottom: 6 }}>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: 10, color: C.gray }}>신고자명</label>
-                          <input value={rec.reporter_name || ""} onChange={e => handleFieldChange("reporter_name", e.target.value)}
-                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} /* editable even when confirmed */ />
-                        </div>
-                        <div style={{ flex: 1 }}>
-                          <label style={{ fontSize: 10, color: C.gray }}>주민번호</label>
-                          <input value={rec.reporter_rrn || ""} onChange={e => handleFieldChange("reporter_rrn", e.target.value)}
-                            style={{ ...inputStyle, fontSize: 12, padding: "6px 8px" }} /* editable even when confirmed */ />
-                        </div>
+                </div>
+                {rec.tax_type === "3.3%(타인)" && (
+                  <div style={{ marginTop: 10, padding: 10, background: "#FFF3E0", borderRadius: 8 }}>
+                    <div style={{ fontSize: 10, fontWeight: 800, color: C.orange, marginBottom: 6 }}>타인신고 정보</div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: 10, color: C.gray }}>신고자명</label>
+                        <input value={rec.reporter_name || ""} onChange={e => handleFieldChange("reporter_name", e.target.value)}
+                          style={{ ...inputStyle, fontSize: 12, padding: "5px 8px" }} />
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: 10, color: C.gray }}>주민번호</label>
+                        <input value={rec.reporter_rrn || ""} onChange={e => handleFieldChange("reporter_rrn", e.target.value)}
+                          style={{ ...inputStyle, fontSize: 12, padding: "5px 8px" }} />
                       </div>
                     </div>
-                  )}
-                </div>
-              )}
-
-              {/* 고용&산재 */}
-              {rec.tax_type === "고용&산재" && (
-                <div>
-                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
-                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>고용보험</label>
-                    <NumInput value={rec.ei || 0} onChange={v => handleFieldChange("ei", v)}
-                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
                   </div>
-                  <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
-                    <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>산재공제</label>
-                    <NumInput value={rec.accident_deduct || 0} onChange={v => handleFieldChange("accident_deduct", v)}
-                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
-                  </div>
-                </div>
-              )}
+                )}
+              </div>
+            )}
 
-              {/* 미신고 */}
-              {rec.tax_type === "미신고" && (
-                <div style={{ padding: 16, background: "#F5F5F5", borderRadius: 8, textAlign: "center", color: C.gray, fontSize: 12 }}>
-                  공제 없음 (총지급액 = 실입금)
+            {/* 고용&산재 */}
+            {rec.tax_type === "고용&산재" && (
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label style={{ width: 56, fontSize: 11, fontWeight: 600, color: C.gray, flexShrink: 0 }}>고용보험</label>
+                  <NumInput value={rec.ei || 0} onChange={v => handleFieldChange("ei", v)}
+                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} />
                 </div>
-              )}
-
-              {/* 공통: 사고공제 + 선지급 */}
-              <div style={{ marginTop: 16, paddingTop: 12, borderTop: `1px solid ${C.lightGray}` }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: C.dark, marginBottom: 8 }}>기타 공제</div>
-                <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
-                  <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>사고공제</label>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label style={{ width: 56, fontSize: 11, fontWeight: 600, color: C.gray, flexShrink: 0 }}>산재공제</label>
                   <NumInput value={rec.accident_deduct || 0} onChange={v => handleFieldChange("accident_deduct", v)}
-                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} disabled={rec.tax_type === "고용&산재"} />
-                </div>
-                <div style={{ display: "flex", alignItems: "center", marginBottom: 6, gap: 8 }}>
-                  <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray }}>선지급</label>
-                  <NumInput value={rec.prepaid || 0} onChange={v => handleFieldChange("prepaid", v)}
-                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} /* editable even when confirmed */ />
+                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} />
                 </div>
               </div>
+            )}
 
-              {/* 공제 합계 */}
-              <div style={{ marginTop: 16, padding: "12px 16px", background: "#FFEBEE", borderRadius: 8, display: "flex", justifyContent: "space-between" }}>
-                <span style={{ fontSize: 13, fontWeight: 800, color: C.error }}>공제 합계</span>
-                <span style={{ fontSize: 16, fontWeight: 900, color: C.error, fontFamily: "monospace" }}>{fmt(totDed)}원</span>
+            {/* 미신고 */}
+            {rec.tax_type === "미신고" && (
+              <div style={{ padding: 12, background: "#F5F5F5", borderRadius: 8, textAlign: "center", color: C.gray, fontSize: 12 }}>
+                공제 없음 (총지급액 = 실입금)
+              </div>
+            )}
+
+            {/* 기타 공제 (사고공제 + 선지급) — 고용&산재가 아닐 때만 사고공제 표시 */}
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: `1px solid ${C.lightGray}` }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.dark, marginBottom: 6 }}>기타 차감</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 14px" }}>
+                {rec.tax_type !== "고용&산재" && (
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <label style={{ width: 56, fontSize: 11, fontWeight: 600, color: C.gray, flexShrink: 0 }}>사고공제</label>
+                    <NumInput value={rec.accident_deduct || 0} onChange={v => handleFieldChange("accident_deduct", v)}
+                      style={{ flex: 1, textAlign: "right", fontSize: 12 }} />
+                  </div>
+                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <label style={{ width: 56, fontSize: 11, fontWeight: 600, color: C.gray, flexShrink: 0 }}>선지급</label>
+                  <NumInput value={rec.prepaid || 0} onChange={v => handleFieldChange("prepaid", v)}
+                    style={{ flex: 1, textAlign: "right", fontSize: 12 }} />
+                </div>
               </div>
             </div>
-          )}
 
-          {pyEditTab === "summary" && (
+            {/* 공제 합계 */}
+            <div style={{ marginTop: 12, padding: "10px 14px", background: "#FFEBEE", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, fontWeight: 800, color: C.error }}>공제 합계</span>
+              <span style={{ fontSize: 16, fontWeight: 900, color: C.error, fontFamily: "monospace" }}>-{fmt(totDed)}원</span>
+            </div>
+          </div>
+
+          {/* ── 실입금 ── */}
+          <div style={{ marginTop: 14, padding: "14px 16px", background: "#E8F5E9", borderRadius: 10, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div>
-              {/* 급여 요약 */}
-              <div style={{ padding: "16px 0" }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.navy, marginBottom: 12 }}>급여 내역</div>
-                {PY_PAY_FIELDS.filter(f => (rec[f.key] || 0) > 0).map(f => (
-                  <div key={f.key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
-                    <span style={{ color: C.gray }}>{f.label}</span>
-                    <span style={{ fontWeight: 700, fontFamily: "monospace" }}>{fmt(rec[f.key])}원</span>
-                  </div>
-                ))}
-                {/* 추가수당 항목 */}
-                {(rec.allowances || []).filter(a => a.amount > 0).map((a, i) => (
-                  <div key={`a-${i}`} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
-                    <span style={{ color: C.gray, display: "flex", alignItems: "center", gap: 4 }}>
-                      {a.source === "auto" && <span style={{ fontSize: 10, color: C.gold }}>↻</span>}
-                      {a.label}
-                    </span>
-                    <span style={{ fontWeight: 700, fontFamily: "monospace", color: C.blue }}>{fmt(a.amount)}원</span>
-                  </div>
-                ))}
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", marginTop: 8, borderTop: `2px solid ${C.navy}`, fontSize: 14, fontWeight: 900, color: C.navy }}>
-                  <span>총 지급액</span>
-                  <span style={{ fontFamily: "monospace" }}>{fmt(gross)}원</span>
-                </div>
-              </div>
+              <div style={{ fontSize: 13, fontWeight: 800, color: C.success }}>실입금액</div>
+              <div style={{ fontSize: 10, color: "#2E7D32", marginTop: 2 }}>총지급 {fmt(gross)} - 공제 {fmt(totDed)}</div>
+            </div>
+            <span style={{ fontSize: 22, fontWeight: 900, color: C.success, fontFamily: "monospace" }}>{fmt(net)}원</span>
+          </div>
 
-              {/* 공제 요약 */}
-              <div style={{ padding: "16px 0", borderTop: `1px solid ${C.lightGray}` }}>
-                <div style={{ fontSize: 14, fontWeight: 800, color: C.error, marginBottom: 12 }}>공제 내역 ({rec.tax_type})</div>
-                {[...PY_DED_FIELDS_4, { key: "accident_deduct", label: "사고공제" }, { key: "prepaid", label: "선지급" }]
-                  .filter(f => (rec[f.key] || 0) > 0).map(f => (
-                  <div key={f.key} style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", fontSize: 12 }}>
-                    <span style={{ color: C.gray }}>{f.label}</span>
-                    <span style={{ fontWeight: 700, fontFamily: "monospace", color: C.error }}>-{fmt(rec[f.key])}원</span>
-                  </div>
-                ))}
-                <div style={{ display: "flex", justifyContent: "space-between", padding: "8px 0", marginTop: 8, borderTop: `2px solid ${C.error}`, fontSize: 14, fontWeight: 900, color: C.error }}>
-                  <span>공제 합계</span>
-                  <span style={{ fontFamily: "monospace" }}>-{fmt(totDed)}원</span>
-                </div>
+          {/* ── 이체 정보 ── */}
+          {emp && (emp.bank_name || emp.account_number) && (
+            <div style={{ marginTop: 14, padding: 12, background: "#F5F5F5", borderRadius: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 6 }}>💳 이체 정보</div>
+              <div style={{ fontSize: 12 }}>
+                <div>예금주: <strong>{emp.account_holder || emp.name}</strong></div>
+                <div>{emp.bank_name} {emp.account_number}</div>
+                {emp.is_third_party_payment && <div style={{ color: C.orange, fontWeight: 700, marginTop: 4 }}>⚠️ 타인 입금</div>}
               </div>
-
-              {/* 실입금 */}
-              <div style={{ marginTop: 12, padding: 20, background: `linear-gradient(135deg, ${C.navy}, #1e3a8a)`, borderRadius: 12, textAlign: "center" }}>
-                <div style={{ fontSize: 12, color: "rgba(255,255,255,0.7)", marginBottom: 4 }}>실입금액</div>
-                <div style={{ fontSize: 28, fontWeight: 900, color: C.gold, fontFamily: "monospace" }}>{fmt(net)}원</div>
-              </div>
-
-              {/* 계좌 정보 */}
-              {emp && (emp.bank_name || emp.account_number) && (
-                <div style={{ marginTop: 16, padding: 12, background: "#F5F5F5", borderRadius: 8 }}>
-                  <div style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 6 }}>💳 이체 정보</div>
-                  <div style={{ fontSize: 12 }}>
-                    <div>예금주: <strong>{emp.account_holder || emp.name}</strong></div>
-                    <div>{emp.bank_name} {emp.account_number}</div>
-                    {emp.is_third_party_payment && <div style={{ color: C.orange, fontWeight: 700, marginTop: 4 }}>⚠️ 타인 입금</div>}
-                  </div>
-                </div>
-              )}
             </div>
           )}
         </div>
