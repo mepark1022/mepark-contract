@@ -1766,6 +1766,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   const [detailTab, setDetailTab] = useState("basic");
   const [empContracts, setEmpContracts] = useState([]);
   const [contractsLoading, setContractsLoading] = useState(false);
+  const [latestPayroll, setLatestPayroll] = useState(null); // 최근 급여 공제 읽기전용
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountForm, setAccountForm] = useState({ email: "", password: "", role: "field_member" });
   const [accountMsg, setAccountMsg] = useState("");
@@ -1825,6 +1826,12 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
       setEmpContracts(data || []);
     } catch (e) { setEmpContracts([]); }
     setContractsLoading(false);
+    // 최근 급여 공제 로드
+    try {
+      const { data: prData } = await supabase.from("payroll_records").select("*")
+        .eq("employee_id", emp.id).order("created_at", { ascending: false }).limit(1);
+      setLatestPayroll(prData && prData.length > 0 ? prData[0] : null);
+    } catch { setLatestPayroll(null); }
   };
 
   // 계정 생성
@@ -2419,6 +2426,71 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                     {infoRow("타인 입금", se.is_third_party_payment ? "✅ 예" : "아니오")}
                     {(!se.account_holder || !se.bank_name || !se.account_number) && (
                       <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF3E0", borderRadius: 8, fontSize: 11, color: C.orange, fontWeight: 700 }}>⚠️ 계좌정보가 미등록입니다. 급여이체 시 누락됩니다.</div>
+                    )}
+                  </div>
+                  {/* 최근 급여 공제 내역 (읽기 전용) */}
+                  <div style={sectionBox}>
+                    {sectionTitle("📊", "최근 급여 공제 내역")}
+                    {latestPayroll ? (() => {
+                      const lp = latestPayroll;
+                      const lpGross = (lp.basic_pay || 0) + (lp.meal || 0) + (lp.childcare || 0) + (lp.car_allow || 0) +
+                        (lp.team_allow || 0) + (lp.incentive || 0) + (lp.manual_write || 0) + calcAllowancesSum(lp.allowances);
+                      const lpDed = (lp.np || 0) + (lp.hi || 0) + (lp.lt || 0) + (lp.ei || 0) +
+                        (lp.income_tax || 0) + (lp.local_tax || 0) + (lp.accident_deduct || 0) + (lp.prepaid || 0);
+                      const lpNet = lpGross - lpDed;
+                      const lpMonth = lp.month_id ? "" : "";
+                      return (
+                        <div>
+                          <div style={{ fontSize: 10, color: C.gray, marginBottom: 8 }}>세금유형: <strong style={{ color: C.navy }}>{lp.tax_type || "—"}</strong></div>
+                          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6, marginBottom: 10 }}>
+                            <div style={{ textAlign: "center", padding: "8px 4px", background: "#EBF0FF", borderRadius: 6 }}>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: C.navy, fontFamily: "monospace" }}>{fmt(lpGross)}</div>
+                              <div style={{ fontSize: 9, color: C.gray, marginTop: 2 }}>총지급</div>
+                            </div>
+                            <div style={{ textAlign: "center", padding: "8px 4px", background: "#FFEBEE", borderRadius: 6 }}>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: C.error, fontFamily: "monospace" }}>-{fmt(lpDed)}</div>
+                              <div style={{ fontSize: 9, color: C.gray, marginTop: 2 }}>공제합계</div>
+                            </div>
+                            <div style={{ textAlign: "center", padding: "8px 4px", background: "#E8F5E9", borderRadius: 6 }}>
+                              <div style={{ fontSize: 13, fontWeight: 800, color: C.success, fontFamily: "monospace" }}>{fmt(lpNet)}</div>
+                              <div style={{ fontSize: 9, color: C.gray, marginTop: 2 }}>실입금</div>
+                            </div>
+                          </div>
+                          {lp.tax_type === "4대보험" && (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px", fontSize: 11 }}>
+                              {[{ k: "np", l: "국민연금" }, { k: "hi", l: "건강보험" }, { k: "lt", l: "장기요양" }, { k: "ei", l: "고용보험" },
+                                { k: "income_tax", l: "소득세" }, { k: "local_tax", l: "지방소득세" }]
+                                .filter(f => (lp[f.k] || 0) > 0).map(f => (
+                                <div key={f.k} style={{ display: "flex", justifyContent: "space-between" }}>
+                                  <span style={{ color: C.gray }}>{f.l}</span>
+                                  <span style={{ fontWeight: 700, color: C.error, fontFamily: "monospace" }}>-{fmt(lp[f.k])}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {(lp.tax_type === "3.3%" || lp.tax_type === "3.3%(타인)") && (
+                            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px", fontSize: 11 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                <span style={{ color: C.gray }}>소득세(3%)</span>
+                                <span style={{ fontWeight: 700, color: C.error, fontFamily: "monospace" }}>-{fmt(lp.income_tax)}</span>
+                              </div>
+                              <div style={{ display: "flex", justifyContent: "space-between" }}>
+                                <span style={{ color: C.gray }}>지방세(0.3%)</span>
+                                <span style={{ fontWeight: 700, color: C.error, fontFamily: "monospace" }}>-{fmt(lp.local_tax)}</span>
+                              </div>
+                            </div>
+                          )}
+                          {(lp.accident_deduct > 0 || lp.prepaid > 0) && (
+                            <div style={{ marginTop: 4, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "3px 12px", fontSize: 11 }}>
+                              {lp.accident_deduct > 0 && <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: C.gray }}>사고공제</span><span style={{ fontWeight: 700, color: C.error, fontFamily: "monospace" }}>-{fmt(lp.accident_deduct)}</span></div>}
+                              {lp.prepaid > 0 && <div style={{ display: "flex", justifyContent: "space-between" }}><span style={{ color: C.gray }}>선지급</span><span style={{ fontWeight: 700, color: C.error, fontFamily: "monospace" }}>-{fmt(lp.prepaid)}</span></div>}
+                            </div>
+                          )}
+                          <div style={{ marginTop: 8, fontSize: 10, color: C.gray }}>※ 공제 내역 수정은 수익성분석 → 급여대장에서 가능합니다.</div>
+                        </div>
+                      );
+                    })() : (
+                      <div style={{ textAlign: "center", padding: "12px 0", fontSize: 11, color: C.gray }}>급여 데이터 없음 (급여대장에서 생성 후 표시됩니다)</div>
                     )}
                   </div>
                   <div style={{ textAlign: "center", paddingTop: 8 }}>
