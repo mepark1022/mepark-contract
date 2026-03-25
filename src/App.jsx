@@ -10044,6 +10044,8 @@ function PayrollPage({ employees, profitState }) {
   const [pySaving, setPySaving] = useState(false);
   const [pyBatchCreating, setPyBatchCreating] = useState(false);
   const [pyViewMode, setPyViewMode] = useState("payroll"); // payroll | transfer | payslip
+  const [payGroupOpen, setPayGroupOpen] = useState(false);
+  const [dedGroupOpen, setDedGroupOpen] = useState(false);
 
   // ── 급여내역서 state ──
   const [psSlips, setPsSlips] = useState([]);
@@ -10910,15 +10912,85 @@ function PayrollPage({ employees, profitState }) {
             ))}
           </div>
 
-          {/* 직원 급여 테이블 */}
+          {/* 직원 급여 테이블 — v9.5 그룹별 접기/펼치기 */}
+          {(() => {
+            // sticky left 위치값
+            const stickyW = [36, 76, 68]; // #, 사번, 성명
+            const stickyL = [0, 36, 112]; // cumulative left
+            const stickyTh = (ci) => ({ ...pyThStyle, position: "sticky", left: stickyL[ci], zIndex: 12, width: stickyW[ci], minWidth: stickyW[ci] });
+            const stickyTd = (ci, bg) => ({ ...pyTdStyle, position: "sticky", left: stickyL[ci], zIndex: 2, background: bg, width: stickyW[ci], minWidth: stickyW[ci] });
+            const stickyFt = (ci) => ({ padding: "8px 6px", position: "sticky", left: stickyL[ci], zIndex: 2, background: C.navy });
+            const amtTh = { ...pyThStyle, textAlign: "right", minWidth: 72 };
+            const amtTd = { ...pyTdStyle, textAlign: "right", fontFamily: "monospace" };
+            const ftCell = { padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white };
+            const grpBtn = (open) => ({ background: "none", border: "none", color: "rgba(255,255,255,0.7)", cursor: "pointer", fontSize: 10, padding: 0, marginLeft: 2, fontFamily: FONT });
+
+            // 지급 확장 컬럼 정의 (보육수당 제거)
+            const PAY_EX_COLS = [
+              { key: "car_allow", label: "자가운전" },
+              { key: "team_allow", label: "팀장" },
+              { key: "incentive", label: "인센티브" },
+              { key: "manual_write", label: "수기" },
+            ];
+            // 공제 확장 컬럼 정의
+            const DED_EX_COLS = [
+              { key: "np", label: "국민연금" },
+              { key: "hi", label: "건강보험" },
+              { key: "lt", label: "장기요양" },
+              { key: "ei", label: "고용보험" },
+              { key: "income_tax", label: "소득세" },
+              { key: "local_tax", label: "지방소득세" },
+              { key: "accident_deduct", label: "사고공제" },
+              { key: "prepaid", label: "선지급" },
+            ];
+
+            // 합계 계산 헬퍼
+            const sumField = (field) => filteredRecords.reduce((s, r) => s + (r[field] || 0), 0);
+            const sumExtras = () => filteredRecords.reduce((s, r) =>
+              s + (r.car_allow||0) + (r.team_allow||0) + (r.incentive||0) + (r.manual_write||0) + calcAllowancesSum(r.allowances), 0);
+            const sumDed = () => filteredRecords.reduce((s, r) =>
+              s + ((r.gross_pay||0) - (r.net_pay||0)), 0);
+
+            return (
           <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+              <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr>
-                    {["#", "사번", "성명", "사업장", "근무형태", "세금처리", "기본급", "식대", "추가수당", "총지급", "공제합계", "실입금", ""].map((h, i) => (
-                      <th key={i} style={{ ...pyThStyle, textAlign: i >= 6 ? "right" : "left", ...(i === 0 ? { width: 30 } : {}) }}>{h}</th>
+                    {/* 고정 3열 (sticky) */}
+                    <th style={{ ...stickyTh(0), textAlign: "center" }}>#</th>
+                    <th style={{ ...stickyTh(1), textAlign: "left" }}>사번</th>
+                    <th style={{ ...stickyTh(2), textAlign: "left", borderRight: "2px solid rgba(255,255,255,0.2)" }}>성명</th>
+                    {/* 고정 3열 (non-sticky) */}
+                    <th style={{ ...pyThStyle, textAlign: "left" }}>사업장</th>
+                    <th style={{ ...pyThStyle, textAlign: "left" }}>근무형태</th>
+                    <th style={{ ...pyThStyle, textAlign: "left" }}>세금처리</th>
+                    {/* 지급 그룹 */}
+                    <th style={amtTh}>기본급</th>
+                    <th style={amtTh}>식대</th>
+                    {payGroupOpen && PAY_EX_COLS.map(c => (
+                      <th key={c.key} style={{ ...amtTh, background: "#1E3AB0", fontSize: 10 }}>{c.label}</th>
                     ))}
+                    <th style={{ ...amtTh, minWidth: payGroupOpen ? 72 : 130 }}>추가수당</th>
+                    <th style={{ ...amtTh, fontWeight: 900, borderLeft: "2px solid rgba(255,255,255,0.25)" }}>
+                      💰총지급
+                      <button onClick={(e) => { e.stopPropagation(); setPayGroupOpen(p => !p); }} style={grpBtn(payGroupOpen)}>
+                        {payGroupOpen ? "◂접기" : "▸펼치기"}
+                      </button>
+                    </th>
+                    {/* 공제 그룹 */}
+                    {dedGroupOpen && DED_EX_COLS.map(c => (
+                      <th key={c.key} style={{ ...amtTh, background: "#7B1F1F", fontSize: 10 }}>{c.label}</th>
+                    ))}
+                    <th style={{ ...amtTh, background: "#8B2020" }}>
+                      📊공제합계
+                      <button onClick={(e) => { e.stopPropagation(); setDedGroupOpen(p => !p); }} style={grpBtn(dedGroupOpen)}>
+                        {dedGroupOpen ? "◂접기" : "▸펼치기"}
+                      </button>
+                    </th>
+                    {/* 실지급 + 편집 */}
+                    <th style={{ ...amtTh, borderLeft: "2px solid rgba(255,255,255,0.25)" }}>실지급</th>
+                    <th style={{ ...pyThStyle, width: 32, textAlign: "center" }} />
                   </tr>
                 </thead>
                 <tbody>
@@ -10929,15 +11001,16 @@ function PayrollPage({ employees, profitState }) {
                     const totD = gross - net;
                     const allowances = r.allowances || [];
                     const allowancesSum = calcAllowancesSum(allowances);
-                    const fixedExtras = (r.childcare || 0) + (r.car_allow || 0) + (r.team_allow || 0) + (r.incentive || 0) + (r.manual_write || 0);
-                    const totalExtras = fixedExtras + allowancesSum;
+                    const fixedExtras = (r.car_allow || 0) + (r.team_allow || 0) + (r.incentive || 0) + (r.manual_write || 0);
                     const taxInfo = PY_TAX_TYPES.find(t => t.key === r.tax_type);
+                    const rowBg = idx % 2 ? "#FAFBFC" : C.white;
                     return (
-                      <tr key={r.id} style={{ background: idx % 2 ? "#FAFBFC" : C.white, cursor: "pointer" }}
+                      <tr key={r.id} style={{ background: rowBg, cursor: "pointer" }}
                         onClick={() => { setPyEditRecord({ ...r }); setPyEditTab("pay"); }}>
-                        <td style={{ ...pyTdStyle, textAlign: "center", color: C.gray }}>{idx + 1}</td>
-                        <td style={{ ...pyTdStyle, fontWeight: 700, fontSize: 11, color: C.navy }}>{emp?.emp_no || "-"}</td>
-                        <td style={{ ...pyTdStyle, fontWeight: 700 }}>{emp?.name || "-"}</td>
+                        {/* 고정 3열 (sticky) */}
+                        <td style={{ ...stickyTd(0, rowBg), textAlign: "center", color: C.gray }}>{idx + 1}</td>
+                        <td style={{ ...stickyTd(1, rowBg), fontWeight: 700, fontSize: 11, color: C.navy }}>{emp?.emp_no || "-"}</td>
+                        <td style={{ ...stickyTd(2, rowBg), fontWeight: 700, borderRight: `2px solid ${C.lightGray}` }}>{emp?.name || "-"}</td>
                         <td style={{ ...pyTdStyle, fontSize: 11, color: C.gray }}>{getSiteName(r.site_code)}</td>
                         <td style={pyTdStyle}>{getWorkLabel(r.work_type)}</td>
                         <td style={pyTdStyle}>
@@ -10946,29 +11019,47 @@ function PayrollPage({ employees, profitState }) {
                             {r.tax_type || "-"}
                           </span>
                         </td>
-                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace" }}>{fmt(r.basic_pay)}</td>
-                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace" }}>{fmt(r.meal)}</td>
-                        <td style={{ ...pyTdStyle, textAlign: "left", minWidth: 160 }}>
-                          {allowances.filter(a => a.amount > 0).length === 0 && fixedExtras === 0
-                            ? <span style={{ color: C.gray }}>—</span>
-                            : <div style={{ display: "flex", flexWrap: "wrap", gap: 3 }}>
-                                {allowances.filter(a => a.amount > 0).map((a, i) => (
-                                  <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#EEF2FF", borderRadius: 3, padding: "1px 6px", fontSize: 10, color: "#4338CA", fontWeight: 500, whiteSpace: "nowrap" }}>
-                                    {a.source === "auto" && <span style={{ fontSize: 9, color: C.gold }}>↻</span>}
-                                    {a.label} {fmt(a.amount)}
-                                  </span>
-                                ))}
-                                {fixedExtras > 0 && (
-                                  <span style={{ display: "inline-flex", alignItems: "center", background: "#F0F4FF", borderRadius: 3, padding: "1px 6px", fontSize: 10, color: C.blue, fontWeight: 500 }}>
-                                    기타 {fmt(fixedExtras)}
-                                  </span>
-                                )}
-                              </div>
+                        {/* 지급 그룹 */}
+                        <td style={amtTd}>{fmt(r.basic_pay)}</td>
+                        <td style={amtTd}>{fmt(r.meal)}</td>
+                        {payGroupOpen && PAY_EX_COLS.map(c => (
+                          <td key={c.key} style={{ ...amtTd, fontSize: 11, background: idx % 2 ? "#F5F7FF" : "#FAFCFF" }}>
+                            {(r[c.key] || 0) > 0 ? fmt(r[c.key]) : <span style={{ color: "#CCC" }}>—</span>}
+                          </td>
+                        ))}
+                        <td style={{ ...amtTd, minWidth: payGroupOpen ? 72 : 130 }}>
+                          {payGroupOpen
+                            ? (allowancesSum > 0
+                                ? <span style={{ fontSize: 11 }}>{fmt(allowancesSum)}</span>
+                                : <span style={{ color: "#CCC" }}>—</span>)
+                            : (allowances.filter(a => a.amount > 0).length === 0 && fixedExtras === 0
+                                ? <span style={{ color: C.gray }}>—</span>
+                                : <div style={{ display: "flex", flexWrap: "wrap", gap: 3, justifyContent: "flex-end" }}>
+                                    {allowances.filter(a => a.amount > 0).map((a, i) => (
+                                      <span key={i} style={{ display: "inline-flex", alignItems: "center", gap: 3, background: "#EEF2FF", borderRadius: 3, padding: "1px 6px", fontSize: 10, color: "#4338CA", fontWeight: 500, whiteSpace: "nowrap" }}>
+                                        {a.source === "auto" && <span style={{ fontSize: 9, color: C.gold }}>↻</span>}
+                                        {a.label} {fmt(a.amount)}
+                                      </span>
+                                    ))}
+                                    {fixedExtras > 0 && (
+                                      <span style={{ display: "inline-flex", alignItems: "center", background: "#F0F4FF", borderRadius: 3, padding: "1px 6px", fontSize: 10, color: C.blue, fontWeight: 500 }}>
+                                        기타 {fmt(fixedExtras)}
+                                      </span>
+                                    )}
+                                  </div>
+                              )
                           }
                         </td>
-                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.navy }}>{fmt(gross)}</td>
-                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", color: C.error }}>{totD > 0 ? `-${fmt(totD)}` : "0"}</td>
-                        <td style={{ ...pyTdStyle, textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.success }}>{fmt(net)}</td>
+                        <td style={{ ...amtTd, fontWeight: 800, color: C.navy, borderLeft: `2px solid ${C.lightGray}` }}>{fmt(gross)}</td>
+                        {/* 공제 그룹 */}
+                        {dedGroupOpen && DED_EX_COLS.map(c => (
+                          <td key={c.key} style={{ ...amtTd, fontSize: 11, background: idx % 2 ? "#FFF5F5" : "#FFFAFA" }}>
+                            {(r[c.key] || 0) > 0 ? <span style={{ color: C.error }}>-{fmt(r[c.key])}</span> : <span style={{ color: "#CCC" }}>—</span>}
+                          </td>
+                        ))}
+                        <td style={{ ...amtTd, color: C.error }}>{totD > 0 ? `-${fmt(totD)}` : "0"}</td>
+                        {/* 실지급 + 편집 */}
+                        <td style={{ ...amtTd, fontWeight: 800, color: C.success, borderLeft: `2px solid ${C.lightGray}` }}>{fmt(net)}</td>
                         <td style={{ ...pyTdStyle, textAlign: "center" }}>
                           <span style={{ fontSize: 14, cursor: "pointer" }}>✏️</span>
                         </td>
@@ -10979,26 +11070,26 @@ function PayrollPage({ employees, profitState }) {
                 {/* 합계행 */}
                 <tfoot>
                   <tr style={{ background: C.navy }}>
-                    <td colSpan={6} style={{ padding: "8px 12px", fontSize: 12, fontWeight: 800, color: C.white }}>
+                    <td style={{ ...stickyFt(0), color: C.white, fontWeight: 800, textAlign: "center", fontSize: 11 }}>#</td>
+                    <td colSpan={2} style={{ ...stickyFt(1), color: C.white, fontWeight: 800, fontSize: 12 }}>
                       합계 ({filteredRecords.length}명)
                     </td>
-                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
-                      {fmt(filteredRecords.reduce((s, r) => s + (r.basic_pay || 0), 0))}
+                    <td colSpan={3} style={{ padding: "8px 6px" }} />
+                    <td style={ftCell}>{fmt(sumField("basic_pay"))}</td>
+                    <td style={ftCell}>{fmt(sumField("meal"))}</td>
+                    {payGroupOpen && PAY_EX_COLS.map(c => (
+                      <td key={c.key} style={{ ...ftCell, fontSize: 11 }}>{fmt(sumField(c.key))}</td>
+                    ))}
+                    <td style={ftCell}>{fmt(sumExtras())}</td>
+                    <td style={{ ...ftCell, fontWeight: 900, color: C.gold, borderLeft: "2px solid rgba(255,255,255,0.25)" }}>
+                      {fmt(sumField("gross_pay"))}
                     </td>
-                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
-                      {fmt(filteredRecords.reduce((s, r) => s + (r.meal || 0), 0))}
-                    </td>
-                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: C.white }}>
-                      {fmt(filteredRecords.reduce((s, r) => s + ((r.childcare||0)+(r.car_allow||0)+(r.team_allow||0)+(r.incentive||0)+(r.manual_write||0)) + calcAllowancesSum(r.allowances), 0))}
-                    </td>
-                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>
-                      {fmt(filteredRecords.reduce((s, r) => s + (r.gross_pay || 0), 0))}
-                    </td>
-                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 800, color: "#FF8A80" }}>
-                      -{fmt(filteredRecords.reduce((s, r) => s + ((r.gross_pay||0)-(r.net_pay||0)), 0))}
-                    </td>
-                    <td style={{ padding: "8px 6px", textAlign: "right", fontFamily: "monospace", fontWeight: 900, color: C.gold }}>
-                      {fmt(filteredRecords.reduce((s, r) => s + (r.net_pay || 0), 0))}
+                    {dedGroupOpen && DED_EX_COLS.map(c => (
+                      <td key={c.key} style={{ ...ftCell, fontSize: 11, color: "#FF8A80" }}>-{fmt(sumField(c.key))}</td>
+                    ))}
+                    <td style={{ ...ftCell, color: "#FF8A80" }}>-{fmt(sumDed())}</td>
+                    <td style={{ ...ftCell, fontWeight: 900, color: C.gold, borderLeft: "2px solid rgba(255,255,255,0.25)" }}>
+                      {fmt(sumField("net_pay"))}
                     </td>
                     <td style={{ padding: "8px 6px" }} />
                   </tr>
@@ -11006,6 +11097,8 @@ function PayrollPage({ employees, profitState }) {
               </table>
             </div>
           </div>
+            );
+          })()}
 
           {/* 하단 액션 버튼 */}
           <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
