@@ -11045,7 +11045,7 @@ function PayrollPage({ employees, profitState }) {
 
             return (
           <div style={{ background: C.white, borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-            <div style={{ overflowX: "auto" }}>
+            <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 260px)" }}>
               <table style={{ width: "max-content", minWidth: "100%", borderCollapse: "collapse", fontSize: 12 }}>
                 <thead>
                   <tr>
@@ -12498,7 +12498,7 @@ function MainApp() {
   return (
     <div style={{ display: "flex", minHeight: "100vh", fontFamily: FONT, background: C.bg }}>
       {/* 사이드바 */}
-      <aside style={{ width: 200, background: C.navy, display: "flex", flexDirection: "column", flexShrink: 0 }}>
+      <aside style={{ width: 200, background: C.navy, display: "flex", flexDirection: "column", flexShrink: 0, position: "sticky", top: 0, height: "100vh", overflowY: "auto" }}>
         <div style={{ padding: "20px 16px", borderBottom: "1px solid rgba(255,255,255,0.1)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: C.gold, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 16, fontWeight: 900, color: C.navy }}>MP</div>
@@ -15511,17 +15511,18 @@ function AttendancePage({ employees }) {
       {/* ── 캘린더 그리드 테이블 ── */}
       {viewMode === "calendar" && (
       <div style={{ background: "#fff", border: "1.5px solid #E8ECF4", borderRadius: 14, overflow: "hidden" }}>
-        <div style={{ overflowX: "auto" }}>
+        <div style={{ overflowX: "auto", overflowY: "auto", maxHeight: "calc(100vh - 200px)" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
             <thead>
               <tr>
-                <th style={{ position: "sticky", left: 0, zIndex: 10, background: "#F4F6FB", padding: "2px 4px", fontSize: 14, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left" }}>
+                <th style={{ position: "sticky", left: 0, top: 0, zIndex: 12, background: "#F4F6FB", padding: "2px 4px", fontSize: 14, fontWeight: 800, color: C.dark, borderBottom: "2px solid #E8ECF4", borderRight: "2px solid #E8ECF4", textAlign: "left" }}>
                   근무자
                 </th>
                 {dates.map(d => {
                   const isRed = d.isWeekend || d.isHoliday;
                   return (
                     <th key={d.day} title={`${d.dateStr} (${d.dayName})${d.holidayName ? ` · ${d.holidayName}` : ""}`} style={{
+                      position: "sticky", top: 0, zIndex: 8,
                       padding: "2px 0", fontSize: 12, fontWeight: 700, textAlign: "center",
                       borderBottom: "2px solid #E8ECF4", minWidth: 28, width: 28,
                       background: d.isToday ? C.navy : d.isHoliday ? "#FFF3F3" : "#F4F6FB",
@@ -15548,7 +15549,7 @@ function AttendancePage({ employees }) {
                     { label: "합계", color: C.dark, sub: mWd + mWe + mHol },
                   ];
                   return dutyCols.map((col, ci) => (
-                    <th key={col.label} style={{ padding: "2px 1px", fontSize: 12, fontWeight: 800, color: col.color, background: col.label === "합계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 28 }}>
+                    <th key={col.label} style={{ position: "sticky", top: 0, zIndex: 8, padding: "2px 1px", fontSize: 12, fontWeight: 800, color: col.color, background: col.label === "합계" ? "#ECEEF5" : "#F4F6FB", borderBottom: "2px solid #E8ECF4", borderLeft: ci === 0 ? "2px solid #E8ECF4" : "1px solid #F0F0F0", textAlign: "center", minWidth: 28 }}>
                       <div>{col.label}</div>
                       {col.sub !== "" && <div style={{ fontSize: 10, fontWeight: 600, color: "#999", lineHeight: 1 }}>{col.sub}일</div>}
                     </th>
