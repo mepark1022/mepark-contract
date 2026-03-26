@@ -948,10 +948,9 @@ const DEFAULT_ARTICLES_PARTTIME = {
 
 // ── 10. 메인 대시보드 (통합 홈) ── Phase C 업그레이드 ──────
 function MainDashboard({ employees, onNavigate, profitState }) {
-  const { profitMonth: currentMonth, revenueData, overheadData, monthlySummary = [], chartTransactions = [], monthlyParkingData = [], laborData = {}, siteDetailsMap = {}, dailyReportSummary = {}, valetFeeData = {} } = profitState;
+  const { profitMonth: currentMonth, revenueData, overheadData, monthlyParkingData = [], laborData = {}, siteDetailsMap = {}, dailyReportSummary = {}, valetFeeData = {} } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
-  const [chartPeriod, setChartPeriod] = useState("mtd"); // ★ Phase C: 기본 이번달
 
   // ★ Phase B: 기간선택 → 대상 월 목록 계산
   const periodMonths = useMemo(() => {
@@ -1082,48 +1081,11 @@ function MainDashboard({ employees, onNavigate, profitState }) {
   }, [sitePLs]);
 
   // ★ Phase B: 재무 KPI — monthly_summary에서 기간별 집계
+  // ★ 인건비율 KPI (수익성 데이터 기반)
   const finKPI = useMemo(() => {
-    const targetSummaries = monthlySummary.filter(s => periodMonths.includes(s.month));
-    const bankIn = targetSummaries.reduce((s, d) => s + toNum(d.bank_in), 0);
-    const bankOut = targetSummaries.reduce((s, d) => s + toNum(d.bank_out), 0);
-    // 가용자금: 가장 최근 월의 bank_balance
-    const latestSummary = targetSummaries.sort((a, b) => (b.month || "").localeCompare(a.month || ""))[0];
-    const bankBalance = toNum(latestSummary?.bank_balance);
-    const cardTotal = targetSummaries.reduce((s, d) => s + toNum(d.card_total), 0);
-    const cardCount = targetSummaries.reduce((s, d) => s + toNum(d.card_count), 0);
-    // 인건비율
     const laborRatio = ptotals.rev > 0 ? ((ptotals.labor / ptotals.rev) * 100).toFixed(1) : "—";
-
-    // 전월대비 (입금/출금)
-    const prevSummaries = monthlySummary.filter(s => s.month === prevMonth);
-    const prevBankIn = prevSummaries.reduce((s, d) => s + toNum(d.bank_in), 0);
-    const prevBankOut = prevSummaries.reduce((s, d) => s + toNum(d.bank_out), 0);
-    const inChange = prevBankIn > 0 ? ((bankIn - prevBankIn) / prevBankIn * 100).toFixed(1) : null;
-    const outChange = prevBankOut > 0 ? ((bankOut - prevBankOut) / prevBankOut * 100).toFixed(1) : null;
-
-    // 세금계산서 / 현금영수증 요약
-    const taxSaleTotal = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_total), 0);
-    const taxSaleSupply = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_supply), 0);
-    const taxSaleTax = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_tax), 0);
-    const taxSaleCount = targetSummaries.reduce((s, d) => s + toNum(d.tax_sale_count), 0);
-    const taxBuyTotal = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_total), 0);
-    const taxBuySupply = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_supply), 0);
-    const taxBuyTax = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_tax), 0);
-    const taxBuyCount = targetSummaries.reduce((s, d) => s + toNum(d.tax_buy_count), 0);
-    const cashSaleTotal = targetSummaries.reduce((s, d) => s + toNum(d.cash_sale_total), 0);
-    const cashSaleCount = targetSummaries.reduce((s, d) => s + toNum(d.cash_sale_count), 0);
-    const cashBuyTotal = targetSummaries.reduce((s, d) => s + toNum(d.cash_buy_total), 0);
-    const cashBuyCount = targetSummaries.reduce((s, d) => s + toNum(d.cash_buy_count), 0);
-
-    return {
-      bankBalance, bankIn, bankOut, cardTotal, cardCount, laborRatio,
-      inChange, outChange,
-      taxSaleTotal, taxSaleSupply, taxSaleTax, taxSaleCount,
-      taxBuyTotal, taxBuySupply, taxBuyTax, taxBuyCount,
-      cashSaleTotal, cashSaleCount, cashBuyTotal, cashBuyCount,
-      hasData: targetSummaries.length > 0,
-    };
-  }, [monthlySummary, periodMonths, prevMonth, ptotals]);
+    return { laborRatio };
+  }, [ptotals]);
 
   const kpiCard = (icon, value, label, sub, color, onClick) => (
     <div onClick={onClick} style={{
@@ -1151,68 +1113,6 @@ function MainDashboard({ employees, onNavigate, profitState }) {
     return currentMonth;
   }, [period, currentMonth, periodMonths]);
 
-  // ★ Phase C: 현금흐름 차트 데이터 가공
-  const chartData = useMemo(() => {
-    if (!chartTransactions.length) return [];
-    const now = new Date();
-    let startDate;
-    if (chartPeriod === "3m") startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-    else if (chartPeriod === "6m") startDate = new Date(now.getFullYear(), now.getMonth() - 6, 1);
-    else if (chartPeriod === "12m") startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
-    else if (chartPeriod === "mtd") startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-    else if (chartPeriod === "ytd") startDate = new Date(now.getFullYear(), 0, 1);
-    else startDate = new Date(now.getFullYear(), now.getMonth() - 3, 1);
-
-    const filtered = chartTransactions.filter(tx => new Date(tx.tx_date) >= startDate);
-
-    const isDaily = chartPeriod === "mtd";
-    const isMonthly = ["6m", "12m", "ytd"].includes(chartPeriod);
-    const grouped = {};
-
-    // 주별 키: 해당 주의 월요일 날짜 기준
-    const getMonday = (d) => {
-      const dt = new Date(d);
-      const day = dt.getDay();
-      const diff = dt.getDate() - day + (day === 0 ? -6 : 1);
-      return new Date(dt.setDate(diff));
-    };
-    const fmtMD = (d) => `${d.getMonth() + 1}/${d.getDate()}`;
-
-    filtered.forEach(tx => {
-      const d = new Date(tx.tx_date);
-      let key, label;
-      if (isDaily) {
-        key = tx.tx_date?.slice(0, 10);
-        label = `${d.getMonth() + 1}/${d.getDate()}`;
-      } else if (isMonthly) {
-        key = tx.tx_date?.slice(0, 7);
-        label = `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}`;
-      } else {
-        // 주별: 월요일~일요일 범위 표시
-        const mon = getMonday(d);
-        const sun = new Date(mon);
-        sun.setDate(sun.getDate() + 6);
-        key = localDateStr(mon); // 정렬용 (2026-03-02)
-        label = `${fmtMD(mon)}~${fmtMD(sun)}`;
-      }
-      if (!grouped[key]) grouped[key] = { key, label, inAmt: 0, outAmt: 0, balance: 0 };
-      grouped[key].inAmt += toNum(tx.amount_in);
-      grouped[key].outAmt += toNum(tx.amount_out);
-      if (toNum(tx.balance_after) > 0) grouped[key].balance = toNum(tx.balance_after);
-    });
-
-    const arr = Object.values(grouped).sort((a, b) => (a.key || "").localeCompare(b.key || ""));
-    let lastBal = 0;
-    arr.forEach(d => { if (d.balance > 0) lastBal = d.balance; else d.balance = lastBal; });
-    return arr;
-  }, [chartTransactions, chartPeriod]);
-
-  const chartFmt = (v) => {
-    if (Math.abs(v) >= 1e8) return (v / 1e8).toFixed(1) + "억";
-    if (Math.abs(v) >= 1e4) return Math.round(v / 1e4).toLocaleString() + "만";
-    return v.toLocaleString();
-  };
-
   return (
     <div>
       {/* ── 헤더 ── */}
@@ -1238,7 +1138,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
           { label: "재직인원", value: `${active.length}명`, sub: `평${weekday.length} 주${weekend.length} 복${mixed.length} 알${parttime.length}`, color: C.navy, click: () => onNavigate("employees") },
           { label: "총 매출", value: pFmt(ptotals.rev), sub: `${activeSites.length}개 사업장`, color: C.navy, click: () => onNavigate("profit_cost_input") },
           { label: "영업이익", value: pFmt(ptotals.profit), sub: ptotals.rev > 0 ? `이익률 ${((ptotals.profit / ptotals.rev) * 100).toFixed(1)}%` : "—", color: ptotals.profit >= 0 ? C.success : C.error },
-          { label: "가용자금", value: finKPI.hasData ? pFmt(finKPI.bankBalance) : "—", sub: finKPI.hasData ? "은행잔액 합산" : "Import 필요", color: C.navy },
+          { label: "가용자금", value: "—", sub: "현금흐름표 구현 후 연동", color: C.navy },
           { label: "인건비율", value: finKPI.laborRatio !== "—" ? finKPI.laborRatio + "%" : "—", sub: `인건비 ${pFmt(ptotals.labor)}`, color: Number(finKPI.laborRatio) > 50 ? C.error : C.orange },
         ].map((item, i) => (
           <div key={i} onClick={item.click} style={{
@@ -1256,7 +1156,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
       </div>
 
       {/* ── B. 2컬럼: 좌(수익·재무 요약) / 우(차트) ── */}
-      <div style={{ display: "grid", gridTemplateColumns: chartData.length > 0 ? "340px 1fr" : "1fr", gap: 16, marginBottom: 18, minHeight: chartData.length > 0 ? 480 : "auto" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, marginBottom: 18 }}>
 
         {/* 좌: 수익·재무 요약 패널 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12, justifyContent: "space-between" }}>
@@ -1317,151 +1217,9 @@ function MainDashboard({ employees, onNavigate, profitState }) {
             </div>
           </div>
 
-          {/* 재무 요약 */}
-          {finKPI.hasData && (
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-              <div style={{ background: C.navy, color: "#fff", padding: "9px 14px", fontSize: 12, fontWeight: 800, cursor: "pointer", display: "flex", justifyContent: "space-between" }}
-                onClick={() => onNavigate("profit_import")}>
-                <span>재무 현황</span>
-                <span style={{ color: C.gold, fontSize: 11 }}>Import →</span>
-              </div>
-              <div style={{ padding: 14 }}>
-                {[
-                  { label: "입금", value: pFmt(finKPI.bankIn), change: finKPI.inChange, color: C.navy },
-                  { label: "출금", value: pFmt(finKPI.bankOut), change: finKPI.outChange, color: C.orange },
-                  { label: "카드이용", value: pFmt(finKPI.cardTotal), sub: finKPI.cardCount > 0 ? `${finKPI.cardCount}건` : null, color: C.blue },
-                ].map((r, i) => (
-                  <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", borderTop: i > 0 ? `1px solid ${C.border}` : "none" }}>
-                    <span style={{ fontSize: 12, color: C.gray, fontWeight: 600 }}>{r.label}</span>
-                    <div style={{ textAlign: "right", display: "flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ fontSize: 14, fontWeight: 800, color: r.color }}>{r.value}</span>
-                      {r.change && (
-                        <span style={{ fontSize: 10, fontWeight: 700, color: Number(r.change) >= 0 ? C.success : C.error }}>
-                          {Number(r.change) >= 0 ? "▲" : "▼"}{Math.abs(Number(r.change))}%
-                        </span>
-                      )}
-                      {r.sub && <span style={{ fontSize: 10, color: C.gray }}>{r.sub}</span>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* 세금계산서·현금영수증 요약 */}
-          {finKPI.hasData && (finKPI.taxSaleCount > 0 || finKPI.taxBuyCount > 0) && (
-            <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden" }}>
-              <div style={{ background: C.navy, color: "#fff", padding: "9px 14px", fontSize: 12, fontWeight: 800 }}>세금계산서 · 현금영수증</div>
-              <div style={{ padding: "10px 14px" }}>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, marginBottom: finKPI.cashSaleCount > 0 || finKPI.cashBuyCount > 0 ? 8 : 0 }}>
-                  <div>
-                    <div style={{ fontSize: 10, color: C.success, fontWeight: 700 }}>매출 {finKPI.taxSaleCount}건</div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>{pFmt(finKPI.taxSaleTotal)}</div>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: 10, color: C.error, fontWeight: 700 }}>매입 {finKPI.taxBuyCount}건</div>
-                    <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>{pFmt(finKPI.taxBuyTotal)}</div>
-                  </div>
-                </div>
-                {(finKPI.cashSaleCount > 0 || finKPI.cashBuyCount > 0) && (
-                  <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 8, display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
-                    <div>
-                      <div style={{ fontSize: 10, color: C.gray, fontWeight: 600 }}>현금영수증 매출 {finKPI.cashSaleCount}건</div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{pFmt(finKPI.cashSaleTotal)}</div>
-                    </div>
-                    <div>
-                      <div style={{ fontSize: 10, color: C.gray, fontWeight: 600 }}>현금영수증 매입 {finKPI.cashBuyCount}건</div>
-                      <div style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{pFmt(finKPI.cashBuyTotal)}</div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-
         </div>
 
-        {/* 우: 현금흐름 차트 */}
-        {chartData.length > 0 && (
-          <div style={{ background: "#fff", borderRadius: 12, border: `1px solid ${C.border}`, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            {/* 차트 헤더 */}
-            <div style={{ background: C.navy, padding: "10px 16px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <div>
-                <span style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>현금흐름</span>
-                <span style={{ fontSize: 10, color: "rgba(255,255,255,0.5)", marginLeft: 8 }}>
-                  {chartPeriod === "mtd" ? "일별" : chartPeriod === "3m" ? "주별" : "월별"}
-                </span>
-              </div>
-              <div style={{ display: "flex", gap: 2, background: "rgba(255,255,255,0.12)", padding: 2, borderRadius: 8 }}>
-                {[
-                  ["mtd", "이번달", "이번 달 1일~오늘 · 일별"],
-                  ["3m", "3개월", "최근 3개월 · 주별"],
-                  ["6m", "6개월", "최근 6개월 · 월별"],
-                  ["12m", "12개월", "최근 12개월 · 월별"],
-                  ["ytd", "YTD", `${new Date().getFullYear()}년 1월~현재 · 월별`],
-                ].map(([k, v, tip]) => (
-                  <button key={k} onClick={() => setChartPeriod(k)} title={tip} style={{
-                    padding: "4px 10px", borderRadius: 6, fontSize: 10, fontWeight: 700, cursor: "pointer",
-                    border: "none", background: chartPeriod === k ? C.gold : "transparent",
-                    color: chartPeriod === k ? C.navy : "rgba(255,255,255,0.65)", transition: "all 0.15s",
-                  }}>{v}</button>
-                ))}
-              </div>
-            </div>
-            {/* 범례 */}
-            <div style={{ display: "flex", gap: 16, padding: "10px 16px 0", justifyContent: "center" }}>
-              {[
-                [C.navy, "입금", chartData.reduce((s, d) => s + (d.inAmt || 0), 0)],
-                [C.orange, "출금", chartData.reduce((s, d) => s + (d.outAmt || 0), 0)],
-                [C.gold, "잔액", chartData[chartData.length - 1]?.balance || 0],
-              ].map(([color, label, val]) => (
-                <div key={label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <div style={{ width: label === "잔액" ? 16 : 8, height: label === "잔액" ? 2.5 : 8, background: color, borderRadius: 2 }} />
-                  <span style={{ fontSize: 10, color: C.gray }}>{label}</span>
-                  <span style={{ fontSize: 10, fontWeight: 800, color: C.dark }}>{pFmt(val)}</span>
-                </div>
-              ))}
-            </div>
-            {/* 차트 영역 */}
-            <div style={{ flex: 1, padding: "4px 8px 12px", minHeight: 320 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={chartData} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="gradIn" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.navy} stopOpacity={0.85} />
-                      <stop offset="100%" stopColor={C.navy} stopOpacity={0.55} />
-                    </linearGradient>
-                    <linearGradient id="gradOut" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={C.orange} stopOpacity={0.85} />
-                      <stop offset="100%" stopColor={C.orange} stopOpacity={0.55} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
-                  <XAxis dataKey="label" tick={{ fontSize: 9, fill: C.gray }} tickLine={false} axisLine={{ stroke: "#eee" }} />
-                  <YAxis yAxisId="amount" tick={{ fontSize: 9, fill: C.gray }} tickLine={false} axisLine={false} tickFormatter={chartFmt} width={55} />
-                  <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 9, fill: C.gold, fontWeight: 600 }} tickLine={false} axisLine={false} tickFormatter={chartFmt} width={55} />
-                  <Tooltip
-                    contentStyle={{ borderRadius: 10, border: "none", boxShadow: "0 4px 16px rgba(0,0,0,0.12)", fontSize: 11, padding: "10px 14px" }}
-                    formatter={(v, name) => {
-                      const color = name === "입금" ? C.navy : name === "출금" ? C.orange : C.gold;
-                      return [<span style={{ fontWeight: 800, color }}>{pFmtFull(v)}원</span>, name];
-                    }}
-                    labelStyle={{ fontWeight: 800, color: C.dark, marginBottom: 4, fontSize: 11 }}
-                    cursor={{ fill: "rgba(20,40,160,0.04)" }}
-                  />
-                  <Bar yAxisId="amount" dataKey="inAmt" fill="url(#gradIn)" name="입금" radius={[3, 3, 0, 0]}
-                    barSize={chartData.length > 30 ? 5 : chartData.length > 15 ? 8 : 14} />
-                  <Bar yAxisId="amount" dataKey="outAmt" fill="url(#gradOut)" name="출금" radius={[3, 3, 0, 0]}
-                    barSize={chartData.length > 30 ? 5 : chartData.length > 15 ? 8 : 14} />
-                  <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2}
-                    dot={{ fill: C.gold, r: 2.5, strokeWidth: 0 }}
-                    activeDot={{ fill: C.gold, r: 4, strokeWidth: 2, stroke: "#fff" }}
-                    name="잔액" />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
+
       </div>
 
       {/* ── C. P&L 테이블 ── */}
@@ -4803,501 +4561,6 @@ function Settings() {
             </span>
           ))}
         </div>
-      </div>
-    </div>
-  );
-}
-
-// ── 16-0. clobe.ai Import 시스템 (v8.0) ────────────────
-
-const LABEL_CATEGORY_MAP = {
-  "매출": "revenue", "매출 취소/환불": "revenue_refund",
-  "급여": "cost_labor", "잡급": "cost_labor",
-  "보험료": "cost_overhead", "매출원가": "cost_direct",
-  "기타 영업비용": "cost_overhead", "차량유지비": "cost_overhead",
-  "지급수수료": "cost_overhead", "임차료": "cost_overhead",
-  "통신비": "cost_overhead", "복리후생비": "cost_overhead",
-  "광고선전비": "cost_overhead", "소모품비": "cost_overhead",
-  "여비교통비": "cost_overhead", "세금과공과": "cost_overhead",
-  "주주/임원/직원 차입금 상환": "financing", "금융자산 취득": "investing",
-  "금융자산 처분": "investing", "계정 없는 출금": "unclassified",
-  "계정 없는 입금": "unclassified",
-};
-
-const FILE_PATTERNS = [
-  { type: "bank_label",    pattern: /은행[\s_]*거래내역[\s_]*라벨/, label: "은행 거래내역 라벨", icon: "🏦", priority: 1 },
-  { type: "bank",          pattern: /은행[\s_]*거래내역(?![\s_]*라벨)/, label: "은행 거래내역", icon: "🏧", priority: 2 },
-  { type: "tax_invoice",   pattern: /세금계산서/, label: "세금계산서", icon: "🧾", priority: 1 },
-  { type: "card_approval", pattern: /카드[\s_]*승인내역/, label: "카드 승인내역", icon: "💳", priority: 1 },
-  { type: "card_billing",  pattern: /카드[\s_]*청구내역/, label: "카드 청구내역 라벨", icon: "📋", priority: 2 },
-  { type: "cash_receipt",  pattern: /현금영수증/, label: "현금영수증", icon: "🧾", priority: 1 },
-];
-
-function parseMeta(wb) {
-  const ms = wb.SheetNames.find(n => n === "메타정보");
-  if (!ms) return {};
-  const ws = wb.Sheets[ms];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1 });
-  const meta = {};
-  rows.forEach(r => {
-    if (r[0] === "워크스페이스") meta.workspace = r[1];
-    if (r[0] === "다운로드 일시") meta.downloadedAt = r[1];
-    if (r[0] === "조회 기간") meta.period = r[1];
-  });
-  return meta;
-}
-
-function parseBankLabel(wb) {
-  const sn = wb.SheetNames.find(n => n.includes("통합"));
-  if (!sn) return [];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
-  return rows.map(r => ({
-    tx_date: r["거래일시"] || "",
-    tx_type: "bank",
-    amount_in: Number(r["입금"]) || 0,
-    amount_out: Number(r["출금"]) || 0,
-    account_label: r["계정 라벨"] || "",
-    category: LABEL_CATEGORY_MAP[r["계정 라벨"]] || "unclassified",
-    vendor_label: r["거래처 라벨"] || "",
-    group_label: r["그룹 라벨"] || "",
-    description: r["적요"] || "",
-    counterpart: r["거래자명"] || "",
-    bank_name: r["은행"] || "",
-    account_no: r["계좌번호"] || "",
-    account_alias: r["계좌명"] || "",
-  }));
-}
-
-function parseBankPlain(wb) {
-  const sn = wb.SheetNames.find(n => n.includes("통합"));
-  if (!sn) return [];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
-  return rows.map(r => ({
-    tx_date: r["거래일시"] || "",
-    account_no: r["계좌번호"] || "",
-    amount_in: Number(r["입금액"]) || 0,
-    amount_out: Number(r["출금액"]) || 0,
-    balance_after: Number(r["거래후잔액"]) || 0,
-  }));
-}
-
-function mergeBankBalance(labelRows, plainRows) {
-  const balMap = {};
-  plainRows.forEach(r => {
-    const key = `${r.tx_date}|${r.account_no}|${r.amount_in}|${r.amount_out}`;
-    balMap[key] = r.balance_after;
-  });
-  return labelRows.map(r => {
-    const key = `${r.tx_date}|${r.account_no}|${r.amount_in}|${r.amount_out}`;
-    return { ...r, balance_after: balMap[key] || null };
-  });
-}
-
-function parseTaxInvoice(wb) {
-  const sn = wb.SheetNames.find(n => n === "통합");
-  if (!sn) return [];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
-  return rows.map(r => {
-    const isSale = (r["매출 매입 유형"] || "").includes("매출");
-    return {
-      tx_date: r["발급일자"] || "",
-      tx_type: "tax_invoice",
-      amount_in: isSale ? (Number(r["합계금액"]) || 0) : 0,
-      amount_out: !isSale ? (Number(r["합계금액"]) || 0) : 0,
-      sale_or_buy: isSale ? "매출" : "매입",
-      supply_amount: Number(r["공급가액"]) || 0,
-      tax_amount: Number(r["세액"]) || 0,
-      counterpart: (r["거래처 상호"] || "").trim(),
-      description: r["대표 품목"] || "",
-      biz_reg_no: r["거래처 사업자등록번호"] || "",
-      category: isSale ? "revenue" : "cost_direct",
-    };
-  });
-}
-
-function parseCardApproval(wb) {
-  const sn = wb.SheetNames.find(n => n === "카드 승인내역");
-  if (!sn) return [];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
-  return rows.map(r => ({
-    tx_date: r["승인일시"] || "",
-    tx_type: "card",
-    amount_out: Number(r["승인금액(원)"]) || 0,
-    amount_in: 0,
-    card_company: r["카드사"] || "",
-    card_no: r["카드번호"] || "",
-    merchant_name: r["가맹점명"] || "",
-    merchant_biz: r["가맹점 업종"] || "",
-    tax_amount: Number(r["부가세"]) || 0,
-    description: r["가맹점명"] || "",
-    category: "cost_overhead",
-  }));
-}
-
-function parseCashReceipt(wb) {
-  const sn = wb.SheetNames.find(n => n === "통합");
-  if (!sn) return [];
-  const rows = XLSX.utils.sheet_to_json(wb.Sheets[sn], { defval: "" });
-  return rows.map(r => {
-    const isSale = (r["구분"] || "").includes("매출");
-    return {
-      tx_date: r["사용일시"] || "",
-      tx_type: "cash_receipt",
-      amount_in: isSale ? (Number(r["총금액"]) || 0) : 0,
-      amount_out: !isSale ? (Number(r["총금액"]) || 0) : 0,
-      sale_or_buy: isSale ? "매출" : "매입",
-      supply_amount: Number(r["공급가액"]) || 0,
-      tax_amount: Number(r["부가세"]) || 0,
-      counterpart: r["거래처명"] || "",
-      category: isSale ? "revenue" : "cost_overhead",
-    };
-  });
-}
-
-function FinancialImportPage({ onImportComplete }) {
-  const confirm = useConfirm();
-  const [files, setFiles] = useState([]);
-  const [parsedFiles, setParsedFiles] = useState([]);
-  const [importing, setImporting] = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const [dupMode, setDupMode] = useState("skip");
-  const [importHistory, setImportHistory] = useState([]);
-  const [dragOver, setDragOver] = useState(false);
-  const fileRef = useRef(null);
-
-  // Import 이력 로드
-  useEffect(() => {
-    (async () => {
-      const { data } = await supabase
-        .from("financial_transactions")
-        .select("import_batch, source_file, created_at")
-        .not("import_batch", "is", null)
-        .order("created_at", { ascending: false });
-      if (data) {
-        const batches = {};
-        data.forEach(d => {
-          if (!batches[d.import_batch]) batches[d.import_batch] = { batch: d.import_batch, file: d.source_file, date: d.created_at, count: 0 };
-          batches[d.import_batch].count++;
-        });
-        setImportHistory(Object.values(batches).slice(0, 20));
-      }
-    })();
-  }, [importResult]);
-
-  const detectFileType = (fileName) => {
-    for (const fp of FILE_PATTERNS) {
-      if (fp.pattern.test(fileName)) return fp;
-    }
-    return null;
-  };
-
-  const handleFiles = async (fileList) => {
-    const newFiles = Array.from(fileList).filter(f => f.name.endsWith(".xlsx") || f.name.endsWith(".xls"));
-    if (!newFiles.length) return;
-
-    setImportResult(null);
-    const results = [];
-
-    // 1차: 모든 파일 파싱
-    const parsed = {};
-    for (const f of newFiles) {
-      const det = detectFileType(f.name);
-      if (!det) continue;
-
-      const buf = await f.arrayBuffer();
-      const wb = XLSX.read(buf, { type: "array" });
-      const meta = parseMeta(wb);
-
-      let rows = [];
-      if (det.type === "bank_label") rows = parseBankLabel(wb);
-      else if (det.type === "bank") rows = parseBankPlain(wb);
-      else if (det.type === "tax_invoice") rows = parseTaxInvoice(wb);
-      else if (det.type === "card_approval") rows = parseCardApproval(wb);
-      else if (det.type === "cash_receipt") rows = parseCashReceipt(wb);
-
-      parsed[det.type] = { rows, meta, file: f, det };
-      results.push({ ...det, count: rows.length, meta, file: f, status: rows.length > 0 ? "ready" : "empty" });
-    }
-
-    // 2차: 은행 라벨 + 비라벨 잔액 머지
-    if (parsed.bank_label && parsed.bank) {
-      parsed.bank_label.rows = mergeBankBalance(parsed.bank_label.rows, parsed.bank.rows);
-      const bankIdx = results.findIndex(r => r.type === "bank");
-      if (bankIdx >= 0) results[bankIdx].status = "merged";
-    }
-
-    setFiles(newFiles);
-    setParsedFiles(results);
-  };
-
-  const handleDrop = (e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); };
-  const handleDragOver = (e) => { e.preventDefault(); setDragOver(true); };
-
-  const doImport = async () => {
-    setImporting(true);
-    setImportResult(null);
-
-    try {
-      const batchId = `batch_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-      let totalInserted = 0;
-
-      // 파싱된 모든 파일 재구성
-      const allFiles = Array.from(files);
-      const allTransactions = [];
-
-      for (const f of allFiles) {
-        const det = detectFileType(f.name);
-        if (!det) continue;
-        const buf = await f.arrayBuffer();
-        const wb = XLSX.read(buf, { type: "array" });
-
-        let rows = [];
-        if (det.type === "bank_label") {
-          rows = parseBankLabel(wb);
-          // 비라벨 파일에서 잔액 머지
-          const plainFile = allFiles.find(ff => detectFileType(ff.name)?.type === "bank");
-          if (plainFile) {
-            const buf2 = await plainFile.arrayBuffer();
-            const wb2 = XLSX.read(buf2, { type: "array" });
-            const plainRows = parseBankPlain(wb2);
-            rows = mergeBankBalance(rows, plainRows);
-          }
-        } else if (det.type === "bank") {
-          continue; // 라벨 버전에서 처리됨
-        } else if (det.type === "tax_invoice") rows = parseTaxInvoice(wb);
-        else if (det.type === "card_approval") rows = parseCardApproval(wb);
-        else if (det.type === "card_billing") continue; // 데이터 없으면 스킵
-        else if (det.type === "cash_receipt") rows = parseCashReceipt(wb);
-
-        rows.forEach(r => {
-          allTransactions.push({
-            ...r,
-            source_file: f.name,
-            import_batch: batchId,
-          });
-        });
-      }
-
-      // 중복 체크 + 기존 데이터 처리
-      const skipFiles = new Set();
-      const uniqueFiles = [...new Set(allTransactions.map(t => t.source_file))];
-
-      if (dupMode === "skip") {
-        for (const sf of uniqueFiles) {
-          const { count } = await supabase
-            .from("financial_transactions")
-            .select("id", { count: "exact", head: true })
-            .eq("source_file", sf);
-          if (count > 0) skipFiles.add(sf);
-        }
-      } else if (dupMode === "overwrite") {
-        for (const sf of uniqueFiles) {
-          await supabase.from("financial_transactions").delete().eq("source_file", sf);
-        }
-      }
-
-      const finalRows = allTransactions.filter(t => !skipFiles.has(t.source_file));
-      const totalSkippedCount = allTransactions.length - finalRows.length;
-
-      for (let i = 0; i < finalRows.length; i += 50) {
-        const chunk = finalRows.slice(i, i + 50);
-        const { error } = await supabase.from("financial_transactions").insert(chunk);
-        if (error) {
-          console.error("Insert error:", error);
-          throw error;
-        }
-        totalInserted += chunk.length;
-      }
-
-      // monthly_summary 갱신 (RPC 호출)
-      const months = [...new Set(finalRows.map(r => {
-        const d = r.tx_date?.slice(0, 7);
-        return d;
-      }).filter(Boolean))];
-      for (const m of months) {
-        await supabase.rpc("refresh_monthly_summary", { target_month: m });
-      }
-
-      setImportResult({
-        success: true,
-        inserted: totalInserted,
-        skipped: totalSkippedCount,
-        batchId,
-        months,
-      });
-      onImportComplete?.(); // ★ Phase B: 대시보드 재무 KPI 갱신
-    } catch (err) {
-      setImportResult({ success: false, error: err.message || "Import 실패" });
-    } finally {
-      setImporting(false);
-    }
-  };
-
-  const handleDeleteBatch = async (batchId) => {
-    if (!(await confirm("이 Import 배치의 모든 데이터를 삭제하시겠습니까?", "삭제 후 복구할 수 없습니다.", { okLabel: "삭제", okColor: C.error }))) return;
-    await supabase.from("financial_transactions").delete().eq("import_batch", batchId);
-    setImportHistory(h => h.filter(x => x.batch !== batchId));
-  };
-
-  const statusIcon = (s) => s === "ready" ? "✅" : s === "empty" ? "⬜" : s === "merged" ? "🔗" : "❓";
-  const statusText = (s) => s === "ready" ? "감지됨" : s === "empty" ? "데이터 없음" : s === "merged" ? "라벨 버전으로 대체" : "";
-
-  const totalRows = parsedFiles.filter(f => f.status === "ready").reduce((s, f) => s + f.count, 0);
-  const periods = parsedFiles.filter(f => f.meta?.period).map(f => f.meta.period);
-  const periodText = periods.length > 0 ? periods[0] : "";
-
-  return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-        <div>
-          <h2 style={{ fontSize: 20, fontWeight: 900, color: C.navy, margin: 0 }}>📥 clobe.ai 데이터 Import</h2>
-          <p style={{ fontSize: 13, color: C.gray, margin: "4px 0 0" }}>clobe.ai에서 다운로드한 엑셀 파일을 업로드하여 재무 데이터를 가져옵니다</p>
-        </div>
-      </div>
-
-      {/* 파일 업로드 영역 */}
-      <div
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onDragLeave={() => setDragOver(false)}
-        onClick={() => fileRef.current?.click()}
-        style={{
-          border: `2.5px dashed ${dragOver ? C.gold : C.border}`,
-          borderRadius: 16,
-          padding: "40px 24px",
-          textAlign: "center",
-          cursor: "pointer",
-          background: dragOver ? "#FFF8E1" : C.cardBg,
-          transition: "all 0.2s",
-          marginBottom: 20,
-        }}
-      >
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept=".xlsx,.xls"
-          style={{ display: "none" }}
-          onChange={e => handleFiles(e.target.files)}
-        />
-        <div style={{ fontSize: 40, marginBottom: 12 }}>📂</div>
-        <div style={{ fontSize: 15, fontWeight: 800, color: C.navy, marginBottom: 6 }}>파일을 드래그하거나 클릭하여 업로드</div>
-        <div style={{ fontSize: 12, color: C.gray }}>clobe.ai에서 다운로드한 엑셀 파일 6종 (은행거래내역, 세금계산서, 카드승인내역, 현금영수증 등)</div>
-      </div>
-
-      {/* 파싱 결과 */}
-      {parsedFiles.length > 0 && (
-        <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, padding: 20, marginBottom: 20 }}>
-          <div style={{ fontSize: 14, fontWeight: 900, color: C.navy, marginBottom: 16, display: "flex", alignItems: "center", gap: 8 }}>
-            📊 파일 감지 결과
-            {periodText && <span style={{ fontSize: 12, fontWeight: 600, color: C.gray, background: C.lightGray, padding: "3px 10px", borderRadius: 20 }}>{periodText}</span>}
-          </div>
-
-          <div style={{ display: "grid", gap: 8 }}>
-            {FILE_PATTERNS.map(fp => {
-              const found = parsedFiles.find(p => p.type === fp.type);
-              return (
-                <div key={fp.type} style={{
-                  display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
-                  borderRadius: 10, background: found ? (found.status === "ready" ? "#E8F5E9" : found.status === "merged" ? "#E3F2FD" : "#FAFAFA") : "#FAFAFA",
-                  border: `1px solid ${found?.status === "ready" ? "#A5D6A7" : found?.status === "merged" ? "#90CAF9" : "#EEE"}`,
-                }}>
-                  <span style={{ fontSize: 20 }}>{fp.icon}</span>
-                  <div style={{ flex: 1 }}>
-                    <span style={{ fontSize: 13, fontWeight: 700, color: C.dark }}>{fp.label}</span>
-                    {found && found.count > 0 && <span style={{ marginLeft: 8, fontSize: 12, fontWeight: 800, color: C.navy }}>{found.count}건</span>}
-                  </div>
-                  <span style={{ fontSize: 13 }}>
-                    {found ? `${statusIcon(found.status)} ${statusText(found.status)}` : "⬜ 미업로드"}
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* 중복 처리 + Import 버튼 */}
-          <div style={{ marginTop: 20, display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: C.dark }}>중복 처리:</span>
-              <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                <input type="radio" checked={dupMode === "skip"} onChange={() => setDupMode("skip")} /> 건너뛰기
-              </label>
-              <label style={{ fontSize: 13, display: "flex", alignItems: "center", gap: 4, cursor: "pointer" }}>
-                <input type="radio" checked={dupMode === "overwrite"} onChange={() => setDupMode("overwrite")} /> 덮어쓰기
-              </label>
-            </div>
-
-            <div style={{ display: "flex", gap: 10 }}>
-              <button onClick={() => { setFiles([]); setParsedFiles([]); setImportResult(null); }}
-                style={{ padding: "10px 20px", borderRadius: 10, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 13, fontWeight: 700, cursor: "pointer", color: C.gray }}>
-                초기화
-              </button>
-              <button onClick={doImport} disabled={importing || totalRows === 0}
-                style={{
-                  padding: "10px 28px", borderRadius: 10, border: "none", fontSize: 14, fontWeight: 900, cursor: totalRows > 0 && !importing ? "pointer" : "not-allowed",
-                  background: totalRows > 0 ? C.navy : C.lightGray, color: totalRows > 0 ? C.white : C.gray,
-                  display: "flex", alignItems: "center", gap: 6,
-                }}>
-                {importing ? "⏳ Import 중..." : `📥 Import 실행 (${totalRows}건)`}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Import 결과 */}
-      {importResult && (
-        <div style={{
-          background: importResult.success ? "#E8F5E9" : "#FFEBEE",
-          borderRadius: 14, padding: 20, marginBottom: 20,
-          border: `1px solid ${importResult.success ? "#A5D6A7" : "#EF9A9A"}`,
-        }}>
-          {importResult.success ? (
-            <>
-              <div style={{ fontSize: 16, fontWeight: 900, color: C.success, marginBottom: 8 }}>✅ Import 완료!</div>
-              <div style={{ fontSize: 13, color: C.dark, lineHeight: 1.8 }}>
-                총 <strong>{importResult.inserted}건</strong> 저장 완료
-                {importResult.skipped > 0 && <> · <span style={{ color: C.orange }}>{importResult.skipped}건 건너뜀 (중복)</span></>}
-                <br />
-                대상 월: <strong>{importResult.months?.join(", ")}</strong> · monthly_summary 갱신 완료
-              </div>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 16, fontWeight: 900, color: C.error, marginBottom: 8 }}>❌ Import 실패</div>
-              <div style={{ fontSize: 13, color: C.dark }}>{importResult.error}</div>
-            </>
-          )}
-        </div>
-      )}
-
-      {/* Import 이력 */}
-      <div style={{ background: C.white, borderRadius: 14, border: `1px solid ${C.border}`, padding: 20 }}>
-        <div style={{ fontSize: 14, fontWeight: 900, color: C.navy, marginBottom: 16 }}>📜 Import 이력</div>
-        {importHistory.length === 0 ? (
-          <div style={{ padding: 24, textAlign: "center", color: C.gray, fontSize: 13 }}>Import 이력이 없습니다</div>
-        ) : (
-          <div style={{ display: "grid", gap: 6 }}>
-            {importHistory.map(h => (
-              <div key={h.batch} style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
-                borderRadius: 10, background: C.cardBg, border: `1px solid ${C.lightGray}`,
-              }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: C.dark }}>
-                    {new Date(h.date).toLocaleString("ko-KR")}
-                    <span style={{ marginLeft: 10, fontSize: 12, fontWeight: 800, color: C.navy, background: "#E3F2FD", padding: "2px 8px", borderRadius: 10 }}>{h.count}건</span>
-                  </div>
-                  <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{h.batch}</div>
-                </div>
-                <button onClick={() => handleDeleteBatch(h.batch)}
-                  style={{ padding: "6px 14px", borderRadius: 8, border: `1px solid ${C.error}`, background: "transparent", color: C.error, fontSize: 12, fontWeight: 700, cursor: "pointer" }}>
-                  🗑 삭제
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
     </div>
   );
@@ -11570,7 +10833,7 @@ const PAGE_LABELS = {
   contract: "계약서", history: "계약이력", settings: "계약서 조항변경",
   profit_summary: "분석대시보드", profit_site_pl: "사업장 PL", profit_cost_input: "비용 입력",
   payroll: "급여대장", monthly_parking: "월주차 관리", profit_comparison: "비교 분석",
-  profit_alloc: "배부 설정", profit_import: "데이터 Import", valet_fee: "발렛비 관리",
+  profit_alloc: "배부 설정", valet_fee: "발렛비 관리",
   site_management: "사업장 관리", daily_report: "현장 일보",
   closing_report: "마감보고현황", attendance: "근태현황", full_calendar: "전체 캘린더",
   salary_calc: "인건비 견적", bug_reports: "오류 보고",
@@ -12274,13 +11537,6 @@ function MainApp() {
   const [valetFeeData, setValetFeeData] = useState({}); // ★ 현장일보 확정 발렛비
   const [siteDetailsMap, setSiteDetailsMap] = useState({}); // ★ 사업장 상세(월계약금 등)
 
-  // ★ Phase B: monthly_summary 로딩 (재무 KPI + 기간연산)
-  const [monthlySummary, setMonthlySummary] = useState([]);
-  const loadMonthlySummary = async () => {
-    const { data } = await supabase.from("monthly_summary").select("*").order("month", { ascending: false });
-    if (data) setMonthlySummary(data);
-  };
-
   // ★ 현장일보 대시보드 연동 데이터
   const [dailyReportSummary, setDailyReportSummary] = useState({ todayReports: [], monthReports: [], staffMap: {} });
   const loadDailyReportSummary = async () => {
@@ -12304,18 +11560,6 @@ function MainApp() {
       }
       setDailyReportSummary({ todayReports, monthReports: reportList, staffMap: sMap });
     } catch (e) { console.error("loadDailyReportSummary error:", e); }
-  };
-
-  // ★ Phase C: 차트용 은행거래 데이터
-  const [chartTransactions, setChartTransactions] = useState([]);
-  const loadChartTransactions = async () => {
-    const { data } = await supabase
-      .from("financial_transactions")
-      .select("tx_date, amount_in, amount_out, balance_after, tx_type")
-      .eq("tx_type", "bank")
-      .order("tx_date", { ascending: true })
-      .limit(3000);
-    if (data) setChartTransactions(data);
   };
 
   // ★ Phase C: 비용입력 DB 저장 (site_revenue - 발렛비)
@@ -12405,7 +11649,6 @@ function MainApp() {
     laborData, setLaborData,
     valetFeeData,
     siteDetailsMap,
-    monthlySummary, chartTransactions,
     saveRevenueToDB, saveOverheadToDB, saveLaborToDB, saveDetailToDB,
     monthlyParkingData,
     dailyReportSummary, loadDailyReportSummary,
@@ -12418,7 +11661,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { (async () => { await loadSiteDetails(); loadEmployees(); loadMonthlySummary(); loadChartTransactions(); loadCostData(); loadMonthlyParking(); loadDailyReportSummary(); })(); }, []);
+  useEffect(() => { (async () => { await loadSiteDetails(); loadEmployees(); loadCostData(); loadMonthlyParking(); loadDailyReportSummary(); })(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
@@ -12463,7 +11706,6 @@ function MainApp() {
     { key: "valet_fee", icon: "🎫", label: "발렛비 관리" },
     { key: "profit_comparison", icon: "📈", label: "비교 분석" },
     { key: "profit_alloc", icon: "⚙️", label: "배부 설정" },
-    { key: "profit_import", icon: "📥", label: "데이터 Import" },
   ];
 
   const siteNavItems = isCrewRole
@@ -12643,7 +11885,6 @@ function MainApp() {
         {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" profitState={profitState} />}
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
         {page === "profit_alloc" && <ProfitabilityPage employees={employees} subPage="alloc_settings" profitState={profitState} />}
-        {page === "profit_import" && <FinancialImportPage onImportComplete={() => { loadMonthlySummary(); loadChartTransactions(); }} />}
         {page === "monthly_parking" && <MonthlyParkingPage employees={employees} onDataChange={loadMonthlyParking} />}
         {page === "payroll" && <PayrollPage employees={employees} profitState={profitState} />}
         {page === "valet_fee" && <ValetFeePage profitState={profitState} onNavigate={(pg, date, site) => { if (date) setJumpDate(date); if (site) setJumpSite(site); setPage(pg); }} />}
