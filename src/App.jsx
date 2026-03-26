@@ -4603,7 +4603,7 @@ const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
 function ProfitabilityPage({ employees, subPage, profitState }) {
   const confirm = useConfirm();
-  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData } = profitState;
+  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData, cashflowItems, setCashflowItems, saveCashflowItem, deleteCashflowItem, loadCashflow } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
@@ -5017,7 +5017,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
         <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
           <input type="month" value={currentMonth} onChange={e => setCurrentMonth(e.target.value)} style={{ ...inputStyle, width: 160 }} />
           <button onClick={copyPrevMonth} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>📋 이전달 복사</button>
-          {[["revenue", "💰 사업장 매출"], ["contract", "📄 계약현황"], ["overhead", "🏢 간접비"]].map(([k, v]) => (
+          {[["revenue", "💰 사업장 매출"], ["contract", "📄 계약현황"], ["overhead", "🏢 간접비"], ["inflow", "📈 현금유입"]].map(([k, v]) => (
             <button key={k} onClick={() => setCostTab(k)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${costTab === k ? C.navy : C.border}`, background: costTab === k ? C.navy : "#fff", color: costTab === k ? "#fff" : C.gray }}>{v}</button>
           ))}
           {savingStatus && (
@@ -11536,6 +11536,8 @@ function MainApp() {
   const [laborData, setLaborData] = useState({});       // ★ 인건비(고정/대체)
   const [valetFeeData, setValetFeeData] = useState({}); // ★ 현장일보 확정 발렛비
   const [siteDetailsMap, setSiteDetailsMap] = useState({}); // ★ 사업장 상세(월계약금 등)
+  const [cashflowItems, setCashflowItems] = useState({}); // ★ v10: 현금흐름표 { "2026-03": [...items] }
+  const [cashflowBalances, setCashflowBalances] = useState({}); // ★ v10: 전월이월 { "2026-03": { balance_062, balance_928, card_balance } }
 
   // ★ 현장일보 대시보드 연동 데이터
   const [dailyReportSummary, setDailyReportSummary] = useState({ todayReports: [], monthReports: [], staffMap: {} });
@@ -11618,6 +11620,55 @@ function MainApp() {
 
   // ★ 사업장 상세정보 로딩 (월계약금 등)
   const loadSiteDetails = async () => {
+
+  // ★ v10: 현금흐름표 데이터 로딩
+  const loadCashflow = async () => {
+    try {
+      const { data: items } = await supabase.from("cashflow_items").select("*").order("sort_order");
+      if (items && items.length > 0) {
+        const map = {};
+        items.forEach(r => {
+          if (!map[r.month]) map[r.month] = [];
+          map[r.month].push(r);
+        });
+        setCashflowItems(map);
+      }
+      const { data: bals } = await supabase.from("cashflow_balances").select("*");
+      if (bals) {
+        const bMap = {};
+        bals.forEach(b => { bMap[b.month] = b; });
+        setCashflowBalances(bMap);
+      }
+    } catch (e) { console.error("loadCashflow error:", e); }
+  };
+
+  // ★ v10: 현금흐름 항목 저장 (upsert)
+  const saveCashflowItem = useCallback(async (item) => {
+    const { id, created_at, ...rest } = item;
+    rest.updated_at = new Date().toISOString();
+    if (id) {
+      const { error } = await supabase.from("cashflow_items").update(rest).eq("id", id);
+      if (error) console.error("cashflow save error:", error);
+    } else {
+      const { data, error } = await supabase.from("cashflow_items").insert(rest).select();
+      if (error) console.error("cashflow insert error:", error);
+      return data?.[0];
+    }
+    return item;
+  }, []);
+
+  // ★ v10: 현금흐름 항목 삭제
+  const deleteCashflowItem = useCallback(async (id) => {
+    const { error } = await supabase.from("cashflow_items").delete().eq("id", id);
+    if (error) console.error("cashflow delete error:", error);
+  }, []);
+
+  // ★ v10: 전월이월 저장
+  const saveCashflowBalance = useCallback(async (month, field, value) => {
+    const { error } = await supabase.from("cashflow_balances")
+      .upsert({ month, [field]: Math.round(value) }, { onConflict: "month" });
+    if (error) console.error("cashflow_balances save error:", error);
+  }, []);
     const { data } = await supabase.from("site_details").select("*");
     if (data) {
       const map = {};
@@ -11652,6 +11703,8 @@ function MainApp() {
     saveRevenueToDB, saveOverheadToDB, saveLaborToDB, saveDetailToDB,
     monthlyParkingData,
     dailyReportSummary, loadDailyReportSummary,
+    cashflowItems, setCashflowItems, cashflowBalances, setCashflowBalances,
+    saveCashflowItem, deleteCashflowItem, saveCashflowBalance, loadCashflow,
   };
 
   // Supabase에서 직원 데이터 로드
@@ -11661,7 +11714,7 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { (async () => { await loadSiteDetails(); loadEmployees(); loadCostData(); loadMonthlyParking(); loadDailyReportSummary(); })(); }, []);
+  useEffect(() => { (async () => { await loadSiteDetails(); loadEmployees(); loadCostData(); loadMonthlyParking(); loadDailyReportSummary(); loadCashflow(); })(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
