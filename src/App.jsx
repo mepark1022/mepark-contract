@@ -4603,7 +4603,7 @@ const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
 function ProfitabilityPage({ employees, subPage, profitState }) {
   const confirm = useConfirm();
-  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData, cashflowItems, setCashflowItems, saveCashflowItem, deleteCashflowItem, loadCashflow } = profitState;
+  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData, cashflowItems, setCashflowItems, cashflowBalances, saveCashflowItem, deleteCashflowItem, loadCashflow } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
@@ -5027,6 +5027,114 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
             </span>
           )}
         </div>
+
+        {/* ═══ P6: 현금흐름 요약패널 (inflow/outflow/card 탭 활성화 시) ═══ */}
+        {["inflow", "outflow", "card"].includes(costTab) && (() => {
+          const mi = (cashflowItems[currentMonth] || []);
+          const inflowItems = mi.filter(it => it.flow_type === "inflow");
+          const outflowItems = mi.filter(it => it.flow_type === "outflow");
+          const cardItems = mi.filter(it => it.flow_type === "card");
+          const cardPurchases = cardItems.filter(it => it.cost_group !== "billing");
+          const cardBillings = cardItems.filter(it => it.cost_group === "billing");
+
+          const inflowExp = inflowItems.reduce((s, it) => s + toNum(it.expected_amount), 0);
+          const inflowAct = inflowItems.reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const outflowExp = outflowItems.reduce((s, it) => s + toNum(it.expected_amount), 0);
+          const outflowAct = outflowItems.reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const cardTotal = cardPurchases.reduce((s, it) => s + toNum(it.expected_amount), 0);
+          const cardBillAct = cardBillings.reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const cardBillExp = cardBillings.reduce((s, it) => s + toNum(it.expected_amount), 0);
+
+          const netCash = inflowAct - outflowAct - cardTotal;
+          const netExpected = inflowExp - outflowExp - cardTotal;
+          const totalOutActual = outflowAct + cardTotal;
+          const totalOutExpected = outflowExp + cardTotal;
+          const barMax = Math.max(inflowAct, totalOutActual, 1);
+          const inflowPct = Math.round((inflowAct / barMax) * 100);
+          const outflowPct = Math.round((totalOutActual / barMax) * 100);
+
+          const flowStatus = (act, exp, doneLabel, partLabel, noneLabel) => {
+            if (act <= 0 && exp > 0) return { label: noneLabel, color: C.error };
+            if (exp > 0 && act < exp) return { label: partLabel, color: C.orange };
+            if (exp > 0 && act >= exp) return { label: doneLabel, color: C.success };
+            return { label: "—", color: C.gray };
+          };
+          const inflowSt = flowStatus(inflowAct, inflowExp, "입금완료", "일부입금", "미입금");
+          const outflowSt = flowStatus(outflowAct, outflowExp, "지급완료", "일부지급", "미지급");
+          const cardSt = cardBillings.length === 0 ? { label: "—", color: C.gray } : flowStatus(cardBillAct, cardBillExp, "정산완료", "일부정산", "미정산");
+
+          const bal = cashflowBalances[currentMonth] || {};
+          const prevBalance = toNum(bal.balance_062) + toNum(bal.balance_928);
+
+          return (
+            <div style={{ ...pcardStyle, marginBottom: 16, padding: 16, background: "linear-gradient(135deg, #f8fafc 0%, #f0f4ff 100%)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 900, color: C.navy }}>📊 {currentMonth} 현금흐름 요약</div>
+                {prevBalance > 0 && (
+                  <div style={{ fontSize: 10, color: C.gray, fontWeight: 600 }}>전월이월 {pFmtFull(prevBalance)}원</div>
+                )}
+              </div>
+
+              {/* 3블록 + 순현금흐름 */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10, marginBottom: 12 }}>
+                {/* 현금유입 */}
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 10px", borderLeft: `4px solid ${C.success}` }}>
+                  <div style={{ fontSize: 10, color: C.gray, fontWeight: 700, marginBottom: 4 }}>📈 현금유입</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, fontFamily: "monospace", color: C.success }}>{pFmtFull(inflowAct)}<span style={{ fontSize: 10, fontWeight: 600 }}>원</span></div>
+                  <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>예상 {pFmtFull(inflowExp)}</div>
+                  <span style={{ display: "inline-block", marginTop: 4, fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: inflowSt.color === C.success ? "#dcfce7" : inflowSt.color === C.orange ? "#ffedd5" : "#fee2e2", color: inflowSt.color }}>{inflowSt.label}</span>
+                </div>
+                {/* 현금유출 */}
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 10px", borderLeft: `4px solid ${C.error}` }}>
+                  <div style={{ fontSize: 10, color: C.gray, fontWeight: 700, marginBottom: 4 }}>📉 현금유출</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, fontFamily: "monospace", color: C.error }}>{pFmtFull(outflowAct)}<span style={{ fontSize: 10, fontWeight: 600 }}>원</span></div>
+                  <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>예상 {pFmtFull(outflowExp)}</div>
+                  <span style={{ display: "inline-block", marginTop: 4, fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: outflowSt.color === C.success ? "#dcfce7" : outflowSt.color === C.orange ? "#ffedd5" : "#fee2e2", color: outflowSt.color }}>{outflowSt.label}</span>
+                </div>
+                {/* 카드 */}
+                <div style={{ background: "#fff", borderRadius: 10, padding: "12px 10px", borderLeft: `4px solid ${C.navy}` }}>
+                  <div style={{ fontSize: 10, color: C.gray, fontWeight: 700, marginBottom: 4 }}>💳 카드결제</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, fontFamily: "monospace", color: C.navy }}>{pFmtFull(cardTotal)}<span style={{ fontSize: 10, fontWeight: 600 }}>원</span></div>
+                  <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>정산 {pFmtFull(cardBillAct)}/{pFmtFull(cardBillExp)}</div>
+                  <span style={{ display: "inline-block", marginTop: 4, fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: cardSt.color === C.success ? "#dcfce7" : cardSt.color === C.orange ? "#ffedd5" : cardSt.color === C.error ? "#fee2e2" : "#f5f5f5", color: cardSt.color }}>{cardSt.label}</span>
+                </div>
+                {/* 순현금흐름 */}
+                <div style={{ background: netCash >= 0 ? "#f0fdf4" : "#fef2f2", borderRadius: 10, padding: "12px 10px", borderLeft: `4px solid ${netCash >= 0 ? C.success : C.error}` }}>
+                  <div style={{ fontSize: 10, color: C.gray, fontWeight: 700, marginBottom: 4 }}>💰 순현금흐름</div>
+                  <div style={{ fontSize: 14, fontWeight: 900, fontFamily: "monospace", color: netCash >= 0 ? C.success : C.error }}>{netCash >= 0 ? "+" : ""}{pFmtFull(netCash)}<span style={{ fontSize: 10, fontWeight: 600 }}>원</span></div>
+                  <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>예상 {netExpected >= 0 ? "+" : ""}{pFmtFull(netExpected)}</div>
+                  <span style={{ display: "inline-block", marginTop: 4, fontSize: 9, fontWeight: 800, padding: "1px 6px", borderRadius: 4, background: netCash >= 0 ? "#dcfce7" : "#fee2e2", color: netCash >= 0 ? C.success : C.error }}>{netCash >= 0 ? "흑자" : "적자"}</span>
+                </div>
+              </div>
+
+              {/* 유입 vs 유출 비율 바 */}
+              <div style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 10 }}>
+                <span style={{ color: C.success, fontWeight: 700, width: 28, textAlign: "right" }}>유입</span>
+                <div style={{ flex: 1, height: 16, background: "#f1f5f9", borderRadius: 8, overflow: "hidden", position: "relative" }}>
+                  <div style={{ position: "absolute", left: 0, top: 0, height: "100%", width: `${inflowPct}%`, background: C.success, borderRadius: 8, opacity: 0.7, transition: "width 0.5s" }} />
+                  <div style={{ position: "absolute", right: 0, top: 0, height: "100%", width: `${outflowPct}%`, background: C.error, borderRadius: 8, opacity: 0.7, transition: "width 0.5s" }} />
+                  {inflowAct > 0 && <span style={{ position: "absolute", left: 6, top: 1, fontSize: 9, fontWeight: 800, color: "#fff" }}>{pFmtFull(inflowAct)}</span>}
+                  {totalOutActual > 0 && <span style={{ position: "absolute", right: 6, top: 1, fontSize: 9, fontWeight: 800, color: "#fff" }}>{pFmtFull(totalOutActual)}</span>}
+                </div>
+                <span style={{ color: C.error, fontWeight: 700, width: 28 }}>유출</span>
+              </div>
+
+              {/* 항목 건수 요약 */}
+              <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
+                {[
+                  { label: "유입", count: inflowItems.length, color: C.success },
+                  { label: "유출", count: outflowItems.length, color: C.error },
+                  { label: "카드결제", count: cardPurchases.length, color: C.navy },
+                  { label: "카드정산", count: cardBillings.length, color: C.orange },
+                ].map((g, i) => (
+                  <span key={i} style={{ fontSize: 9, padding: "2px 8px", borderRadius: 4, background: "#e8eaf6", color: C.dark, fontWeight: 700 }}>
+                    {g.label} <span style={{ color: g.color, fontWeight: 900 }}>{g.count}</span>건
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {/* ═══ 사업장 매출 탭 ═══ */}
         {costTab === "revenue" && (
