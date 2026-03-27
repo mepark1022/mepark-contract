@@ -7445,12 +7445,12 @@ function ValetFeePage({ profitState, onNavigate }) {
   const kpi = useMemo(() => {
     const [y, m] = valetMonth.split("-").map(Number);
     const cnt = new Date(y, m, 0).getDate();
-    let bizDays = 0, total = 0, confirmed = 0, submitted = 0;
-    for (let i = 1; i <= cnt; i++) {
-      const d = `${valetMonth}-${String(i).padStart(2, "0")}`;
-      const dow = new Date(d).getDay();
-      if (dow !== 0 && !isHoliday(d)) bizDays++;
-    }
+    // 365일 운영: 오늘까지(또는 월말까지) 전체 일수 = 영업일
+    const today = new Date(kstDate());
+    const monthEnd = new Date(y, m, 0);
+    const lastDay = today < monthEnd ? today.getDate() : cnt;
+    let bizDays = lastDay;
+    let total = 0, confirmed = 0, submitted = 0;
     valetReports.forEach(r => {
       total += toNum(r.valet_amount);
       if (r.status === "confirmed") confirmed += toNum(r.valet_amount);
@@ -7482,11 +7482,12 @@ function ValetFeePage({ profitState, onNavigate }) {
     weekend: "#FAFBFF", weekendText: "#9E9E9E" };
 
   const statusStyle = (status, isHol, dow) => {
-    if (isHol || dow === 0) return { bg: C2.holiday, text: C2.holidayText, border: "#E0E0E0" };
-    if (dow === 6) return { bg: C2.weekend, text: C2.weekendText, border: "#E8EAF6" };
-    if (!status) return { bg: C2.missing, text: C2.missingText, border: C2.missingBorder };
+    // 일보가 있으면 요일 무관하게 상태 기준 (365일 운영)
     if (status === "confirmed") return { bg: C2.confirmed, text: C2.confirmedText, border: C2.confirmedBorder };
-    return { bg: C2.submitted, text: C2.submittedText, border: C2.submittedBorder };
+    if (status === "submitted") return { bg: C2.submitted, text: C2.submittedText, border: C2.submittedBorder };
+    // 일보 없는 경우: 공휴일→회색, 그 외→미제출
+    if (isHol) return { bg: C2.holiday, text: C2.holidayText, border: "#E0E0E0" };
+    return { bg: C2.missing, text: C2.missingText, border: C2.missingBorder };
   };
 
   const DOW_KR = ["일", "월", "화", "수", "목", "금", "토"];
@@ -7587,16 +7588,14 @@ function ValetFeePage({ profitState, onNavigate }) {
                       const rep = reportByDateSite[`${d}_${site.code}`];
                       const st = statusStyle(rep?.status, hol, dow);
                       const amt = toNum(rep?.valet_amount);
-                      const isBiz = dow !== 0 && !hol;
+                      const isPast = d <= todayStr;
                       return (
                         <td key={d}
-                          onClick={() => { if (rep || isBiz) onNavigate("daily_report", d, site.code); }}
+                          onClick={() => { if (rep || isPast) onNavigate("daily_report", d, site.code); }}
                           style={{ padding: "2px 1px", textAlign: "center", background: st.bg,
-                            border: `1px solid ${C.border}`, cursor: (rep || isBiz) ? "pointer" : "default",
+                            border: `1px solid ${C.border}`, cursor: (rep || isPast) ? "pointer" : "default",
                             width: 38, minWidth: 38, verticalAlign: "middle" }}>
-                          {hol || dow === 0 ? (
-                            <span style={{ fontSize: 8, color: "#ccc" }}>—</span>
-                          ) : rep ? (
+                          {rep ? (
                             <div style={{ lineHeight: 1.3 }}>
                               <div style={{ fontSize: 10, fontWeight: 900, color: st.text, fontFamily: "'Outfit',sans-serif", whiteSpace: "nowrap" }}>
                                 {fmtW(amt)}
@@ -7605,7 +7604,7 @@ function ValetFeePage({ profitState, onNavigate }) {
                                 {rep.status === "confirmed" ? "✅" : "⚠️"}{rep.valet_count || 0}
                               </div>
                             </div>
-                          ) : isBiz ? (
+                          ) : isPast ? (
                             <span style={{ fontSize: 11, color: C2.missingText }}>✕</span>
                           ) : (
                             <span style={{ fontSize: 8, color: "#ddd" }}>—</span>
@@ -7748,19 +7747,19 @@ function ValetFeePage({ profitState, onNavigate }) {
               const hol = isHoliday(dateStr);
               const rep = repByDate[dateStr];
               const st = statusStyle(rep?.status, hol, dow);
-              const isBiz = dow !== 0 && !hol;
+              const isPast = dateStr <= todayStr;
               const pays = rep ? (payMap[rep.id] || []) : [];
               const totalPay = pays.reduce((s, p) => s + toNum(p.amount), 0);
               return (
                 <div key={dateStr}
-                  onClick={() => (rep || isBiz) && onNavigate("daily_report", dateStr, selSiteCode)}
-                  style={{ background: st.bg, minHeight: 110, padding: "6px 8px", cursor: (rep || isBiz) ? "pointer" : "default",
+                  onClick={() => (rep || isPast) && onNavigate("daily_report", dateStr, selSiteCode)}
+                  style={{ background: st.bg, minHeight: 110, padding: "6px 8px", cursor: (rep || isPast) ? "pointer" : "default",
                     position: "relative", transition: "filter 0.15s" }}
                   onMouseEnter={e => e.currentTarget.style.filter = "brightness(0.95)"}
                   onMouseLeave={e => e.currentTarget.style.filter = "none"}>
                   {/* 날짜 번호 */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 4 }}>
-                    <span style={{ fontSize: 14, fontWeight: 900, color: hol ? C.error : dow === 0 ? C.error : dow === 6 ? C.navy : C.dark }}>
+                    <span style={{ fontSize: 14, fontWeight: 900, color: hol ? C.error : dow === 0 || dow === 6 ? C.navy : C.dark }}>
                       {day}
                     </span>
                     {hol && <span style={{ fontSize: 9, color: C.error, fontWeight: 700 }}>{HOLIDAY_NAMES[dateStr]?.slice(0,3) || "공휴"}</span>}
@@ -7794,7 +7793,7 @@ function ValetFeePage({ profitState, onNavigate }) {
                         {rep.status === "confirmed" ? "✅ 확정" : "⚠️ 미확정"}
                       </div>
                     </div>
-                  ) : isBiz ? (
+                  ) : isPast ? (
                     <div style={{ fontSize: 11, color: C2.missingText, fontWeight: 700, marginTop: 8 }}>❌ 미제출</div>
                   ) : null}
                 </div>
