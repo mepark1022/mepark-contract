@@ -4672,7 +4672,7 @@ const pPct = (a, b) => b === 0 ? "—" : ((a / b) * 100).toFixed(1) + "%";
 
 function ProfitabilityPage({ employees, subPage, profitState }) {
   const confirm = useConfirm();
-  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData, cashflowItems, setCashflowItems, cashflowBalances, saveCashflowItem, deleteCashflowItem, loadCashflow } = profitState;
+  const { profitMonth: currentMonth, setProfitMonth: setCurrentMonth, revenueData, setRevenueData, overheadData, setOverheadData, saveRevenueToDB, saveOverheadToDB, laborData, setLaborData, siteDetailsMap, saveLaborToDB, saveDetailToDB, monthlyParkingData, cashflowItems, setCashflowItems, cashflowBalances, setCashflowBalances, saveCashflowItem, deleteCashflowItem, saveCashflowBalance, loadCashflow } = profitState;
   const [selectedSite, setSelectedSite] = useState(FIELD_SITES[0]?.code || "V001");
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
@@ -4851,7 +4851,14 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const copyPrevMonth = async () => {
     const [y, m] = currentMonth.split("-").map(Number);
     const pm = m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`;
+    // ★ P9: 현금흐름 항목이 있으면 덮어쓸지 확인
+    const prevCfItems = cashflowItems[pm] || [];
+    const currCfItems = cashflowItems[currentMonth] || [];
+    if (prevCfItems.length > 0 && currCfItems.length > 0) {
+      try { await confirm("이전달 복사", `${currentMonth}에 현금흐름 ${currCfItems.length}건이 이미 있습니다.\n${pm} 데이터(${prevCfItems.length}건)로 덮어쓰시겠습니까?`, { okLabel: "덮어쓰기", okColor: C.orange }); } catch { return; }
+    }
     setSavingStatus("saving");
+    // ── 매출 복사 ──
     if (revenueData[pm]) {
       setRevenueData(p => ({ ...p, [currentMonth]: { ...p[pm] } }));
       const revEntries = Object.entries(revenueData[pm]);
@@ -4859,7 +4866,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
         await saveRevenueToDB?.(currentMonth, code, val);
       }
     }
-    // ★ 인건비 데이터도 복사
+    // ── 인건비 복사 ──
     if (laborData[pm]) {
       setLaborData(p => ({ ...p, [currentMonth]: JSON.parse(JSON.stringify(p[pm])) }));
       const labEntries = Object.entries(laborData[pm]);
@@ -4868,11 +4875,41 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
         if (vals.sub) await saveLaborToDB?.(currentMonth, code, "labor_sub", vals.sub);
       }
     }
+    // ── 간접비 복사 ──
     if (overheadData[pm]) {
       const copiedOH = overheadData[pm].map(o => ({ ...o }));
       setOverheadData(p => ({ ...p, [currentMonth]: copiedOH }));
       for (const oh of copiedOH) {
         await saveOverheadToDB?.(currentMonth, oh.key, oh.label, oh.amount, oh.method);
+      }
+    }
+    // ── P9: 현금흐름 항목 복사 (예상금액 유지, 실제금액 초기화) ──
+    if (prevCfItems.length > 0) {
+      // 현재월 기존 항목 DB에서 삭제
+      if (currCfItems.length > 0) {
+        const idsToDelete = currCfItems.filter(it => it.id).map(it => it.id);
+        if (idsToDelete.length > 0) {
+          await supabase.from("cashflow_items").delete().in("id", idsToDelete);
+        }
+      }
+      // 전월 항목 복사 (id/created_at 제거, month 변경, 실제금액 초기화)
+      const newItems = [];
+      for (const item of prevCfItems) {
+        const { id, created_at, ...rest } = item;
+        const newItem = { ...rest, month: currentMonth, actual_amount: 0, actual_date: null, updated_at: new Date().toISOString() };
+        const { data, error } = await supabase.from("cashflow_items").insert(newItem).select();
+        if (!error && data?.[0]) newItems.push(data[0]);
+        else newItems.push({ ...newItem, id: `temp_${Date.now()}_${newItems.length}` });
+      }
+      setCashflowItems(prev => ({ ...prev, [currentMonth]: newItems }));
+    }
+    // ── P9: 전월이월 잔액 복사 ──
+    if (cashflowBalances[pm]) {
+      const prevBal = cashflowBalances[pm];
+      const balCopy = { balance_062: prevBal.balance_062 || 0, balance_928: prevBal.balance_928 || 0, card_balance: prevBal.card_balance || 0 };
+      setCashflowBalances(prev => ({ ...prev, [currentMonth]: { ...prev[currentMonth], ...balCopy, month: currentMonth } }));
+      for (const [field, val] of Object.entries(balCopy)) {
+        await saveCashflowBalance(currentMonth, field, val);
       }
     }
     setSavingStatus("saved");
