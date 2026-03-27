@@ -5017,7 +5017,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
         <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
           <input type="month" value={currentMonth} onChange={e => setCurrentMonth(e.target.value)} style={{ ...inputStyle, width: 160 }} />
           <button onClick={copyPrevMonth} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>📋 이전달 복사</button>
-          {[["revenue", "💰 사업장 매출"], ["contract", "📄 계약현황"], ["overhead", "🏢 간접비"], ["inflow", "📈 현금유입"]].map(([k, v]) => (
+          {[["revenue", "💰 사업장 매출"], ["contract", "📄 계약현황"], ["overhead", "🏢 간접비"], ["inflow", "📈 현금유입"], ["outflow", "📉 현금유출"]].map(([k, v]) => (
             <button key={k} onClick={() => setCostTab(k)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${costTab === k ? C.navy : C.border}`, background: costTab === k ? C.navy : "#fff", color: costTab === k ? "#fff" : C.gray }}>{v}</button>
           ))}
           {savingStatus && (
@@ -5321,6 +5321,174 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                 </tbody>
               </table>
               <button onClick={addInflowItem} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: `1px dashed ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>+ 항목 추가</button>
+            </div>
+          );
+        })()}
+
+        {/* ═══ 현금유출 탭 ═══ */}
+        {costTab === "outflow" && (() => {
+          const COST_GROUPS = [["fixed", "고정비"], ["fixed_prepaid", "고정(선지급)"], ["variable_prepaid", "변동(선지급)"], ["variable", "변동비"]];
+          const monthItems = (cashflowItems[currentMonth] || []).filter(it => it.flow_type === "outflow");
+          const getStatus = (it) => {
+            const exp = toNum(it.expected_amount);
+            const act = toNum(it.actual_amount);
+            if (act <= 0) return { label: "미지급", bg: "#fee2e2", color: C.error };
+            if (exp > 0 && act < exp) return { label: "일부지급", bg: "#ffedd5", color: C.orange };
+            return { label: "지급완료", bg: "#dcfce7", color: C.success };
+          };
+          const updateItem = (idx, field, value) => {
+            const updated = [...monthItems];
+            updated[idx] = { ...updated[idx], [field]: value };
+            setCashflowItems(prev => ({ ...prev, [currentMonth]: [...(prev[currentMonth] || []).filter(it => it.flow_type !== "outflow"), ...updated] }));
+            debounceSave(`cf_${updated[idx].id || idx}_${field}`, () => saveCashflowItem({ ...updated[idx], [field]: value }));
+          };
+          const addOutflowItem = async () => {
+            setSavingStatus("saving");
+            const newItem = { month: currentMonth, flow_type: "outflow", cost_group: "fixed", account_label: "", vendor: "", target_person: "", week_no: null, expected_day: null, expected_amount: 0, actual_date: null, actual_amount: 0, memo: "", sort_order: monthItems.length };
+            const saved = await saveCashflowItem(newItem);
+            if (saved) {
+              setCashflowItems(prev => ({ ...prev, [currentMonth]: [...(prev[currentMonth] || []), saved] }));
+            }
+            setSavingStatus("saved");
+            setTimeout(() => setSavingStatus(null), 1500);
+          };
+          const removeOutflowItem = async (idx) => {
+            const item = monthItems[idx];
+            if (!item) return;
+            try { await confirm("삭제하시겠습니까?", `${item.account_label || "항목"} — ${item.vendor || ""}`, { okLabel: "삭제", okColor: C.error }); } catch { return; }
+            if (item.id) await deleteCashflowItem(item.id);
+            setCashflowItems(prev => ({ ...prev, [currentMonth]: (prev[currentMonth] || []).filter(it => it.id !== item.id) }));
+          };
+
+          // 비용구분별 소계
+          const groupTotals = COST_GROUPS.map(([gk, gl]) => {
+            const gItems = monthItems.filter(it => it.cost_group === gk);
+            return { key: gk, label: gl, count: gItems.length, expected: gItems.reduce((s, it) => s + toNum(it.expected_amount), 0), actual: gItems.reduce((s, it) => s + toNum(it.actual_amount), 0) };
+          }).filter(g => g.count > 0);
+
+          const sumExpected = monthItems.reduce((s, it) => s + toNum(it.expected_amount), 0);
+          const sumActual = monthItems.reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const overallStatus = sumActual <= 0 ? { label: "미지급", color: C.error } : sumActual < sumExpected ? { label: "일부지급", color: C.orange } : { label: "지급완료", color: C.success };
+          const isPrepaid = (cg) => cg === "fixed_prepaid" || cg === "variable_prepaid";
+
+          return (
+            <div style={{ ...pcardStyle, overflowX: "auto" }}>
+              {/* KPI 스트립 */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                {[
+                  { label: "예상 지출", value: pFmtFull(sumExpected) + "원", color: C.navy },
+                  { label: "실제 지출", value: pFmtFull(sumActual) + "원", color: sumActual <= sumExpected || sumExpected === 0 ? C.success : C.error },
+                  { label: "차액", value: (sumExpected - sumActual > 0 ? "잔여 " : "초과 ") + pFmtFull(Math.abs(sumExpected - sumActual)) + "원", color: sumExpected - sumActual >= 0 ? C.success : C.error },
+                  { label: "항목 수", value: monthItems.length + "건", color: C.gray },
+                ].map((k, i) => (
+                  <div key={i} style={{ flex: "1 1 120px", background: C.bg, borderRadius: 10, padding: "10px 14px", textAlign: "center" }}>
+                    <div style={{ fontSize: 15, fontWeight: 900, fontFamily: "monospace", color: k.color }}>{k.value}</div>
+                    <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>{k.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 비용구분별 소계 뱃지 */}
+              {groupTotals.length > 0 && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                  {groupTotals.map(g => (
+                    <div key={g.key} style={{ fontSize: 10, padding: "4px 10px", borderRadius: 6, background: g.key === "fixed" ? "#e8eaf6" : g.key === "variable" ? "#fff3e0" : "#f3e5f5", color: C.dark, fontWeight: 700 }}>
+                      {g.label} {g.count}건 · {pFmtFull(g.expected)} → {pFmtFull(g.actual)}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                <thead>
+                  <tr style={{ background: C.navy }}>
+                    {["비용구분", "계정과목", "거래처", "대상자", "주차", "예상일", "예상금액", "실제일", "실제금액", "상태", "메모", ""].map(h => (
+                      <th key={h} style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {monthItems.length === 0 && (
+                    <tr><td colSpan={12} style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 13 }}>
+                      항목이 없습니다. 아래 "+ 항목 추가" 버튼으로 현금유출 항목을 등록하세요.
+                    </td></tr>
+                  )}
+                  {monthItems.map((it, i) => {
+                    const st = getStatus(it);
+                    const showPrepaid = isPrepaid(it.cost_group);
+                    return (
+                      <tr key={it.id || i} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                        <td style={{ padding: "4px 4px", width: 90 }}>
+                          <select value={it.cost_group || "fixed"} onChange={e => updateItem(i, "cost_group", e.target.value)}
+                            style={{ ...inputStyle, padding: "6px 4px", fontSize: 11, width: "100%", cursor: "pointer" }}>
+                            {COST_GROUPS.map(([gk, gl]) => <option key={gk} value={gk}>{gl}</option>)}
+                          </select>
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 100 }}>
+                          <input value={it.account_label || ""} onChange={e => updateItem(i, "account_label", e.target.value)}
+                            placeholder="계정과목" style={{ ...inputStyle, padding: "6px 6px", fontSize: 12, width: "100%" }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 100 }}>
+                          <input value={it.vendor || ""} onChange={e => updateItem(i, "vendor", e.target.value)}
+                            placeholder="거래처" style={{ ...inputStyle, padding: "6px 6px", fontSize: 12, width: "100%" }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 70 }}>
+                          <input value={it.target_person || ""} onChange={e => updateItem(i, "target_person", e.target.value)}
+                            placeholder={showPrepaid ? "대상자" : "-"} disabled={!showPrepaid}
+                            style={{ ...inputStyle, padding: "6px 4px", fontSize: 11, width: "100%", background: showPrepaid ? "#fff" : "#f5f5f5", color: showPrepaid ? C.dark : "#bbb" }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 45 }}>
+                          <input type="number" inputMode="numeric" value={it.week_no ?? ""} min={1} max={5}
+                            onChange={e => updateItem(i, "week_no", e.target.value ? parseInt(e.target.value) : null)}
+                            placeholder={showPrepaid ? "주" : "-"} disabled={!showPrepaid}
+                            style={{ ...inputStyle, padding: "6px 2px", fontSize: 11, width: "100%", textAlign: "center", background: showPrepaid ? "#fff" : "#f5f5f5", color: showPrepaid ? C.dark : "#bbb" }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 50 }}>
+                          <input type="number" inputMode="numeric" value={it.expected_day ?? ""} min={1} max={31}
+                            onChange={e => updateItem(i, "expected_day", e.target.value ? parseInt(e.target.value) : null)}
+                            placeholder="일" style={{ ...inputStyle, padding: "6px 2px", fontSize: 12, width: "100%", textAlign: "center" }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 110 }}>
+                          <BlurSaveNum value={it.expected_amount || 0} onSave={v => updateItem(i, "expected_amount", v)}
+                            style={{ ...inputStyle, textAlign: "right", padding: "6px 6px", fontSize: 12 }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 110 }}>
+                          <input type="date" value={it.actual_date || ""} onChange={e => updateItem(i, "actual_date", e.target.value || null)}
+                            style={{ ...inputStyle, padding: "6px 2px", fontSize: 11, width: "100%" }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 110 }}>
+                          <BlurSaveNum value={it.actual_amount || 0} onSave={v => updateItem(i, "actual_amount", v)}
+                            style={{ ...inputStyle, textAlign: "right", padding: "6px 6px", fontSize: 12 }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", textAlign: "center", width: 60 }}>
+                          <span style={{ display: "inline-block", padding: "3px 6px", borderRadius: 20, fontSize: 10, fontWeight: 800, background: st.bg, color: st.color }}>{st.label}</span>
+                        </td>
+                        <td style={{ padding: "4px 4px", width: 100 }}>
+                          <input value={it.memo || ""} onChange={e => updateItem(i, "memo", e.target.value)}
+                            placeholder="메모" style={{ ...inputStyle, padding: "6px 6px", fontSize: 12, width: "100%" }} />
+                        </td>
+                        <td style={{ padding: "4px 4px", textAlign: "center", width: 28 }}>
+                          <button onClick={() => removeOutflowItem(i)} style={{ background: "none", border: "none", cursor: "pointer", color: C.error, fontSize: 14 }}>✕</button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {/* 합계행 */}
+                  {monthItems.length > 0 && (
+                    <tr style={{ background: C.navy }}>
+                      <td colSpan={6} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계 ({monthItems.length}건)</td>
+                      <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right", fontFamily: "monospace" }}>{pFmtFull(sumExpected)}</td>
+                      <td />
+                      <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right", fontFamily: "monospace" }}>{pFmtFull(sumActual)}</td>
+                      <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: overallStatus.color === C.error ? "#ff8a80" : overallStatus.color === C.orange ? "#ffcc80" : "#a5d6a7" }}>{overallStatus.label}</span>
+                      </td>
+                      <td colSpan={2} />
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+              <button onClick={addOutflowItem} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: `1px dashed ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>+ 항목 추가</button>
             </div>
           );
         })()}
