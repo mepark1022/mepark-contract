@@ -4608,6 +4608,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   const [sortBy, setSortBy] = useState("profit");
   const [editLabel, setEditLabel] = useState(null);
   const [costTab, setCostTab] = useState("revenue");
+  const [cardSubView, setCardSubView] = useState("purchase");
   const [savingStatus, setSavingStatus] = useState(null); // ★ Phase C: 저장 상태 표시
   const saveTimersRef = useRef({}); // ★ 필드별 독립 타이머 (서로 취소 방지)
   const detailTimerRef = useRef(null); // ★ 계약현황탭 저장용 타이머
@@ -5017,7 +5018,7 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
         <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center", flexWrap: "wrap" }}>
           <input type="month" value={currentMonth} onChange={e => setCurrentMonth(e.target.value)} style={{ ...inputStyle, width: 160 }} />
           <button onClick={copyPrevMonth} style={{ padding: "8px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>📋 이전달 복사</button>
-          {[["revenue", "💰 사업장 매출"], ["contract", "📄 계약현황"], ["overhead", "🏢 간접비"], ["inflow", "📈 현금유입"], ["outflow", "📉 현금유출"]].map(([k, v]) => (
+          {[["revenue", "💰 사업장 매출"], ["contract", "📄 계약현황"], ["overhead", "🏢 간접비"], ["inflow", "📈 현금유입"], ["outflow", "📉 현금유출"], ["card", "💳 카드"]].map(([k, v]) => (
             <button key={k} onClick={() => setCostTab(k)} style={{ padding: "8px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${costTab === k ? C.navy : C.border}`, background: costTab === k ? C.navy : "#fff", color: costTab === k ? "#fff" : C.gray }}>{v}</button>
           ))}
           {savingStatus && (
@@ -5489,6 +5490,259 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                 </tbody>
               </table>
               <button onClick={addOutflowItem} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: `1px dashed ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>+ 항목 추가</button>
+            </div>
+          );
+        })()}
+
+        {/* ═══ 카드 탭 ═══ */}
+        {costTab === "card" && (() => {
+          const CARD_COMPANIES = [["KB", "KB국민"], ["SHINHAN", "신한"], ["SAMSUNG", "삼성"], ["HYUNDAI", "현대"], ["LOTTE", "롯데"], ["BC", "BC"], ["HANA", "하나"], ["WOORI", "우리"], ["NH", "NH농협"], ["ETC", "기타"]];
+          const cardSubViews = [["purchase", "💳 카드결제"], ["billing", "📋 카드정산"]];
+          const monthItems = (cashflowItems[currentMonth] || []).filter(it => it.flow_type === "card");
+          const purchases = monthItems.filter(it => it.cost_group !== "billing");
+          const billings = monthItems.filter(it => it.cost_group === "billing");
+          const cardSub = cardSubView;
+          const setCardSub = (v) => setCardSubView(v);
+
+          // 카드사별 소계
+          const companyTotals = CARD_COMPANIES.map(([ck, cl]) => {
+            const cItems = purchases.filter(it => it.account_label === ck);
+            return { key: ck, label: cl, count: cItems.length, total: cItems.reduce((s, it) => s + toNum(it.expected_amount), 0) };
+          }).filter(g => g.count > 0);
+
+          // 카드결제 KPI
+          const purchaseTotal = purchases.reduce((s, it) => s + toNum(it.expected_amount), 0);
+          // 카드정산 KPI
+          const billingExpected = billings.reduce((s, it) => s + toNum(it.expected_amount), 0);
+          const billingActual = billings.reduce((s, it) => s + toNum(it.actual_amount), 0);
+
+          const getStatus = (it) => {
+            if (it.cost_group === "billing") {
+              const exp = toNum(it.expected_amount);
+              const act = toNum(it.actual_amount);
+              if (act <= 0) return { label: "미정산", bg: "#fee2e2", color: C.error };
+              if (exp > 0 && act < exp) return { label: "일부정산", bg: "#ffedd5", color: C.orange };
+              return { label: "정산완료", bg: "#dcfce7", color: C.success };
+            }
+            return { label: "결제", bg: "#e8eaf6", color: C.navy };
+          };
+
+          const updateItem = (idx, field, value, subType) => {
+            const subItems = subType === "billing" ? billings : purchases;
+            const updated = [...subItems];
+            updated[idx] = { ...updated[idx], [field]: value };
+            const otherItems = (cashflowItems[currentMonth] || []).filter(it => it.flow_type !== "card");
+            const otherCard = subType === "billing" ? purchases : billings;
+            setCashflowItems(prev => ({ ...prev, [currentMonth]: [...otherItems, ...otherCard, ...updated] }));
+            debounceSave(`cf_${updated[idx].id || idx}_${field}`, () => saveCashflowItem({ ...updated[idx], [field]: value }));
+          };
+
+          const addCardItem = async (subType) => {
+            setSavingStatus("saving");
+            const newItem = {
+              month: currentMonth, flow_type: "card",
+              cost_group: subType === "billing" ? "billing" : "ETC",
+              account_label: subType === "billing" ? "" : "KB",
+              vendor: "", expected_day: null, expected_amount: 0,
+              actual_date: null, actual_amount: 0, memo: "",
+              sort_order: monthItems.length
+            };
+            const saved = await saveCashflowItem(newItem);
+            if (saved) {
+              setCashflowItems(prev => ({ ...prev, [currentMonth]: [...(prev[currentMonth] || []), saved] }));
+            }
+            setSavingStatus("saved");
+            setTimeout(() => setSavingStatus(null), 1500);
+          };
+
+          const removeCardItem = async (idx, subType) => {
+            const subItems = subType === "billing" ? billings : purchases;
+            const item = subItems[idx];
+            if (!item) return;
+            try { await confirm("삭제하시겠습니까?", `${item.vendor || item.account_label || "항목"}`, { okLabel: "삭제", okColor: C.error }); } catch { return; }
+            if (item.id) await deleteCashflowItem(item.id);
+            setCashflowItems(prev => ({ ...prev, [currentMonth]: (prev[currentMonth] || []).filter(it => it.id !== item.id) }));
+          };
+
+          const billingOverall = billingActual <= 0 && billings.length > 0 ? { label: "미정산", color: C.error } : billingActual < billingExpected ? { label: "일부정산", color: C.orange } : { label: "정산완료", color: C.success };
+
+          return (
+            <div style={{ ...pcardStyle, overflowX: "auto" }}>
+              {/* KPI 스트립 */}
+              <div style={{ display: "flex", gap: 12, marginBottom: 16, flexWrap: "wrap" }}>
+                {[
+                  { label: "카드결제 합계", value: pFmtFull(purchaseTotal) + "원", color: C.navy },
+                  { label: "정산예정", value: pFmtFull(billingExpected) + "원", color: C.orange },
+                  { label: "정산완료", value: pFmtFull(billingActual) + "원", color: billingActual >= billingExpected && billingExpected > 0 ? C.success : C.error },
+                  { label: "결제 건수", value: purchases.length + "건", color: C.gray },
+                ].map((k, i) => (
+                  <div key={i} style={{ flex: "1 1 120px", background: C.bg, borderRadius: 10, padding: "10px 14px", textAlign: "center" }}>
+                    <div style={{ fontSize: 15, fontWeight: 900, fontFamily: "monospace", color: k.color }}>{k.value}</div>
+                    <div style={{ fontSize: 10, color: C.gray, marginTop: 2 }}>{k.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* 카드사별 소계 뱃지 */}
+              {companyTotals.length > 0 && (
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
+                  {companyTotals.map(g => (
+                    <div key={g.key} style={{ fontSize: 10, padding: "4px 10px", borderRadius: 6, background: "#e8eaf6", color: C.dark, fontWeight: 700 }}>
+                      {g.label} {g.count}건 · {pFmtFull(g.total)}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* 서브뷰 토글 */}
+              <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                {cardSubViews.map(([k, v]) => (
+                  <button key={k} onClick={() => setCardSub(k)} style={{ padding: "6px 14px", borderRadius: 8, fontSize: 11, fontWeight: 700, cursor: "pointer", border: `1.5px solid ${cardSub === k ? C.navy : C.border}`, background: cardSub === k ? C.navy : "#fff", color: cardSub === k ? "#fff" : C.gray }}>{v}</button>
+                ))}
+              </div>
+
+              {/* ── 카드결제 서브뷰 ── */}
+              {cardSub === "purchase" && (
+                <>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ background: C.navy }}>
+                        {["카드사", "결제일", "가맹점/결제처", "업종/용도", "결제금액", "상태", "메모", ""].map(h => (
+                          <th key={h} style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {purchases.length === 0 && (
+                        <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 13 }}>
+                          카드결제 내역이 없습니다. 아래 "+ 결제 추가" 버튼으로 등록하세요.
+                        </td></tr>
+                      )}
+                      {purchases.map((it, i) => {
+                        const st = getStatus(it);
+                        return (
+                          <tr key={it.id || i} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                            <td style={{ padding: "4px 4px", width: 80 }}>
+                              <select value={it.account_label || "ETC"} onChange={e => updateItem(i, "account_label", e.target.value, "purchase")}
+                                style={{ ...inputStyle, padding: "6px 2px", fontSize: 11, width: "100%", cursor: "pointer" }}>
+                                {CARD_COMPANIES.map(([ck, cl]) => <option key={ck} value={ck}>{cl}</option>)}
+                              </select>
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 50 }}>
+                              <input type="number" inputMode="numeric" value={it.expected_day ?? ""} min={1} max={31}
+                                onChange={e => updateItem(i, "expected_day", e.target.value ? parseInt(e.target.value) : null, "purchase")}
+                                placeholder="일" style={{ ...inputStyle, padding: "6px 2px", fontSize: 12, width: "100%", textAlign: "center" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 120 }}>
+                              <input value={it.vendor || ""} onChange={e => updateItem(i, "vendor", e.target.value, "purchase")}
+                                placeholder="가맹점명" style={{ ...inputStyle, padding: "6px 6px", fontSize: 12, width: "100%" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 80 }}>
+                              <input value={it.target_person || ""} onChange={e => updateItem(i, "target_person", e.target.value, "purchase")}
+                                placeholder="업종/용도" style={{ ...inputStyle, padding: "6px 6px", fontSize: 11, width: "100%" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 110 }}>
+                              <BlurSaveNum value={it.expected_amount || 0} onSave={v => updateItem(i, "expected_amount", v, "purchase")}
+                                style={{ ...inputStyle, textAlign: "right", padding: "6px 6px", fontSize: 12 }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", textAlign: "center", width: 55 }}>
+                              <span style={{ display: "inline-block", padding: "3px 6px", borderRadius: 20, fontSize: 10, fontWeight: 800, background: st.bg, color: st.color }}>{st.label}</span>
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 100 }}>
+                              <input value={it.memo || ""} onChange={e => updateItem(i, "memo", e.target.value, "purchase")}
+                                placeholder="메모" style={{ ...inputStyle, padding: "6px 6px", fontSize: 12, width: "100%" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", textAlign: "center", width: 28 }}>
+                              <button onClick={() => removeCardItem(i, "purchase")} style={{ background: "none", border: "none", cursor: "pointer", color: C.error, fontSize: 14 }}>✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {purchases.length > 0 && (
+                        <tr style={{ background: C.navy }}>
+                          <td colSpan={4} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계 ({purchases.length}건)</td>
+                          <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right", fontFamily: "monospace" }}>{pFmtFull(purchaseTotal)}</td>
+                          <td colSpan={3} />
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                  <button onClick={() => addCardItem("purchase")} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: `1px dashed ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>+ 결제 추가</button>
+                </>
+              )}
+
+              {/* ── 카드정산 서브뷰 ── */}
+              {cardSub === "billing" && (
+                <>
+                  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ background: C.navy }}>
+                        {["카드사", "정산예정일", "정산예정액", "정산완료일", "정산금액", "상태", "메모", ""].map(h => (
+                          <th key={h} style={{ padding: "8px 4px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap", fontSize: 10 }}>{h}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {billings.length === 0 && (
+                        <tr><td colSpan={8} style={{ padding: 40, textAlign: "center", color: C.gray, fontSize: 13 }}>
+                          카드정산 내역이 없습니다. 아래 "+ 정산 추가" 버튼으로 등록하세요.
+                        </td></tr>
+                      )}
+                      {billings.map((it, i) => {
+                        const st = getStatus(it);
+                        return (
+                          <tr key={it.id || i} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
+                            <td style={{ padding: "4px 4px", width: 100 }}>
+                              <input value={it.account_label || ""} onChange={e => updateItem(i, "account_label", e.target.value, "billing")}
+                                placeholder="카드사" style={{ ...inputStyle, padding: "6px 6px", fontSize: 12, width: "100%" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 55 }}>
+                              <input type="number" inputMode="numeric" value={it.expected_day ?? ""} min={1} max={31}
+                                onChange={e => updateItem(i, "expected_day", e.target.value ? parseInt(e.target.value) : null, "billing")}
+                                placeholder="일" style={{ ...inputStyle, padding: "6px 2px", fontSize: 12, width: "100%", textAlign: "center" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 120 }}>
+                              <BlurSaveNum value={it.expected_amount || 0} onSave={v => updateItem(i, "expected_amount", v, "billing")}
+                                style={{ ...inputStyle, textAlign: "right", padding: "6px 6px", fontSize: 12 }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 110 }}>
+                              <input type="date" value={it.actual_date || ""} onChange={e => updateItem(i, "actual_date", e.target.value || null, "billing")}
+                                style={{ ...inputStyle, padding: "6px 2px", fontSize: 11, width: "100%" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 120 }}>
+                              <BlurSaveNum value={it.actual_amount || 0} onSave={v => updateItem(i, "actual_amount", v, "billing")}
+                                style={{ ...inputStyle, textAlign: "right", padding: "6px 6px", fontSize: 12 }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", textAlign: "center", width: 60 }}>
+                              <span style={{ display: "inline-block", padding: "3px 6px", borderRadius: 20, fontSize: 10, fontWeight: 800, background: st.bg, color: st.color }}>{st.label}</span>
+                            </td>
+                            <td style={{ padding: "4px 4px", width: 100 }}>
+                              <input value={it.memo || ""} onChange={e => updateItem(i, "memo", e.target.value, "billing")}
+                                placeholder="메모" style={{ ...inputStyle, padding: "6px 6px", fontSize: 12, width: "100%" }} />
+                            </td>
+                            <td style={{ padding: "4px 4px", textAlign: "center", width: 28 }}>
+                              <button onClick={() => removeCardItem(i, "billing")} style={{ background: "none", border: "none", cursor: "pointer", color: C.error, fontSize: 14 }}>✕</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                      {billings.length > 0 && (
+                        <tr style={{ background: C.navy }}>
+                          <td colSpan={2} style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계 ({billings.length}건)</td>
+                          <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right", fontFamily: "monospace" }}>{pFmtFull(billingExpected)}</td>
+                          <td />
+                          <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right", fontFamily: "monospace" }}>{pFmtFull(billingActual)}</td>
+                          <td style={{ padding: "8px 6px", textAlign: "center" }}>
+                            <span style={{ fontSize: 10, fontWeight: 800, color: billingOverall.color === C.error ? "#ff8a80" : billingOverall.color === C.orange ? "#ffcc80" : "#a5d6a7" }}>{billingOverall.label}</span>
+                          </td>
+                          <td colSpan={2} />
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                  <button onClick={() => addCardItem("billing")} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: `1px dashed ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>+ 정산 추가</button>
+                </>
+              )}
             </div>
           );
         })()}
