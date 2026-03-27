@@ -5116,6 +5116,113 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
     );
   };
 
+  // ── P10: 현금흐름표 Excel Export ──
+  const handleExportCashflow = (month, cfItems, cfBalances) => {
+    const mi = (cfItems[month] || []);
+    const bal = cfBalances[month] || {};
+    const inflowItems = mi.filter(it => it.flow_type === "inflow");
+    const outflowItems = mi.filter(it => it.flow_type === "outflow");
+    const cardPurchases = mi.filter(it => it.flow_type === "card" && it.cost_group !== "billing");
+    const cardBillings = mi.filter(it => it.flow_type === "card" && it.cost_group === "billing");
+
+    const COST_GROUP_MAP = { fixed: "고정비", fixed_prepaid: "고정(선지급)", variable_prepaid: "변동(선지급)", variable: "변동비" };
+    const CARD_MAP = { KB: "KB국민", SHINHAN: "신한", SAMSUNG: "삼성", HYUNDAI: "현대", LOTTE: "롯데", BC: "BC", HANA: "하나", WOORI: "우리", NH: "NH농협", ETC: "기타" };
+    const getStatusLabel = (exp, act, done, part, none) => act <= 0 ? none : (exp > 0 && act < exp ? part : done);
+
+    const wb = XLSX.utils.book_new();
+
+    // ── Sheet 1: 요약 ──
+    const prevBal = toNum(bal.balance_062) + toNum(bal.balance_928);
+    const inflowExp = inflowItems.reduce((s, it) => s + toNum(it.expected_amount), 0);
+    const inflowAct = inflowItems.reduce((s, it) => s + toNum(it.actual_amount), 0);
+    const outflowExp = outflowItems.reduce((s, it) => s + toNum(it.expected_amount), 0);
+    const outflowAct = outflowItems.reduce((s, it) => s + toNum(it.actual_amount), 0);
+    const cardTotal = cardPurchases.reduce((s, it) => s + toNum(it.expected_amount), 0);
+    const cardBillExp = cardBillings.reduce((s, it) => s + toNum(it.expected_amount), 0);
+    const cardBillAct = cardBillings.reduce((s, it) => s + toNum(it.actual_amount), 0);
+    const netCash = inflowAct - outflowAct - cardTotal;
+
+    const summaryData = [
+      [`ME.PARK 현금흐름표 — ${month}`],
+      [],
+      ["구분", "예상금액", "실제금액", "차액", "상태"],
+      ["전월이월", prevBal, prevBal, "", ""],
+      ["현금유입", inflowExp, inflowAct, inflowAct - inflowExp, getStatusLabel(inflowExp, inflowAct, "입금완료", "일부입금", "미입금")],
+      ["현금유출", outflowExp, outflowAct, outflowAct - outflowExp, getStatusLabel(outflowExp, outflowAct, "지급완료", "일부지급", "미지급")],
+      ["카드결제", cardTotal, cardTotal, 0, "결제"],
+      ["카드정산", cardBillExp, cardBillAct, cardBillAct - cardBillExp, getStatusLabel(cardBillExp, cardBillAct, "정산완료", "일부정산", "미정산")],
+      [],
+      ["순현금흐름(실제)", "", netCash],
+      ["순현금흐름(예상)", "", inflowExp - outflowExp - cardTotal],
+      ["가용자금(이월+순현금)", "", prevBal + netCash],
+      [],
+      ["전월이월 상세"],
+      ["기업자유예금(062)", toNum(bal.balance_062)],
+      ["주거래통장(928)", toNum(bal.balance_928)],
+      ["카드 잔액", toNum(bal.card_balance)],
+    ];
+    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+    wsSummary["!cols"] = [{ wch: 22 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsSummary, "현금흐름요약");
+
+    // ── Sheet 2: 현금유입 ──
+    const inflowHeader = ["No", "계정과목", "거래처", "예상일", "예상금액", "실제일", "실제금액", "상태", "메모"];
+    const inflowRows = inflowItems.map((it, i) => [
+      i + 1, it.account_label || "", it.vendor || "",
+      it.expected_day ? `${month}-${String(it.expected_day).padStart(2, "0")}` : "",
+      toNum(it.expected_amount), it.actual_date || "", toNum(it.actual_amount),
+      getStatusLabel(toNum(it.expected_amount), toNum(it.actual_amount), "입금완료", "일부입금", "미입금"),
+      it.memo || ""
+    ]);
+    inflowRows.push(["", "합계", "", "", inflowExp, "", inflowAct, "", ""]);
+    const wsInflow = XLSX.utils.aoa_to_sheet([inflowHeader, ...inflowRows]);
+    wsInflow["!cols"] = [{ wch: 5 }, { wch: 16 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsInflow, "현금유입");
+
+    // ── Sheet 3: 현금유출 ──
+    const outflowHeader = ["No", "비용구분", "계정과목", "거래처", "대상자", "주차", "예상일", "예상금액", "실제일", "실제금액", "상태", "메모"];
+    const outflowRows = outflowItems.map((it, i) => [
+      i + 1, COST_GROUP_MAP[it.cost_group] || it.cost_group || "",
+      it.account_label || "", it.vendor || "", it.target_person || "",
+      it.week_no ? `${it.week_no}주` : "",
+      it.expected_day ? `${month}-${String(it.expected_day).padStart(2, "0")}` : "",
+      toNum(it.expected_amount), it.actual_date || "", toNum(it.actual_amount),
+      getStatusLabel(toNum(it.expected_amount), toNum(it.actual_amount), "지급완료", "일부지급", "미지급"),
+      it.memo || ""
+    ]);
+    // 비용구분별 소계
+    const cgGroups = {};
+    outflowItems.forEach(it => { const g = COST_GROUP_MAP[it.cost_group] || it.cost_group || "기타"; if (!cgGroups[g]) cgGroups[g] = { exp: 0, act: 0 }; cgGroups[g].exp += toNum(it.expected_amount); cgGroups[g].act += toNum(it.actual_amount); });
+    Object.entries(cgGroups).forEach(([g, v]) => outflowRows.push(["", `[소계] ${g}`, "", "", "", "", "", v.exp, "", v.act, "", ""]));
+    outflowRows.push(["", "합계", "", "", "", "", "", outflowExp, "", outflowAct, "", ""]);
+    const wsOutflow = XLSX.utils.aoa_to_sheet([outflowHeader, ...outflowRows]);
+    wsOutflow["!cols"] = [{ wch: 5 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 }, { wch: 6 }, { wch: 12 }, { wch: 16 }, { wch: 12 }, { wch: 16 }, { wch: 10 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsOutflow, "현금유출");
+
+    // ── Sheet 4: 카드 ──
+    const cardHeader = ["No", "구분", "카드사", "결제일/정산일", "가맹점/거래처", "업종/용도", "결제금액/정산예상", "정산실제", "상태", "메모"];
+    const cardRows = [];
+    cardPurchases.forEach((it, i) => cardRows.push([
+      i + 1, "카드결제", CARD_MAP[it.account_label] || it.account_label || "",
+      it.actual_date || (it.expected_day ? `${month}-${String(it.expected_day).padStart(2, "0")}` : ""),
+      it.vendor || "", it.target_person || "", toNum(it.expected_amount), "", "결제", it.memo || ""
+    ]));
+    if (cardPurchases.length > 0) cardRows.push(["", "[카드결제 소계]", "", "", "", "", cardTotal, "", "", ""]);
+    cardBillings.forEach((it, i) => cardRows.push([
+      cardPurchases.length + i + 1, "카드정산", it.account_label || "",
+      it.actual_date || (it.expected_day ? `${month}-${String(it.expected_day).padStart(2, "0")}` : ""),
+      it.vendor || "", "", toNum(it.expected_amount), toNum(it.actual_amount),
+      getStatusLabel(toNum(it.expected_amount), toNum(it.actual_amount), "정산완료", "일부정산", "미정산"),
+      it.memo || ""
+    ]));
+    if (cardBillings.length > 0) cardRows.push(["", "[카드정산 소계]", "", "", "", "", cardBillExp, cardBillAct, "", ""]);
+    const wsCard = XLSX.utils.aoa_to_sheet([cardHeader, ...cardRows]);
+    wsCard["!cols"] = [{ wch: 5 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 16 }, { wch: 10 }, { wch: 20 }];
+    XLSX.utils.book_append_sheet(wb, wsCard, "카드");
+
+    XLSX.writeFile(wb, `ME.PARK_현금흐름표_${month}.xlsx`);
+  };
+
   // ── 비용 입력 (렌더 함수 — 인라인 컴포넌트 아님) ──
   const renderCostInput = () => {
     return (
@@ -5176,9 +5283,12 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
             <div style={{ ...pcardStyle, marginBottom: 16, padding: 16, background: "linear-gradient(135deg, #f8fafc 0%, #f0f4ff 100%)" }}>
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
                 <div style={{ fontSize: 13, fontWeight: 900, color: C.navy }}>📊 {currentMonth} 현금흐름 요약</div>
-                {prevBalance > 0 && (
-                  <div style={{ fontSize: 10, color: C.gray, fontWeight: 600 }}>전월이월 {pFmtFull(prevBalance)}원</div>
-                )}
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  {prevBalance > 0 && (
+                    <div style={{ fontSize: 10, color: C.gray, fontWeight: 600 }}>전월이월 {pFmtFull(prevBalance)}원</div>
+                  )}
+                  <button onClick={() => handleExportCashflow(currentMonth, cashflowItems, cashflowBalances)} style={{ padding: "5px 12px", borderRadius: 6, border: `1px solid ${C.border}`, background: "#fff", fontSize: 11, fontWeight: 700, cursor: "pointer", color: C.navy, display: "flex", alignItems: "center", gap: 4 }}>📥 Excel</button>
+                </div>
               </div>
 
               {/* 3블록 + 순현금흐름 */}
