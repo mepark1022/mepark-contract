@@ -5260,15 +5260,75 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
           </div>
         )}
 
-        {/* ═══ 간접비 탭 ═══ */}
-        {costTab === "overhead" && (
+        {/* ═══ 간접비 탭 (P7: 현금흐름 연동) ═══ */}
+        {costTab === "overhead" && (() => {
+          // P7: 현금유출 항목에서 account_label별 실제금액 합산
+          const cfOutflow = (cashflowItems[currentMonth] || []).filter(it => it.flow_type === "outflow");
+          const cfByLabel = {};
+          cfOutflow.forEach(it => {
+            const lbl = (it.account_label || "").trim();
+            if (!lbl) return;
+            cfByLabel[lbl] = (cfByLabel[lbl] || 0) + toNum(it.actual_amount);
+          });
+          // 간접비 항목별 매칭: label 정규화 비교 (괄호 제거)
+          const normalize = (s) => (s || "").replace(/\(.*?\)/g, "").trim();
+          const matchCF = (ohLabel) => {
+            const norm = normalize(ohLabel);
+            // 1) exact match
+            if (cfByLabel[ohLabel] !== undefined) return cfByLabel[ohLabel];
+            // 2) normalized match
+            for (const [lbl, amt] of Object.entries(cfByLabel)) {
+              if (normalize(lbl) === norm) return amt;
+            }
+            // 3) contains match
+            for (const [lbl, amt] of Object.entries(cfByLabel)) {
+              if (norm && (norm.includes(normalize(lbl)) || normalize(lbl).includes(norm))) return amt;
+            }
+            return null;
+          };
+          const matchedCount = monthOverhead.filter(oh => matchCF(oh.label) !== null).length;
+          const cfTotal = Object.values(cfByLabel).reduce((s, v) => s + v, 0);
+          const ohTotal = monthOverhead.reduce((s, o) => s + toNum(o.amount), 0);
+
+          const syncFromCashflow = async () => {
+            if (matchedCount === 0) return;
+            try { await confirm("현금흐름에서 가져오기", `매칭된 ${matchedCount}건의 간접비 금액을 현금유출 실제금액으로 덮어씁니다.`, { okLabel: "가져오기", okColor: C.navy }); } catch { return; }
+            monthOverhead.forEach((oh, i) => {
+              const cfAmt = matchCF(oh.label);
+              if (cfAmt !== null && cfAmt !== toNum(oh.amount)) {
+                setOH(i, "amount", cfAmt);
+              }
+            });
+          };
+
+          return (
           <div style={{ ...pcardStyle, overflowX: "auto" }}>
+            {/* P7: 연동 배너 */}
+            {cfOutflow.length > 0 && (
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "10px 14px", background: "#f0f4ff", borderRadius: 10, border: `1px solid ${C.navy}22` }}>
+                <div style={{ fontSize: 11, color: C.navy }}>
+                  <span style={{ fontWeight: 800 }}>📊 현금유출 연동</span>
+                  <span style={{ marginLeft: 8, color: C.gray }}>
+                    매칭 <strong style={{ color: C.success }}>{matchedCount}건</strong> / 미매칭 <strong style={{ color: matchedCount < monthOverhead.length ? C.orange : C.gray }}>{monthOverhead.length - matchedCount}건</strong>
+                    {cfTotal > 0 && <span style={{ marginLeft: 8 }}>· 유출합계 <strong>{pFmtFull(cfTotal)}</strong></span>}
+                  </span>
+                </div>
+                <button onClick={syncFromCashflow} disabled={matchedCount === 0}
+                  style={{ padding: "6px 14px", borderRadius: 8, border: "none", background: matchedCount > 0 ? C.navy : C.lightGray, color: matchedCount > 0 ? "#fff" : C.gray, fontSize: 11, fontWeight: 800, cursor: matchedCount > 0 ? "pointer" : "default" }}>
+                  🔄 현금흐름에서 가져오기
+                </button>
+              </div>
+            )}
+
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
               <thead><tr style={{ background: C.navy }}>
-                {["항목", "금액 (월)", "배부방식", ""].map(h => <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center" }}>{h}</th>)}
+                {["항목", "금액 (월)", ...(cfOutflow.length > 0 ? ["현금흐름"] : []), "배부방식", ""].map(h => <th key={h} style={{ padding: "8px 6px", color: "#fff", fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>{h}</th>)}
               </tr></thead>
               <tbody>
-                {monthOverhead.map((oh, i) => (
+                {monthOverhead.map((oh, i) => {
+                  const cfAmt = cfOutflow.length > 0 ? matchCF(oh.label) : null;
+                  const hasDiff = cfAmt !== null && Math.abs(cfAmt - toNum(oh.amount)) > 0;
+                  return (
                   <tr key={i} style={{ background: i % 2 === 0 ? "#fff" : C.bg, borderBottom: `1px solid ${C.border}` }}>
                     <td style={{ padding: "6px", fontWeight: 600 }}>
                       {editLabel === i ? (
@@ -5282,6 +5342,18 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                       <BlurSaveNum value={oh.amount} onSave={v => setOH(i, "amount", v)}
                         style={{ ...inputStyle, textAlign: "right", padding: "6px 8px", fontSize: 12 }} />
                     </td>
+                    {cfOutflow.length > 0 && (
+                      <td style={{ padding: "4px 6px", textAlign: "right", width: 120 }}>
+                        {cfAmt !== null ? (
+                          <div>
+                            <span style={{ fontFamily: "monospace", fontWeight: 700, color: hasDiff ? C.orange : C.success, fontSize: 11 }}>{pFmtFull(cfAmt)}</span>
+                            {hasDiff && <div style={{ fontSize: 9, color: C.orange, marginTop: 1 }}>차이 {pFmtFull(Math.abs(cfAmt - toNum(oh.amount)))}</div>}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: 10, color: "#bbb" }}>—</span>
+                        )}
+                      </td>
+                    )}
                     <td style={{ padding: "6px", textAlign: "center" }}>
                       <select value={oh.method} onChange={e => setOH(i, "method", e.target.value)}
                         style={{ ...inputStyle, width: "auto", padding: "4px 8px", fontSize: 11, fontWeight: 700 }}>
@@ -5292,17 +5364,20 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
                       <button onClick={() => removeOverheadItem(i)} style={{ background: "none", border: "none", cursor: "pointer", color: C.error, fontSize: 14 }}>✕</button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
                 <tr style={{ background: C.navy }}>
                   <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 900, textAlign: "center" }}>합계</td>
-                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(monthOverhead.reduce((s, o) => s + toNum(o.amount), 0))}</td>
+                  <td style={{ padding: "8px 6px", color: "#fff", fontWeight: 800, textAlign: "right" }}>{pFmtFull(ohTotal)}</td>
+                  {cfOutflow.length > 0 && <td style={{ padding: "8px 6px", color: C.gold, fontWeight: 800, textAlign: "right", fontFamily: "monospace" }}>{pFmtFull(cfTotal)}</td>}
                   <td colSpan={2} />
                 </tr>
               </tbody>
             </table>
             <button onClick={addOverheadItem} style={{ marginTop: 10, padding: "8px 16px", borderRadius: 8, border: `1px dashed ${C.border}`, background: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer", color: C.navy }}>+ 항목 추가</button>
           </div>
-        )}
+          );
+        })()}
 
         {/* ═══ 현금유입 탭 ═══ */}
         {costTab === "inflow" && (() => {
