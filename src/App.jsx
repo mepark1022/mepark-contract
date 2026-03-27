@@ -2598,6 +2598,26 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                     </select>
                   </div>
                   <div>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>상태</label>
+                    <select value={editEmp.status || "재직"} onChange={e => {
+                      const newStatus = e.target.value;
+                      setEditEmp(p => ({
+                        ...p,
+                        status: newStatus,
+                        resign_date: newStatus === "재직" ? null : (p.resign_date || new Date().toISOString().slice(0, 10))
+                      }));
+                    }} style={{ ...inputStyle, color: editEmp.status === "퇴사" ? C.error : C.success, fontWeight: 700 }}>
+                      <option value="재직" style={{ color: C.success }}>재직</option>
+                      <option value="퇴사" style={{ color: C.error }}>퇴사</option>
+                    </select>
+                  </div>
+                  {editEmp.status === "퇴사" && (
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.error, marginBottom: 3, display: "block" }}>퇴사일</label>
+                      <input type="date" value={editEmp.resign_date || ""} onChange={e => setEditEmp(p => ({ ...p, resign_date: e.target.value }))} style={{ ...inputStyle, borderColor: C.error, color: C.error }} />
+                    </div>
+                  )}
+                  <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기본급(월급)</label>
                     <NumInput value={editEmp.base_salary} onChange={v => setEditEmp(p => ({ ...p, base_salary: v }))} />
                   </div>
