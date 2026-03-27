@@ -948,7 +948,7 @@ const DEFAULT_ARTICLES_PARTTIME = {
 
 // ── 10. 메인 대시보드 (통합 홈) ── Phase C 업그레이드 ──────
 function MainDashboard({ employees, onNavigate, profitState }) {
-  const { profitMonth: currentMonth, revenueData, overheadData, monthlyParkingData = [], laborData = {}, siteDetailsMap = {}, dailyReportSummary = {}, valetFeeData = {} } = profitState;
+  const { profitMonth: currentMonth, revenueData, overheadData, monthlyParkingData = [], laborData = {}, siteDetailsMap = {}, dailyReportSummary = {}, valetFeeData = {}, cashflowItems = {}, cashflowBalances = {} } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
 
@@ -1084,8 +1084,17 @@ function MainDashboard({ employees, onNavigate, profitState }) {
   // ★ 인건비율 KPI (수익성 데이터 기반)
   const finKPI = useMemo(() => {
     const laborRatio = ptotals.rev > 0 ? ((ptotals.labor / ptotals.rev) * 100).toFixed(1) : "—";
-    return { laborRatio };
-  }, [ptotals]);
+    // ★ P8: 가용자금 = 전월이월 + 유입실제 - 유출실제 - 카드실제
+    const mi = cashflowItems[currentMonth] || [];
+    const bal = cashflowBalances[currentMonth] || {};
+    const prevBalance = toNum(bal.balance_062) + toNum(bal.balance_928);
+    const inflowAct = mi.filter(it => it.flow_type === "inflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+    const outflowAct = mi.filter(it => it.flow_type === "outflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+    const cardAct = mi.filter(it => it.flow_type === "card" && it.cost_group !== "billing").reduce((s, it) => s + toNum(it.expected_amount), 0);
+    const hasCashflow = mi.length > 0 || prevBalance > 0;
+    const availableFund = prevBalance + inflowAct - outflowAct - cardAct;
+    return { laborRatio, availableFund, hasCashflow, prevBalance, inflowAct, outflowAct, cardAct };
+  }, [ptotals, cashflowItems, cashflowBalances, currentMonth]);
 
   const kpiCard = (icon, value, label, sub, color, onClick) => (
     <div onClick={onClick} style={{
@@ -1138,7 +1147,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
           { label: "재직인원", value: `${active.length}명`, sub: `평${weekday.length} 주${weekend.length} 복${mixed.length} 알${parttime.length}`, color: C.navy, click: () => onNavigate("employees") },
           { label: "총 매출", value: pFmt(ptotals.rev), sub: `${activeSites.length}개 사업장`, color: C.navy, click: () => onNavigate("profit_cost_input") },
           { label: "영업이익", value: pFmt(ptotals.profit), sub: ptotals.rev > 0 ? `이익률 ${((ptotals.profit / ptotals.rev) * 100).toFixed(1)}%` : "—", color: ptotals.profit >= 0 ? C.success : C.error },
-          { label: "가용자금", value: "—", sub: "현금흐름표 구현 후 연동", color: C.navy },
+          { label: "가용자금", value: finKPI.hasCashflow ? pFmt(finKPI.availableFund) : "—", sub: finKPI.hasCashflow ? `이월 ${pFmt(finKPI.prevBalance)}` : "현금흐름표 데이터 없음", color: finKPI.availableFund >= 0 ? C.navy : C.error, click: () => onNavigate("profit_cost_input") },
           { label: "인건비율", value: finKPI.laborRatio !== "—" ? finKPI.laborRatio + "%" : "—", sub: `인건비 ${pFmt(ptotals.labor)}`, color: Number(finKPI.laborRatio) > 50 ? C.error : C.orange },
         ].map((item, i) => (
           <div key={i} onClick={item.click} style={{
@@ -1221,6 +1230,66 @@ function MainDashboard({ employees, onNavigate, profitState }) {
 
 
       </div>
+
+      {/* ── B2. 현금흐름 차트 (P8) ── */}
+      {(() => {
+        const allMonths = Object.keys(cashflowItems).sort();
+        if (allMonths.length === 0) return null;
+        const chartData = allMonths.map(m => {
+          const mi = cashflowItems[m] || [];
+          const bal = cashflowBalances[m] || {};
+          const prevBal = toNum(bal.balance_062) + toNum(bal.balance_928);
+          const inflow = mi.filter(it => it.flow_type === "inflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const outflow = mi.filter(it => it.flow_type === "outflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const card = mi.filter(it => it.flow_type === "card" && it.cost_group !== "billing").reduce((s, it) => s + toNum(it.expected_amount), 0);
+          const totalOut = outflow + card;
+          const balance = prevBal + inflow - outflow - card;
+          return { month: m.slice(5), fullMonth: m, inflow: Math.round(inflow), outflow: Math.round(totalOut), balance: Math.round(balance) };
+        });
+        const cfTip = ({ active, payload, label }) => {
+          if (!active || !payload?.length) return null;
+          return (
+            <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", fontSize: 11, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
+              <div style={{ fontWeight: 800, color: C.dark, marginBottom: 6 }}>{payload[0]?.payload?.fullMonth}</div>
+              {payload.map((p, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 16, marginBottom: 2 }}>
+                  <span style={{ color: p.color, fontWeight: 700 }}>{p.name}</span>
+                  <span style={{ fontWeight: 800, fontFamily: "monospace" }}>{fmt(p.value)}원</span>
+                </div>
+              ))}
+            </div>
+          );
+        };
+        return (
+          <div style={{ ...cardStyle, marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <h3 style={{ fontSize: 14, fontWeight: 800, color: C.dark, margin: 0 }}>📊 현금흐름 추이</h3>
+              <span style={{ fontSize: 10, color: C.gray }}>월별 유입/유출 · 잔액</span>
+            </div>
+            <ResponsiveContainer width="100%" height={260}>
+              <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: C.gray }} />
+                <YAxis yAxisId="amount" tick={{ fontSize: 10, fill: C.gray }} tickFormatter={v => v >= 1e8 ? (v / 1e8).toFixed(0) + "억" : v >= 1e4 ? (v / 1e4).toFixed(0) + "만" : v} width={52} />
+                <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 10, fill: C.gold }} tickFormatter={v => v >= 1e8 ? (v / 1e8).toFixed(1) + "억" : v >= 1e4 ? (v / 1e4).toFixed(0) + "만" : v} width={52} />
+                <Tooltip content={cfTip} />
+                <Bar yAxisId="amount" dataKey="inflow" fill={C.navy} name="유입" radius={[4, 4, 0, 0]} barSize={28} />
+                <Bar yAxisId="amount" dataKey="outflow" fill={C.error} name="유출" radius={[4, 4, 0, 0]} barSize={28} opacity={0.75} />
+                <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2.5} dot={{ r: 4, fill: C.gold, stroke: "#fff", strokeWidth: 2 }} name="잔액" />
+              </ComposedChart>
+            </ResponsiveContainer>
+            {/* 하단 범례 */}
+            <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 8 }}>
+              {[["유입", C.navy], ["유출", C.error], ["잔액", C.gold]].map(([label, color]) => (
+                <div key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.gray }}>
+                  <div style={{ width: label === "잔액" ? 16 : 10, height: label === "잔액" ? 3 : 10, borderRadius: label === "잔액" ? 0 : 2, background: color }} />
+                  <span style={{ fontWeight: 700 }}>{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── C. P&L 테이블 ── */}
       <div style={{ ...cardStyle, overflowX: "auto" }}>
