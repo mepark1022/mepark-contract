@@ -11750,6 +11750,14 @@ function MainApp() {
 
   // ★ 사업장 상세정보 로딩 (월계약금 등)
   const loadSiteDetails = async () => {
+    const { data } = await supabase.from("site_details").select("*");
+    if (data) {
+      const map = {};
+      data.forEach(d => { map[d.site_code] = d; });
+      _refreshGlobalSites(map);
+      setSiteDetailsMap(map);
+    }
+  };
 
   // ★ v10: 현금흐름표 데이터 로딩
   const loadCashflow = async () => {
@@ -11799,14 +11807,6 @@ function MainApp() {
       .upsert({ month, [field]: Math.round(value) }, { onConflict: "month" });
     if (error) console.error("cashflow_balances save error:", error);
   }, []);
-    const { data } = await supabase.from("site_details").select("*");
-    if (data) {
-      const map = {};
-      data.forEach(d => { map[d.site_code] = d; });
-      _refreshGlobalSites(map); // ★ 동적 사업장 목록 갱신
-      setSiteDetailsMap(map);
-    }
-  };
 
   // ★ 사업장 상세정보 저장 (비용입력 계약현황탭용)
   const saveDetailToDB = useCallback(async (code, field, value) => {
