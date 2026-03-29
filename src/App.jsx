@@ -1705,6 +1705,11 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   const [accountForm, setAccountForm] = useState({ email: "", password: "", role: "field_member" });
   const [accountMsg, setAccountMsg] = useState("");
 
+  // ── v10.1 P4: 퇴직관리 탭 state ──
+  const [editResign, setEditResign] = useState({ status: "재직", resign_date: "", resign_reason: "", resign_detail: "", severance_amount: 0, final_pay_date: "" });
+  const [resignSaving, setResignSaving] = useState(false);
+  const [resignMsg, setResignMsg] = useState("");
+
   // ── v9.1: 계정 통합 — bulk/pw 상태 ──
   const [showBulk, setShowBulk] = useState(false);
   const [bulkRows, setBulkRows] = useState([]);
@@ -1753,6 +1758,16 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
       password: emp.auth_id ? "" : phoneToPass(emp.phone || "", emp.emp_no),
       role: emp.system_role || "crew",
     });
+    // v10.1: 퇴직관리 탭 초기화
+    setEditResign({
+      status: emp.status || "재직",
+      resign_date: emp.resign_date || "",
+      resign_reason: emp.resign_reason || "",
+      resign_detail: emp.resign_detail || "",
+      severance_amount: emp.severance_amount ?? 0,
+      final_pay_date: emp.final_pay_date || "",
+    });
+    setResignMsg("");
     // 계약이력 로드
     setContractsLoading(true);
     try {
@@ -2292,6 +2307,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
           { key: "account", icon: "🔐", label: "계정관리" },
           { key: "contracts", icon: "📋", label: "계약이력" },
           { key: "docs", icon: "📄", label: "문서" },
+          { key: "resign", icon: "🚪", label: "퇴직관리", alert: se.status === "퇴사" },
         ];
         const labelSt = { fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" };
         const valSt = { fontSize: 13, fontWeight: 700, color: C.dark, padding: "6px 0" };
@@ -2317,8 +2333,11 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                   flex: 1, padding: "10px 4px", fontSize: 11, fontWeight: detailTab === t.key ? 800 : 600,
                   color: detailTab === t.key ? C.navy : C.gray, background: "none", border: "none",
                   borderBottom: detailTab === t.key ? `2.5px solid ${C.navy}` : "2.5px solid transparent",
-                  cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT,
-                }}>{t.icon} {t.label}</button>
+                  cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT, position: "relative",
+                }}>
+                  {t.icon} {t.label}
+                  {t.alert && <span style={{ position: "absolute", top: 6, right: 4, width: 6, height: 6, borderRadius: "50%", background: C.error }} />}
+                </button>
               ))}
             </div>
 
@@ -2602,12 +2621,134 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                 </div>
               )}
 
+              {detailTab === "resign" && (() => {
+                // 퇴직금 자동 계산
+                const hireD = se.hire_date ? new Date(se.hire_date) : null;
+                const resignD = se.resign_date ? new Date(se.resign_date) : new Date();
+                const workYears = hireD ? (resignD - hireD) / (365.25 * 86400000) : 0;
+                const workDays = hireD ? Math.floor((resignD - hireD) / 86400000) : 0;
+                const monthlySalary = toNum(se.base_salary) + toNum(se.meal_allow) + toNum(se.leader_allow) + toNum(se.childcare_allow);
+                // 퇴직금 = 1일 평균임금 × 30 × (재직일수 / 365)
+                const dailyAvg = monthlySalary / 30;
+                const calcSeverance = workYears >= 1 ? Math.round(dailyAvg * 30 * (workDays / 365)) : 0;
+
+                const handleSaveResign = async () => {
+                  setResignSaving(true);
+                  const payload = {
+                    status: editResign.status === "퇴사" ? "inactive" : "active",
+                    resign_date: editResign.resign_date || null,
+                    resign_reason: editResign.resign_reason || null,
+                    resign_detail: editResign.resign_detail || null,
+                    severance_amount: toNum(editResign.severance_amount),
+                    final_pay_date: editResign.final_pay_date || null,
+                    updated_at: new Date().toISOString(),
+                  };
+                  const { error } = await supabase.from("employees").update(payload).eq("id", se.id);
+                  setResignSaving(false);
+                  if (error) { setResignMsg("❌ 저장 실패: " + error.message); }
+                  else { setResignMsg("✅ 저장 완료"); await onReload(); setTimeout(() => setResignMsg(""), 2500); }
+                };
+
+                return (
+                  <div>
+                    {/* 상태 배너 */}
+                    <div style={{ background: editResign.status === "퇴사" ? "#FFEBEE" : "#E8F5E9", borderRadius: 10, padding: "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 10 }}>
+                      <span style={{ fontSize: 20 }}>{editResign.status === "퇴사" ? "🚪" : "✅"}</span>
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 13, color: editResign.status === "퇴사" ? C.error : C.success }}>{editResign.status === "퇴사" ? "퇴직 처리됨" : "재직 중"}</div>
+                        <div style={{ fontSize: 11, color: C.gray }}>재직기간 {workDays}일 ({workYears.toFixed(1)}년) {workYears < 1 && <span style={{ color: C.orange }}>— 1년 미만, 퇴직금 미발생</span>}</div>
+                      </div>
+                    </div>
+
+                    {/* 퇴직 정보 폼 */}
+                    <div style={sectionBox}>
+                      {sectionTitle("🚪", "퇴직 정보")}
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+                        <div>
+                          <label style={labelSt}>재직 상태</label>
+                          <select value={editResign.status} onChange={e => setEditResign(p => ({ ...p, status: e.target.value, resign_date: e.target.value === "재직" ? "" : (p.resign_date || new Date().toISOString().slice(0, 10)) }))}
+                            style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, fontWeight: 700, color: editResign.status === "퇴사" ? C.error : C.success }}>
+                            <option value="재직">✅ 재직</option>
+                            <option value="퇴사">🚪 퇴사</option>
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelSt}>퇴사일</label>
+                          <input type="date" value={editResign.resign_date} onChange={e => setEditResign(p => ({ ...p, resign_date: e.target.value }))}
+                            style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${editResign.status === "퇴사" ? C.error : C.border}`, borderRadius: 8, fontSize: 12, boxSizing: "border-box" }} />
+                        </div>
+                        <div>
+                          <label style={labelSt}>퇴사 사유</label>
+                          <select value={editResign.resign_reason} onChange={e => setEditResign(p => ({ ...p, resign_reason: e.target.value }))}
+                            style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12 }}>
+                            <option value="">선택</option>
+                            {["자진퇴사", "권고사직", "계약만료", "기타"].map(r => <option key={r} value={r}>{r}</option>)}
+                          </select>
+                        </div>
+                        <div>
+                          <label style={labelSt}>최종 급여 지급일</label>
+                          <input type="date" value={editResign.final_pay_date} onChange={e => setEditResign(p => ({ ...p, final_pay_date: e.target.value }))}
+                            style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, boxSizing: "border-box" }} />
+                        </div>
+                        <div style={{ gridColumn: "1 / -1" }}>
+                          <label style={labelSt}>퇴사 상세 메모</label>
+                          <input type="text" value={editResign.resign_detail} onChange={e => setEditResign(p => ({ ...p, resign_detail: e.target.value }))} placeholder="상세 사유 (선택)"
+                            style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 8, fontSize: 12, boxSizing: "border-box" }} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* 퇴직금 계산 */}
+                    <div style={sectionBox}>
+                      {sectionTitle("💼", "퇴직금")}
+                      <div style={{ background: workYears >= 1 ? "#EFF6FF" : "#F5F5F5", borderRadius: 8, padding: "12px 14px", marginBottom: 12 }}>
+                        <div style={{ fontSize: 11, color: C.gray, marginBottom: 4 }}>자동 계산 기준</div>
+                        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
+                          {[
+                            ["월 기준급여", `${fmt(monthlySalary)}원`],
+                            ["재직일수", `${workDays}일`],
+                            ["계산식", `1일평균임금(${fmt(Math.round(dailyAvg))}원) × 30 × (${workDays}/365)`],
+                          ].map(([l, v]) => (
+                            <div key={l}>
+                              <div style={{ fontSize: 10, color: C.gray }}>{l}</div>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{v}</div>
+                            </div>
+                          ))}
+                        </div>
+                        <div style={{ marginTop: 10, padding: "8px 12px", background: C.white, borderRadius: 6, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span style={{ fontSize: 12, color: C.gray }}>자동 계산액</span>
+                          <span style={{ fontSize: 16, fontWeight: 900, color: workYears >= 1 ? C.navy : C.gray }}>{workYears >= 1 ? `${fmt(calcSeverance)}원` : "1년 미만 (미발생)"}</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label style={labelSt}>확정 퇴직금 (직접 입력 가능)</label>
+                        <NumInput value={editResign.severance_amount} onChange={v => setEditResign(p => ({ ...p, severance_amount: v }))} />
+                        {toNum(editResign.severance_amount) !== calcSeverance && calcSeverance > 0 && (
+                          <div style={{ fontSize: 10, color: C.orange, marginTop: 4 }}>
+                            ※ 계산액과 차이: {fmt(Math.abs(toNum(editResign.severance_amount) - calcSeverance))}원 {toNum(editResign.severance_amount) > calcSeverance ? "↑초과" : "↓미달"}
+                            <span onClick={() => setEditResign(p => ({ ...p, severance_amount: calcSeverance }))}
+                              style={{ marginLeft: 8, color: C.navy, cursor: "pointer", textDecoration: "underline", fontWeight: 700 }}>계산액으로 초기화</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 저장 버튼 */}
+                    <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                      <button onClick={handleSaveResign} disabled={resignSaving} style={{ ...btnPrimary, padding: "10px 28px", fontSize: 13, opacity: resignSaving ? 0.6 : 1 }}>
+                        {resignSaving ? "💾 저장 중..." : "💾 퇴직 정보 저장"}
+                      </button>
+                      {resignMsg && <span style={{ fontSize: 12, fontWeight: 700, color: resignMsg.startsWith("✅") ? C.success : C.error }}>{resignMsg}</span>}
+                    </div>
+                  </div>
+                );
+              })()}
+
             </div>
           </div>
         );
       })()}
 
-      {/* 직원 등록/수정 모달 — 와이드 레이아웃 */}
       {showForm && editEmp && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
           onClick={() => setShowForm(false)}>
