@@ -990,6 +990,14 @@ function MainDashboard({ employees, onNavigate, profitState }) {
   const activeSites = [...new Set(active.filter(e => e.site_code_1 !== "V000").map(e => e.site_code_1))].filter(Boolean);
   const totalSalary = active.reduce((s, e) => s + toNum(e.base_salary) + toNum(e.meal_allow) + toNum(e.leader_allow) + toNum(e.childcare_allow) + toNum(e.car_allow) + (toNum(e.weekend_daily) > 0 ? toNum(e.weekend_daily) * 8 : 0), 0);
 
+  // ★ P7: 수습 만료 임박 (D-7 이내)
+  const probExpiring = active.filter(e => e.probation_months && e.hire_date).map(e => {
+    const end = new Date(e.hire_date);
+    end.setMonth(end.getMonth() + parseInt(e.probation_months));
+    const d = dDay(localDateStr(end));
+    return { ...e, probEnd: localDateStr(end), dday: d };
+  }).filter(e => e.dday !== null && e.dday >= -7 && e.dday <= 7);
+
   // 수익성 계산 (ProfitabilityPage와 동일 로직)
   const monthRevenue = revenueData[currentMonth] || {};
   const monthOverhead = overheadData[currentMonth] || DEFAULT_OVERHEAD.map(o => ({ ...o }));
@@ -1163,6 +1171,30 @@ function MainDashboard({ employees, onNavigate, profitState }) {
           </div>
         ))}
       </div>
+
+      {/* ── 수습 만료 임박 알림 (P7) ── */}
+      {probExpiring.length > 0 && (
+        <div style={{ background: "#FFF8E1", border: `1.5px solid ${C.orange}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: C.orange }}>⚠️ 수습 만료 임박 ({probExpiring.length}명)</span>
+            <span onClick={() => onNavigate("dashboard")} style={{ fontSize: 11, fontWeight: 700, color: C.navy, cursor: "pointer", textDecoration: "underline" }}>HR 대시보드 →</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {probExpiring.map(a => (
+              <div key={a.id} style={{ background: "#fff", borderRadius: 8, padding: "8px 14px", border: `1px solid ${a.dday <= 0 ? C.error : C.orange}`, display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{a.name}</span>
+                <span style={{ fontSize: 11, color: C.gray }}>{getSiteName(a.site_code_1)}</span>
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6,
+                  background: a.dday <= 0 ? "#FFEBEE" : "#FFF3E0",
+                  color: a.dday <= 0 ? C.error : C.orange }}>
+                  {a.dday <= 0 ? `D+${Math.abs(a.dday)}` : `D-${a.dday}`}
+                </span>
+                <span style={{ fontSize: 10, color: C.gray }}>종료 {a.probEnd}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── B. 2컬럼: 좌(수익·재무 요약) / 우(차트) ── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr", gap: 16, marginBottom: 18 }}>
