@@ -2776,7 +2776,10 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>사번</label>
                     <div style={{ display: "flex", gap: 4 }}>
                       <input value={editEmp.emp_no || ""} onChange={e => setEditEmp(p => ({ ...p, emp_no: e.target.value }))}
-                        placeholder="자동생성 또는 직접입력" style={{ ...inputStyle, flex: 1 }} />
+                        placeholder="자동생성 또는 직접입력" style={{ ...inputStyle, flex: 1,
+                          borderColor: editEmp.emp_no && !editEmp.id && employees.some(x => x.emp_no === editEmp.emp_no) ? C.error
+                                      : editEmp.emp_no && /^(MP|MPA)/.test(editEmp.emp_no) ? C.success : inputStyle.borderColor
+                        }} />
                       <button onClick={() => {
                         const auto = generateEmpNo(employees, {
                           siteCode: editEmp.site_code_1,
@@ -2790,17 +2793,37 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                         cursor: "pointer", whiteSpace: "nowrap", fontFamily: FONT,
                       }}>⚡ 자동</button>
                     </div>
-                    {editEmp.emp_no && (
+                    {/* v10.1 F4: 실시간 중복/힌트 */}
+                    {editEmp.emp_no && !editEmp.id && employees.some(x => x.emp_no === editEmp.emp_no) && (
+                      <div style={{ fontSize: 10, marginTop: 3, fontWeight: 800, color: C.error }}>
+                        ❌ 이미 사용 중인 사번입니다 — {employees.find(x => x.emp_no === editEmp.emp_no)?.name}
+                      </div>
+                    )}
+                    {editEmp.emp_no && !(editEmp.emp_no && !editEmp.id && employees.some(x => x.emp_no === editEmp.emp_no)) && (
                       <div style={{ fontSize: 10, marginTop: 3, color: C.gray }}>
-                        {/^MPA\d+$/.test(editEmp.emp_no) ? "알바 사번" :
-                         /^MP\d{5,}$/.test(editEmp.emp_no) ?
-                           (parseInt(editEmp.emp_no.slice(4)) <= 100 ? "운영팀(본사) 사번" : "현장 근무자 사번") : "사번"}
+                        {/^MPA\d+$/.test(editEmp.emp_no) ? "✅ 알바 사번" :
+                         /^MP\d{6}$/.test(editEmp.emp_no) ?
+                           (parseInt(editEmp.emp_no.slice(4)) <= 100 ? "✅ 운영팀(본사) 사번" : "✅ 현장 근무자 사번") :
+                         /^MP\d+(-\d+)?$/.test(editEmp.emp_no) ? "✅ 사번" : "⚠️ 사번 형식 확인 필요 (MP 또는 MPA로 시작)"}
                       </div>
                     )}
                   </div>
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>이름</label>
-                    <input value={editEmp.name || ""} onChange={e => setEditEmp(p => ({ ...p, name: e.target.value }))} style={inputStyle} />
+                    <input value={editEmp.name || ""} onChange={e => setEditEmp(p => ({ ...p, name: e.target.value }))}
+                      style={{ ...inputStyle,
+                        borderColor: editEmp.name && employees.filter(x => x.id !== editEmp.id && x.name === editEmp.name).length > 0 ? C.orange : inputStyle.borderColor
+                      }} />
+                    {/* v10.1 F4: 동명이인 경고 */}
+                    {editEmp.name && (() => {
+                      const sames = employees.filter(x => x.id !== editEmp.id && x.name === editEmp.name);
+                      return sames.length > 0 ? (
+                        <div style={{ fontSize: 10, marginTop: 3, fontWeight: 700, color: C.orange }}>
+                          ⚠️ 동명이인 {sames.length}명 — {sames.slice(0, 3).map(x => `${x.emp_no}(${getSiteName(x.site_code_1)})`).join(", ")}
+                          {sames.length > 3 && ` 외 ${sames.length - 3}명`}
+                        </div>
+                      ) : null;
+                    })()}
                   </div>
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>연락처</label>
