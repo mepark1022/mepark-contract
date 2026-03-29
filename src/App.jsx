@@ -1924,6 +1924,19 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
   });
   const activeFilterCount = [filter.site, filter.cat, filter.status !== "재직" ? filter.status : "", filter.account, filter.role, filter.search].filter(Boolean).length;
 
+  // ── v10.1 F2: 수습기간 뱃지 헬퍼 ──
+  const getProbInfo = (e) => {
+    if (!e.probation_months || !e.hire_date || e.status !== "재직") return null;
+    const end = new Date(e.hire_date);
+    end.setMonth(end.getMonth() + parseInt(e.probation_months));
+    const d = dDay(localDateStr(end));
+    if (d === null) return null;
+    if (d < -7) return null; // 수습 종료 7일 이상 경과 → 표시 안 함
+    if (d < 0) return { label: `수습종료`, color: C.orange, bg: "#FFF3E0", d }; // 만료 후 7일 이내
+    if (d <= 7) return { label: `수습만료 D-${d}`, color: C.error, bg: "#FFEBEE", d };
+    return { label: `수습중 D-${d}`, color: C.orange, bg: "#FFF3E0", d };
+  };
+
   const saveEmp = async (emp) => {
     // 사번 비어있으면 자동생성
     if (!emp.emp_no || emp.emp_no.trim() === "") {
@@ -2095,8 +2108,11 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
               <tr key={e.id} onClick={() => openDetail(e)} style={{ background: selectedEmp?.id === e.id ? "#EFF6FF" : (i % 2 ? C.bg : C.white), borderBottom: `1px solid ${C.lightGray}`, cursor: "pointer", transition: "background 0.15s" }}>
                 <td style={{ padding: "8px", fontWeight: 700, textAlign: "center" }}>{e.emp_no}</td>
                 <td style={{ padding: "8px", fontWeight: 700 }}>
-                  {e.name}
-                  {e.account_status === "active" && <span title={`계정: ${e.account_email || e.system_role}`} style={{ marginLeft: 4, fontSize: 9, padding: "1px 4px", borderRadius: 4, background: "#EDE7F6", color: "#7B1FA2", fontWeight: 800 }}>🔗</span>}
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
+                    <span>{e.name}</span>
+                    {e.account_status === "active" && <span title={`계정: ${e.account_email || e.system_role}`} style={{ fontSize: 9, padding: "1px 4px", borderRadius: 4, background: "#EDE7F6", color: "#7B1FA2", fontWeight: 800 }}>🔗</span>}
+                    {(() => { const p = getProbInfo(e); return p ? <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, fontWeight: 800, background: p.bg, color: p.color, whiteSpace: "nowrap" }}>{p.label}</span> : null; })()}
+                  </div>
                 </td>
                 <td style={{ padding: "8px", textAlign: "center", color: C.gray }}>{e.position}</td>
                 <td style={{ padding: "8px", fontSize: 11 }}>{getSiteName(e.site_code_1)}</td>
@@ -2133,6 +2149,12 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                   }}>
                     {e.status}
                   </span>
+                  {e.status === "퇴사" && e.resign_reason && (
+                    <div style={{ fontSize: 9, color: C.gray, marginTop: 2 }}>{e.resign_reason}</div>
+                  )}
+                  {e.status === "퇴사" && e.resign_date && (
+                    <div style={{ fontSize: 9, color: C.gray }}>{e.resign_date}</div>
+                  )}
                 </td>
                 <td style={{ padding: "8px", textAlign: "center", whiteSpace: "nowrap" }}>
                   {can("edit") && <button onClick={() => onContract(e)} title="계약서" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>📝</button>}
@@ -2212,8 +2234,11 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                     {infoRow("근무조건", se.employment_type)}
                     {infoRow("수습기간", se.probation_months ? `${se.probation_months}개월` : "없음")}
                     {se.probation_end && infoRow("수습종료일", se.probation_end)}
+                    {(() => { const p = getProbInfo(se); return p ? <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}><span style={{ fontSize: 11, color: C.gray }}>수습상태</span><span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6, background: p.bg, color: p.color }}>{p.label}</span></div> : null; })()}
                     {infoRow("상태", se.status)}
                     {se.resign_date && infoRow("퇴사일", se.resign_date)}
+                    {se.resign_reason && infoRow("퇴사사유", se.resign_reason)}
+                    {se.resign_detail && infoRow("퇴사상세", se.resign_detail)}
                   </div>
                   <div style={sectionBox}>
                     {sectionTitle("📋", "세금/보험")}
@@ -2611,12 +2636,23 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                       <option value="퇴사" style={{ color: C.error }}>퇴사</option>
                     </select>
                   </div>
-                  {editEmp.status === "퇴사" && (
+                  {editEmp.status === "퇴사" && (<>
                     <div>
                       <label style={{ fontSize: 11, fontWeight: 700, color: C.error, marginBottom: 3, display: "block" }}>퇴사일</label>
                       <input type="date" value={editEmp.resign_date || ""} onChange={e => setEditEmp(p => ({ ...p, resign_date: e.target.value }))} style={{ ...inputStyle, borderColor: C.error, color: C.error }} />
                     </div>
-                  )}
+                    <div>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.error, marginBottom: 3, display: "block" }}>퇴사사유</label>
+                      <select value={editEmp.resign_reason || ""} onChange={e => setEditEmp(p => ({ ...p, resign_reason: e.target.value }))} style={{ ...inputStyle, borderColor: C.error }}>
+                        <option value="">선택</option>
+                        {["자진퇴사", "권고사직", "계약만료", "기타"].map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ gridColumn: "1 / -1" }}>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>퇴사 상세 메모</label>
+                      <input type="text" value={editEmp.resign_detail || ""} onChange={e => setEditEmp(p => ({ ...p, resign_detail: e.target.value }))} placeholder="상세 내용 (선택)" style={{ ...inputStyle, width: "100%" }} />
+                    </div>
+                  </>)}
                   <div>
                     <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기본급(월급)</label>
                     <NumInput value={editEmp.base_salary} onChange={v => setEditEmp(p => ({ ...p, base_salary: v }))} />
