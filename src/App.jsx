@@ -1665,6 +1665,32 @@ function Dashboard({ employees, allContracts = [], onNavigate }) {
     { name: "알바", value: parttime.length, color: C.gray },
   ].filter(d => d.value > 0);
 
+  // ── 계약만료 간트 데이터 (향후 90일) ──
+  const ganttData = contractExpiryList
+    .filter(c => c.d >= -30 && c.d <= 90)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 15)
+    .map(c => ({
+      name: `${c.name} (${getSiteName(c.site_code_1) || c.site_code_1})`,
+      dday: c.d,
+      fill: c.d <= 0 ? C.error : c.d <= 7 ? "#E53935" : c.d <= 30 ? C.orange : "#0F9ED5",
+      endDate: c.endDate,
+    }));
+
+  // ── 사업장별 인건비 BarChart 데이터 ──
+  const siteLaborMap = {};
+  active.forEach(e => {
+    if (!e.site_code_1) return;
+    const code = e.site_code_1;
+    if (!siteLaborMap[code]) siteLaborMap[code] = { code, name: getSiteName(code) || code, total: 0, count: 0 };
+    siteLaborMap[code].total += toNum(e.base_salary) + toNum(e.meal_allow) + toNum(e.leader_allow) + toNum(e.childcare_allow);
+    siteLaborMap[code].count++;
+  });
+  const siteLaborData = Object.values(siteLaborMap)
+    .filter(s => s.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .map(s => ({ name: s.name.length > 6 ? s.name.slice(0, 6) + ".." : s.name, fullName: s.name, 인건비: Math.round(s.total / 10000), count: s.count }));
+
   // ── KPI 정의 (12개) ──
   const KPIS = [
     { icon: "👥", label: "총 재직",    value: `${active.length}명`,   color: C.navy,    sub: `전체 ${employees.length}명` },
@@ -1888,6 +1914,80 @@ function Dashboard({ employees, allContracts = [], onNavigate }) {
               </div>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── 계약만료 간트 + 사업장별 인건비 ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+        {/* 계약만료 타임라인 간트 */}
+        <div style={{ ...cardStyle }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>📋 계약만료 타임라인 <span style={{ fontSize: 11, fontWeight: 600, color: C.gray }}>향후 90일</span></h3>
+          {ganttData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={Math.max(160, ganttData.length * 28 + 30)}>
+              <BarChart data={ganttData} layout="vertical" margin={{ top: 5, right: 30, left: 5, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.lightGray} horizontal={false} />
+                <XAxis type="number" tick={{ fontSize: 10 }} label={{ value: "D-day", position: "insideBottomRight", fontSize: 10, fill: C.gray }} />
+                <YAxis type="category" dataKey="name" width={130} tick={{ fontSize: 10 }} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}` }}
+                  formatter={(v, name, props) => {
+                    const item = props.payload;
+                    return [`${v <= 0 ? "만료 D+" + Math.abs(v) : "D-" + v} (${item.endDate})`, "잔여"];
+                  }} />
+                <Bar dataKey="dday" radius={[0, 4, 4, 0]} maxBarSize={18}>
+                  {ganttData.map((d, i) => <Cell key={i} fill={d.fill} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ padding: 30, textAlign: "center", color: C.gray, fontSize: 13 }}>
+              90일 이내 만료 예정 계약이 없습니다
+            </div>
+          )}
+          {ganttData.length > 0 && (
+            <div style={{ display: "flex", gap: 10, marginTop: 8, justifyContent: "center" }}>
+              {[
+                { label: "만료초과", color: C.error },
+                { label: "D-7", color: "#E53935" },
+                { label: "D-30", color: C.orange },
+                { label: "D-90", color: "#0F9ED5" },
+              ].map(l => (
+                <div key={l.label} style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <div style={{ width: 8, height: 8, borderRadius: 2, background: l.color }} />
+                  <span style={{ fontSize: 10, color: C.gray }}>{l.label}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 사업장별 인건비 */}
+        <div style={{ ...cardStyle }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>💰 사업장별 인건비 <span style={{ fontSize: 11, fontWeight: 600, color: C.gray }}>단위: 만원</span></h3>
+          {siteLaborData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={siteLaborData} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke={C.lightGray} />
+                <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-30} textAnchor="end" height={50} />
+                <YAxis tick={{ fontSize: 10 }} tickFormatter={v => fmt(v)} />
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}` }}
+                  formatter={(v, name, props) => [`${fmt(v)}만원 (${props.payload.count}명)`, props.payload.fullName]}
+                  labelFormatter={() => ""} />
+                <Bar dataKey="인건비" radius={[4, 4, 0, 0]} maxBarSize={32}>
+                  {siteLaborData.map((d, i) => <Cell key={i} fill={i === 0 ? C.navy : i < 3 ? "#3949AB" : "#5C6BC0"} />)}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ padding: 30, textAlign: "center", color: C.gray, fontSize: 13 }}>
+              인건비 데이터가 없습니다
+            </div>
+          )}
+          {siteLaborData.length > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 8, padding: "8px 12px", background: "#EFF6FF", borderRadius: 8 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: C.navy }}>전체 인건비 합계</span>
+              <span style={{ fontSize: 13, fontWeight: 900, color: C.navy, fontFamily: FONT }}>{totalSalary >= 100000000 ? `${(totalSalary / 100000000).toFixed(2)}억원` : `${fmt(Math.round(totalSalary / 10000))}만원`}</span>
+            </div>
+          )}
         </div>
       </div>
     </div>
