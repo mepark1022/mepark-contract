@@ -1510,70 +1510,177 @@ function MainDashboard({ employees, onNavigate, profitState }) {
 
 // ── 10-1. HR 대시보드 ──────────────────────────────────
 function Dashboard({ employees }) {
-  const active = employees.filter(e => e.status === "재직");
-  const weekday = active.filter(e => ["weekday"].includes(getWorkCat(e.work_code)));
-  const weekend = active.filter(e => ["weekend"].includes(getWorkCat(e.work_code)));
-  const mixed = active.filter(e => getWorkCat(e.work_code) === "mixed");
+  const today = new Date();
+  const ym = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+
+  const active  = employees.filter(e => e.status === "재직");
+  const retired = employees.filter(e => e.status === "퇴사");
+  const weekday  = active.filter(e => getWorkCat(e.work_code) === "weekday");
+  const weekend  = active.filter(e => getWorkCat(e.work_code) === "weekend");
+  const mixed    = active.filter(e => getWorkCat(e.work_code) === "mixed");
   const parttime = active.filter(e => getWorkCat(e.work_code) === "parttime");
+
+  const newHires   = active.filter(e => e.hire_date && e.hire_date.startsWith(ym));
+  const newRetired = retired.filter(e => e.resign_date && e.resign_date.startsWith(ym));
+
   const totalSalary = active.reduce((s, e) => s + toNum(e.base_salary) + toNum(e.meal_allow) + toNum(e.leader_allow) + toNum(e.childcare_allow), 0);
-
-  const probAlerts = active.filter(e => {
-    if (!e.probation_months || !e.hire_date) return false;
-    const end = new Date(e.hire_date);
-    end.setMonth(end.getMonth() + e.probation_months);
-    const d = dDay(localDateStr(end));
-    return d !== null && d >= -7 && d <= 14;
-  }).map(e => {
-    const end = new Date(e.hire_date);
-    end.setMonth(end.getMonth() + e.probation_months);
-    return { ...e, probEnd: localDateStr(end), dday: dDay(localDateStr(end)) };
-  });
-
   const activeSites = [...new Set(active.map(e => e.site_code_1))].filter(Boolean);
 
-  const StatCard = ({ icon, value, label, sub, color }) => (
-    <div style={{ background: C.white, borderRadius: 12, padding: "18px 16px", border: `1px solid ${C.border}`, flex: 1, minWidth: 140 }}>
-      <div style={{ fontSize: 24, marginBottom: 6 }}>{icon}</div>
-      <div style={{ fontSize: 28, fontWeight: 900, color: color || C.navy, fontFamily: FONT }}>{value}</div>
-      <div style={{ fontSize: 12, color: C.gray, fontWeight: 600, marginTop: 2 }}>{label}</div>
-      {sub && <div style={{ fontSize: 11, color: C.gray, marginTop: 2 }}>{sub}</div>}
-    </div>
-  );
+  // 수습 상태 분류
+  const probList = active.filter(e => e.probation_months && e.hire_date).map(e => {
+    const end = new Date(e.hire_date);
+    end.setMonth(end.getMonth() + parseInt(e.probation_months));
+    const d = dDay(localDateStr(end));
+    return { ...e, probEnd: localDateStr(end), dday: d };
+  }).filter(e => e.dday !== null && e.dday >= -7);
+
+  const probActive  = probList.filter(e => e.dday > 7);
+  const probExpiring = probList.filter(e => e.dday >= -7 && e.dday <= 7);
+
+  // 퇴사사유 분포
+  const resignReasons = {};
+  retired.forEach(e => {
+    const r = e.resign_reason || "미기재";
+    resignReasons[r] = (resignReasons[r] || 0) + 1;
+  });
+
+  // ── KPI 정의 (12개) ──
+  const KPIS = [
+    { icon: "👥", label: "총 재직",    value: `${active.length}명`,   color: C.navy,    sub: `전체 ${employees.length}명` },
+    { icon: "📥", label: "이달 입사",  value: `${newHires.length}명`,   color: newHires.length > 0 ? C.success : C.gray, sub: ym },
+    { icon: "📤", label: "이달 퇴직",  value: `${newRetired.length}명`, color: newRetired.length > 0 ? C.error : C.gray, sub: ym },
+    { icon: "📅", label: "평일 근무",  value: `${weekday.length}명`,   color: C.navy,    sub: "A~D / AP~DP" },
+    { icon: "🗓", label: "주말 근무",  value: `${weekend.length}명`,   color: C.orange,  sub: "E~G / EP~GP" },
+    { icon: "🔄", label: "복합 근무",  value: `${mixed.length}명`,     color: "#0F9ED5", sub: "AE·CG·CPF 등" },
+    { icon: "🕐", label: "알바",       value: `${parttime.length}명`,  color: C.gray,    sub: "W코드" },
+    { icon: "⏳", label: "수습 중",    value: `${probActive.length}명`,color: C.orange,  sub: `만료 8일+ 남음` },
+    { icon: "⚠️", label: "수습 만료임박", value: `${probExpiring.length}명`, color: probExpiring.length > 0 ? C.error : C.gray, sub: "±7일 이내" },
+    { icon: "💰", label: "월 고정급",  value: totalSalary >= 100000000 ? `${(totalSalary/100000000).toFixed(1)}억` : totalSalary >= 10000000 ? `${Math.floor(totalSalary/10000000)}천만` : `${fmt(Math.round(totalSalary/10000))}만`, color: C.success, sub: "재직자 합계" },
+    { icon: "🏢", label: "운영 사업장", value: `${activeSites.length}개`, color: C.navy, sub: "재직자 기준" },
+    { icon: "🔴", label: "이달 퇴사율", value: employees.length > 0 ? `${((newRetired.length / employees.length) * 100).toFixed(1)}%` : "0%", color: newRetired.length > 0 ? C.error : C.gray, sub: "퇴사/전체" },
+  ];
+
+  // 사업장별 인원 집계
+  const siteEmpMap = {};
+  active.forEach(e => {
+    if (!e.site_code_1) return;
+    if (!siteEmpMap[e.site_code_1]) siteEmpMap[e.site_code_1] = { weekday: 0, weekend: 0, mixed: 0, parttime: 0 };
+    const cat = getWorkCat(e.work_code);
+    if (siteEmpMap[e.site_code_1][cat] !== undefined) siteEmpMap[e.site_code_1][cat]++;
+  });
 
   return (
     <div>
-      <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 20px" }}>📊 대시보드</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 20px" }}>📊 HR 대시보드</h2>
 
-      {/* 지표 카드 */}
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 20 }}>
-        <StatCard icon="👥" value={active.length} label="총 재직 인원" sub={`퇴직 ${employees.length - active.length}명`} />
-        <StatCard icon="📅" value={`${weekday.length}/${weekend.length}/${mixed.length}`} label="평일/주말/복합" />
-        <StatCard icon="💰" value={`${fmt(totalSalary)}원`} label="월 고정급 합계" color={C.success} />
-        <StatCard icon="🏢" value={activeSites.length} label="운영 사업장" />
-        <StatCard icon="⏰" value={probAlerts.length} label="수습 종료 임박" color={probAlerts.length > 0 ? C.orange : C.gray} />
+      {/* ── 12 KPI 스트립 ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 20 }}>
+        {KPIS.map(({ icon, label, value, color, sub }) => (
+          <div key={label} style={{ background: C.white, borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}`, borderTop: `3px solid ${color}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ fontSize: 16 }}>{icon}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>{label}</span>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color, fontFamily: FONT, lineHeight: 1.1 }}>{value}</div>
+            {sub && <div style={{ fontSize: 9, color: C.gray, marginTop: 3 }}>{sub}</div>}
+          </div>
+        ))}
       </div>
 
-      {/* 수습 알림 */}
-      {probAlerts.length > 0 && (
-        <div style={{ ...cardStyle, borderLeft: `4px solid ${C.orange}` }}>
-          <h3 style={{ fontSize: 14, fontWeight: 800, color: C.orange, margin: "0 0 12px" }}>⏰ 수습 종료 임박 알림</h3>
-          {probAlerts.map(a => (
-            <div key={a.id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "8px 0", borderBottom: `1px solid ${C.lightGray}` }}>
-              <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{a.emp_no}</span>
-              <span style={{ fontSize: 13, fontWeight: 800, color: C.dark }}>{a.name}</span>
-              <span style={{ fontSize: 11, color: C.gray }}>{getSiteName(a.site_code_1)}</span>
-              <span style={{ fontSize: 11, color: C.gray }}>종료: {dateFmt(a.probEnd)}</span>
-              <span style={{
-                fontSize: 11, fontWeight: 800, padding: "2px 10px", borderRadius: 10,
-                background: a.dday <= 0 ? "#FEE2E2" : "#FFF3E0",
-                color: a.dday <= 0 ? C.error : C.orange,
-              }}>
-                D{a.dday <= 0 ? a.dday : "−" + a.dday}
-              </span>
-            </div>
-          ))}
+      {/* ── 수습 만료 임박 알림 ── */}
+      {probExpiring.length > 0 && (
+        <div style={{ background: "#FFF8E1", border: `1.5px solid ${C.orange}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.orange, marginBottom: 10 }}>⚠️ 수습 만료 임박 ({probExpiring.length}명)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {probExpiring.map(a => (
+              <div key={a.id} style={{ background: C.white, borderRadius: 8, padding: "8px 14px", border: `1px solid ${a.dday <= 0 ? C.error : C.orange}`, display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{a.name}</span>
+                <span style={{ fontSize: 11, color: C.gray }}>{getSiteName(a.site_code_1)}</span>
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6,
+                  background: a.dday <= 0 ? "#FFEBEE" : "#FFF3E0",
+                  color: a.dday <= 0 ? C.error : C.orange }}>
+                  {a.dday <= 0 ? `D+${Math.abs(a.dday)}` : `D-${a.dday}`}
+                </span>
+                <span style={{ fontSize: 10, color: C.gray }}>종료 {a.probEnd}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
+
+      {/* ── 사업장별 인원 현황 + 근무유형 분포 ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        {/* 사업장별 인원 */}
+        <div style={{ ...cardStyle }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>🏢 사업장별 인원 현황</h3>
+          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
+            <thead>
+              <tr style={{ background: C.navy }}>
+                {["사업장", "평일", "주말", "복합", "알바", "계"].map(h => (
+                  <th key={h} style={{ padding: "5px 6px", color: C.white, fontWeight: 700, textAlign: "center" }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(siteEmpMap).sort((a, b) => a[0].localeCompare(b[0])).map(([code, cnt], i) => (
+                <tr key={code} style={{ background: i % 2 ? C.bg : C.white, borderBottom: `1px solid ${C.lightGray}` }}>
+                  <td style={{ padding: "5px 6px", fontWeight: 700 }}>{getSiteName(code)}</td>
+                  <td style={{ padding: "5px 6px", textAlign: "center", color: C.navy }}>{cnt.weekday || "—"}</td>
+                  <td style={{ padding: "5px 6px", textAlign: "center", color: C.orange }}>{cnt.weekend || "—"}</td>
+                  <td style={{ padding: "5px 6px", textAlign: "center", color: "#0F9ED5" }}>{cnt.mixed || "—"}</td>
+                  <td style={{ padding: "5px 6px", textAlign: "center", color: C.gray }}>{cnt.parttime || "—"}</td>
+                  <td style={{ padding: "5px 6px", textAlign: "center", fontWeight: 800 }}>{(cnt.weekday || 0) + (cnt.weekend || 0) + (cnt.mixed || 0) + (cnt.parttime || 0)}</td>
+                </tr>
+              ))}
+              <tr style={{ background: "#EFF6FF", fontWeight: 800 }}>
+                <td style={{ padding: "5px 6px" }}>합계</td>
+                <td style={{ padding: "5px 6px", textAlign: "center", color: C.navy }}>{weekday.length}</td>
+                <td style={{ padding: "5px 6px", textAlign: "center", color: C.orange }}>{weekend.length}</td>
+                <td style={{ padding: "5px 6px", textAlign: "center", color: "#0F9ED5" }}>{mixed.length}</td>
+                <td style={{ padding: "5px 6px", textAlign: "center", color: C.gray }}>{parttime.length}</td>
+                <td style={{ padding: "5px 6px", textAlign: "center", fontWeight: 800, color: C.navy }}>{active.length}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* 퇴사 현황 + 근무유형 분포 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+          {/* 근무유형 분포 바 */}
+          <div style={{ ...cardStyle }}>
+            <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>📊 근무유형 분포</h3>
+            {[
+              { label: "평일", count: weekday.length, color: C.navy },
+              { label: "주말", count: weekend.length, color: C.orange },
+              { label: "복합", count: mixed.length, color: "#0F9ED5" },
+              { label: "알바", count: parttime.length, color: C.gray },
+            ].map(({ label, count, color }) => (
+              <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
+                <span style={{ width: 28, fontSize: 11, fontWeight: 700, color }}>{label}</span>
+                <div style={{ flex: 1, height: 14, background: C.lightGray, borderRadius: 7, overflow: "hidden" }}>
+                  <div style={{ width: `${active.length > 0 ? (count / active.length) * 100 : 0}%`, height: "100%", background: color, borderRadius: 7, transition: "width 0.4s" }} />
+                </div>
+                <span style={{ width: 36, fontSize: 11, fontWeight: 800, textAlign: "right", color }}>{count}명</span>
+                <span style={{ width: 32, fontSize: 10, color: C.gray }}>{active.length > 0 ? ((count / active.length) * 100).toFixed(0) : 0}%</span>
+              </div>
+            ))}
+          </div>
+
+          {/* 퇴사사유 분포 */}
+          {retired.length > 0 && (
+            <div style={{ ...cardStyle }}>
+              <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 10px" }}>📤 퇴사 현황 <span style={{ fontSize: 11, fontWeight: 600, color: C.gray }}>총 {retired.length}명</span></h3>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {Object.entries(resignReasons).sort((a, b) => b[1] - a[1]).map(([r, n]) => (
+                  <span key={r} style={{ padding: "4px 10px", borderRadius: 8, fontSize: 11, fontWeight: 700, background: r === "미기재" ? C.lightGray : "#FEE2E2", color: r === "미기재" ? C.gray : C.error }}>
+                    {r} {n}명
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
