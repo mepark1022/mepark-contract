@@ -143,6 +143,27 @@ const getSiteName = (code) => SITES.find(s => s.code === code)?.name || "";
 const getWorkLabel = (code) => WORK_CODES.find(w => w.code === code)?.label || code;
 const getWorkCat = (code) => WORK_CODES.find(w => w.code === code)?.cat || "weekday";
 
+// ★ F1: 근로계약 만료 알림 — 5단계 판정 헬퍼
+// tier: 0=만료초과, 1=D-day, 2=D-7이내(긴급), 3=D-30이내(주의), 4=D-90이내(사전안내), 5=여유
+const getContractExpiryInfo = (emp, allContracts) => {
+  if (emp.status !== "재직" || !allContracts.length) return null;
+  // 해당 직원의 최신 확정 계약 중 end_date가 있는 것
+  const empContracts = allContracts
+    .filter(c => c.emp_no === emp.emp_no && c.end_date && (c.status === "확정" || c.status === "갱신"))
+    .sort((a, b) => (b.end_date || "").localeCompare(a.end_date || ""));
+  if (!empContracts.length) return null;
+  const latest = empContracts[0];
+  const d = dDay(latest.end_date);
+  if (d === null) return null;
+  if (d < -30) return null; // 만료 30일 이상 경과 → 표시 안 함
+  if (d < 0) return { label: "계약만료", color: "#B71C1C", bg: "#FFCDD2", d, tier: 0, endDate: latest.end_date };
+  if (d === 0) return { label: "오늘 만료!", color: "#E53935", bg: "#FFEBEE", d, tier: 1, endDate: latest.end_date };
+  if (d <= 7) return { label: `만료 D-${d}`, color: "#E53935", bg: "#FFEBEE", d, tier: 2, endDate: latest.end_date };
+  if (d <= 30) return { label: `30일 이내`, color: "#E97132", bg: "#FFF3E0", d, tier: 3, endDate: latest.end_date };
+  if (d <= 90) return { label: `갱신예정`, color: "#0F9ED5", bg: "#E0F2FE", d, tier: 4, endDate: latest.end_date };
+  return null; // 90일 초과 → 표시 안 함
+};
+
 // ── 사번 자동생성 ──
 function generateEmpNo(employees, { siteCode, workCode, hireDate }) {
   const isAlba = workCode === "W";
@@ -947,7 +968,7 @@ const DEFAULT_ARTICLES_PARTTIME = {
 };
 
 // ── 10. 메인 대시보드 (통합 홈) ── Phase C 업그레이드 ──────
-function MainDashboard({ employees, onNavigate, profitState }) {
+function MainDashboard({ employees, allContracts = [], onNavigate, profitState }) {
   const { profitMonth: currentMonth, revenueData, overheadData, monthlyParkingData = [], laborData = {}, siteDetailsMap = {}, dailyReportSummary = {}, valetFeeData = {}, cashflowItems = {}, cashflowBalances = {} } = profitState;
   const [period, setPeriod] = useState("month");
   const [plSortBy, setPlSortBy] = useState("profit");
@@ -997,6 +1018,15 @@ function MainDashboard({ employees, onNavigate, profitState }) {
     const d = dDay(localDateStr(end));
     return { ...e, probEnd: localDateStr(end), dday: d };
   }).filter(e => e.dday !== null && e.dday >= -7 && e.dday <= 7);
+
+  // ★ F1: 계약만료 임박 (D-7 이내) — 메인대시보드 알림 카드
+  const contractExpiring = useMemo(() => {
+    return active.map(e => {
+      const ci = getContractExpiryInfo(e, allContracts);
+      if (!ci || ci.tier > 2) return null; // tier 0=만료초과, 1=D-day, 2=D-7 이내만
+      return { ...e, ...ci };
+    }).filter(Boolean).sort((a, b) => a.d - b.d);
+  }, [active, allContracts]);
 
   // 수익성 계산 (ProfitabilityPage와 동일 로직)
   const monthRevenue = revenueData[currentMonth] || {};
@@ -1190,6 +1220,30 @@ function MainDashboard({ employees, onNavigate, profitState }) {
                   {a.dday <= 0 ? `D+${Math.abs(a.dday)}` : `D-${a.dday}`}
                 </span>
                 <span style={{ fontSize: 10, color: C.gray }}>종료 {a.probEnd}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── 근로계약 만료 임박 알림 (F1) ── */}
+      {contractExpiring.length > 0 && (
+        <div style={{ background: "#FFEBEE", border: `1.5px solid ${C.error}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: C.error }}>📋 근로계약 만료 임박 ({contractExpiring.length}명)</span>
+            <span onClick={() => onNavigate("dashboard")} style={{ fontSize: 11, fontWeight: 700, color: C.navy, cursor: "pointer", textDecoration: "underline" }}>HR 대시보드 →</span>
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {contractExpiring.map(a => (
+              <div key={a.id} style={{ background: "#fff", borderRadius: 8, padding: "8px 14px", border: `1px solid ${a.d <= 0 ? C.error : C.orange}`, display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{a.name}</span>
+                <span style={{ fontSize: 11, color: C.gray }}>{getSiteName(a.site_code_1)}</span>
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6,
+                  background: a.d <= 0 ? "#FFEBEE" : "#FFF3E0",
+                  color: a.d <= 0 ? C.error : C.orange }}>
+                  {a.d === 0 ? "오늘 만료!" : a.d < 0 ? `만료 D+${Math.abs(a.d)}` : `D-${a.d}`}
+                </span>
+                <span style={{ fontSize: 10, color: C.gray }}>만기 {a.endDate}</span>
               </div>
             ))}
           </div>
@@ -1541,7 +1595,7 @@ function MainDashboard({ employees, onNavigate, profitState }) {
 }
 
 // ── 10-1. HR 대시보드 ──────────────────────────────────
-function Dashboard({ employees }) {
+function Dashboard({ employees, allContracts = [] }) {
   const today = new Date();
   const ym = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
@@ -1568,6 +1622,18 @@ function Dashboard({ employees }) {
 
   const probActive  = probList.filter(e => e.dday > 7);
   const probExpiring = probList.filter(e => e.dday >= -7 && e.dday <= 7);
+
+  // ★ F1: 계약만료 알림 분류
+  const contractExpiryList = active.map(e => {
+    const ci = getContractExpiryInfo(e, allContracts);
+    return ci ? { ...e, ...ci } : null;
+  }).filter(Boolean);
+  const contractExpired   = contractExpiryList.filter(c => c.tier === 0);  // 만료 초과
+  const contractUrgent    = contractExpiryList.filter(c => c.tier <= 2);   // D-7 이내 + D-day + 만료초과
+  const contractWarning   = contractExpiryList.filter(c => c.tier <= 3);   // D-30 이내
+  const contractNotice    = contractExpiryList.filter(c => c.tier <= 4);   // D-90 이내 전체
+  // 금월 갱신 건수
+  const renewedThisMonth  = allContracts.filter(c => c.status === "갱신" && c.updated_at && c.updated_at.startsWith(ym)).length;
 
   // 퇴사사유 분포
   const resignReasons = {};
@@ -1626,7 +1692,7 @@ function Dashboard({ employees }) {
       <h2 style={{ fontSize: 18, fontWeight: 900, color: C.dark, margin: "0 0 20px" }}>📊 HR 대시보드</h2>
 
       {/* ── 12 KPI 스트립 ── */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 20 }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 10, marginBottom: 12 }}>
         {KPIS.map(({ icon, label, value, color, sub }) => (
           <div key={label} style={{ background: C.white, borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}`, borderTop: `3px solid ${color}` }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
@@ -1638,6 +1704,42 @@ function Dashboard({ employees }) {
           </div>
         ))}
       </div>
+
+      {/* ── F1: 계약현황 KPI 4개 ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10, marginBottom: 20 }}>
+        {[
+          { icon: "📋", label: "계약 만료 임박", value: `${contractWarning.length}명`, color: contractWarning.length > 0 ? C.orange : C.gray, sub: "D-30 이내", borderColor: C.orange },
+          { icon: "🔴", label: "계약 만료 초과", value: `${contractExpired.length}명`, color: contractExpired.length > 0 ? C.error : C.gray, sub: "즉시 갱신 필요", borderColor: C.error },
+          { icon: "🔄", label: "금월 계약 갱신", value: `${renewedThisMonth}건`, color: renewedThisMonth > 0 ? C.success : C.gray, sub: ym, borderColor: C.success },
+          { icon: "📅", label: "갱신 예정", value: `${contractNotice.length}명`, color: contractNotice.length > 0 ? "#0F9ED5" : C.gray, sub: "D-90 이내 전체", borderColor: "#0F9ED5" },
+        ].map(({ icon, label, value, color, sub, borderColor }) => (
+          <div key={label} style={{ background: C.white, borderRadius: 10, padding: "12px 14px", border: `1px solid ${C.border}`, borderTop: `3px solid ${borderColor}` }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+              <span style={{ fontSize: 16 }}>{icon}</span>
+              <span style={{ fontSize: 10, fontWeight: 700, color: C.gray }}>{label}</span>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 900, color, fontFamily: FONT, lineHeight: 1.1 }}>{value}</div>
+            {sub && <div style={{ fontSize: 9, color: C.gray, marginTop: 3 }}>{sub}</div>}
+          </div>
+        ))}
+      </div>
+
+      {/* ── F1: 계약 만료 알림 (D-30 이내) ── */}
+      {contractWarning.length > 0 && (
+        <div style={{ background: "#FFEBEE", border: `1.5px solid ${C.error}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: C.error, marginBottom: 10 }}>📋 근로계약 만료 알림 ({contractWarning.length}명)</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {contractWarning.sort((a, b) => a.d - b.d).map(a => (
+              <div key={a.id} style={{ background: "#fff", borderRadius: 8, padding: "8px 14px", border: `1px solid ${a.color}`, display: "flex", gap: 10, alignItems: "center" }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{a.name}</span>
+                <span style={{ fontSize: 11, color: C.gray }}>{getSiteName(a.site_code_1)}</span>
+                <span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6, background: a.bg, color: a.color }}>{a.label}</span>
+                <span style={{ fontSize: 10, color: C.gray }}>만기 {a.endDate}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* ── 수습 만료 임박 알림 ── */}
       {probExpiring.length > 0 && (
@@ -1787,7 +1889,7 @@ function Dashboard({ employees }) {
 }
 
 // ── 11. 직원대장 ──────────────────────────────────────
-function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, onResign, onCertificate, onReload, onNavigate }) {
+function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmployee, onContract, onResign, onCertificate, onReload, onNavigate }) {
   const { can, callAdminApi, createAccount, removeAdmin, updateRole, user, changePassword, profile: myProfile, profiles, loadData: reloadAuth } = useAuth();
   const confirm = useConfirm();
   const [filter, setFilter] = useState({ site: "", cat: "", status: "재직", tax: "", search: "", account: "", role: "" });
@@ -2335,6 +2437,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                     <span>{e.name}</span>
                     {e.account_status === "active" && <span title={`계정: ${e.account_email || e.system_role}`} style={{ fontSize: 9, padding: "1px 4px", borderRadius: 4, background: "#EDE7F6", color: "#7B1FA2", fontWeight: 800 }}>🔗</span>}
                     {(() => { const p = getProbInfo(e); return p ? <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, fontWeight: 800, background: p.bg, color: p.color, whiteSpace: "nowrap" }}>{p.label}</span> : null; })()}
+                    {(() => { const ci = getContractExpiryInfo(e, allContracts); return ci ? <span title={`만기 ${ci.endDate}`} style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, fontWeight: 800, background: ci.bg, color: ci.color, whiteSpace: "nowrap" }}>{ci.label}</span> : null; })()}
                   </div>
                 </td>
                 <td style={{ padding: "8px", textAlign: "center", color: C.gray }}>{e.position}</td>
@@ -2462,6 +2565,7 @@ function EmployeeRoster({ employees, saveEmployee, deleteEmployee, onContract, o
                     {infoRow("수습기간", se.probation_months ? `${se.probation_months}개월` : "없음")}
                     {se.probation_end && infoRow("수습종료일", se.probation_end)}
                     {(() => { const p = getProbInfo(se); return p ? <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}><span style={{ fontSize: 11, color: C.gray }}>수습상태</span><span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6, background: p.bg, color: p.color }}>{p.label}</span></div> : null; })()}
+                    {(() => { const ci = getContractExpiryInfo(se, allContracts); return ci ? <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}><span style={{ fontSize: 11, color: C.gray }}>계약상태</span><span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6, background: ci.bg, color: ci.color }}>{ci.label} ({ci.endDate})</span></div> : null; })()}
                     {infoRow("상태", se.status)}
                     {se.resign_date && infoRow("퇴사일", se.resign_date)}
                     {se.resign_reason && infoRow("퇴사사유", se.resign_reason)}
@@ -12902,6 +13006,7 @@ function MainApp() {
   const [jumpDate, setJumpDate] = useState(null);
   const [jumpSite, setJumpSite] = useState(null);
   const [employees, setEmployees] = useState([]);
+  const [allContracts, setAllContracts] = useState([]); // ★ F1: 계약만료 알림용 전역 계약 데이터
   const [contractEmp, setContractEmp] = useState(null);
   const [docTargetEmp, setDocTargetEmp] = useState(null);
   const [contractEdit, setContractEdit] = useState(null);
@@ -13092,7 +13197,13 @@ function MainApp() {
     setEmpLoading(false);
   };
 
-  useEffect(() => { (async () => { await loadSiteDetails(); loadEmployees(); loadCostData(); loadMonthlyParking(); loadDailyReportSummary(); loadCashflow(); })(); }, []);
+  // ★ F1: 전역 계약 데이터 로딩 (계약만료 알림용)
+  const loadAllContracts = async () => {
+    const { data } = await supabase.from("contracts").select("id,emp_no,emp_name,end_date,status,contract_type,work_site,updated_at").order("updated_at", { ascending: false });
+    if (data) setAllContracts(data);
+  };
+
+  useEffect(() => { (async () => { await loadSiteDetails(); loadEmployees(); loadAllContracts(); loadCostData(); loadMonthlyParking(); loadDailyReportSummary(); loadCashflow(); })(); }, []);
 
   // 직원 추가/수정
   const saveEmployee = async (emp) => {
@@ -13303,15 +13414,15 @@ function MainApp() {
 
       {/* 메인 콘텐츠 */}
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
-        {page === "main_dashboard" && <MainDashboard employees={employees} onNavigate={setPage} profitState={profitState} />}
-        {page === "dashboard" && <Dashboard employees={employees} />}
-        {page === "employees" && <EmployeeRoster employees={employees} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onCertificate={goCertificate} onReload={loadEmployees} onNavigate={setPage} />}
-        {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={() => {}} />}
+        {page === "main_dashboard" && <MainDashboard employees={employees} allContracts={allContracts} onNavigate={setPage} profitState={profitState} />}
+        {page === "dashboard" && <Dashboard employees={employees} allContracts={allContracts} />}
+        {page === "employees" && <EmployeeRoster employees={employees} allContracts={allContracts} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onCertificate={goCertificate} onReload={loadEmployees} onNavigate={setPage} />}
+        {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={loadAllContracts} />}
         {page === "history" && <ContractHistory employees={employees} onEditContract={goEditContract} onNewContract={goNewContract} />}
         {page === "resignation" && <Resignation employees={employees} initialEmp={docTargetEmp} />}
         {page === "certificate" && <Certificate employees={employees} initialEmp={docTargetEmp} />}
         {page === "settings" && <Settings />}
-        {page === "profit_summary" && <><MainDashboard employees={employees} onNavigate={setPage} profitState={profitState} /><ProfitabilityPage employees={employees} subPage="summary" profitState={profitState} /></>}
+        {page === "profit_summary" && <><MainDashboard employees={employees} allContracts={allContracts} onNavigate={setPage} profitState={profitState} /><ProfitabilityPage employees={employees} subPage="summary" profitState={profitState} /></>}
         {page === "profit_site_pl" && <ProfitabilityPage employees={employees} subPage="site_pl" profitState={profitState} />}
         {page === "profit_cost_input" && <ProfitabilityPage employees={employees} subPage="cost_input" profitState={profitState} />}
         {page === "profit_comparison" && <ProfitabilityPage employees={employees} subPage="comparison" profitState={profitState} />}
