@@ -1207,7 +1207,10 @@ function MainDashboard({ employees, allContracts = [], onNavigate, profitState }
         <div style={{ background: "#FFF8E1", border: `1.5px solid ${C.orange}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: C.orange }}>⚠️ 수습 만료 임박 ({probExpiring.length}명)</span>
-            <span onClick={() => onNavigate("dashboard")} style={{ fontSize: 11, fontWeight: 700, color: C.navy, cursor: "pointer", textDecoration: "underline" }}>HR 대시보드 →</span>
+            <div style={{ display: "flex", gap: 12 }}>
+              <span onClick={() => onNavigate("employees")} style={{ fontSize: 11, fontWeight: 700, color: C.orange, cursor: "pointer", textDecoration: "underline" }}>전환 처리 →</span>
+              <span onClick={() => onNavigate("dashboard")} style={{ fontSize: 11, fontWeight: 700, color: C.navy, cursor: "pointer", textDecoration: "underline" }}>HR 대시보드 →</span>
+            </div>
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {probExpiring.map(a => (
@@ -1595,7 +1598,7 @@ function MainDashboard({ employees, allContracts = [], onNavigate, profitState }
 }
 
 // ── 10-1. HR 대시보드 ──────────────────────────────────
-function Dashboard({ employees, allContracts = [] }) {
+function Dashboard({ employees, allContracts = [], onNavigate }) {
   const today = new Date();
   const ym = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 
@@ -1744,7 +1747,10 @@ function Dashboard({ employees, allContracts = [] }) {
       {/* ── 수습 만료 임박 알림 ── */}
       {probExpiring.length > 0 && (
         <div style={{ background: "#FFF8E1", border: `1.5px solid ${C.orange}`, borderRadius: 12, padding: "14px 18px", marginBottom: 16 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, color: C.orange, marginBottom: 10 }}>⚠️ 수습 만료 임박 ({probExpiring.length}명)</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontSize: 13, fontWeight: 800, color: C.orange }}>⚠️ 수습 만료 임박 ({probExpiring.length}명)</span>
+            {onNavigate && <span onClick={() => onNavigate("employees")} style={{ fontSize: 11, fontWeight: 700, color: C.navy, cursor: "pointer", textDecoration: "underline" }}>직원현황에서 전환 처리 →</span>}
+          </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {probExpiring.map(a => (
               <div key={a.id} style={{ background: C.white, borderRadius: 8, padding: "8px 14px", border: `1px solid ${a.dday <= 0 ? C.error : C.orange}`, display: "flex", gap: 10, alignItems: "center" }}>
@@ -1912,6 +1918,9 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
   const [editResign, setEditResign] = useState({ status: "재직", resign_date: "", resign_reason: "", resign_detail: "", severance_amount: 0, final_pay_date: "" });
   const [resignSaving, setResignSaving] = useState(false);
   const [resignMsg, setResignMsg] = useState("");
+
+  // ── v10.1 F2: 수습→정규 전환 워크플로우 state ──
+  const [probTransModal, setProbTransModal] = useState(null); // { emp, action: null|'convert'|'extend'|'terminate', newSalary: 0, extendMonths: 1 }
 
   // ── v9.1: 계정 통합 — bulk/pw 상태 ──
   const [showBulk, setShowBulk] = useState(false);
@@ -2436,7 +2445,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                   <div style={{ display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
                     <span>{e.name}</span>
                     {e.account_status === "active" && <span title={`계정: ${e.account_email || e.system_role}`} style={{ fontSize: 9, padding: "1px 4px", borderRadius: 4, background: "#EDE7F6", color: "#7B1FA2", fontWeight: 800 }}>🔗</span>}
-                    {(() => { const p = getProbInfo(e); return p ? <span style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, fontWeight: 800, background: p.bg, color: p.color, whiteSpace: "nowrap" }}>{p.label}</span> : null; })()}
+                    {(() => { const p = getProbInfo(e); return p ? <span onClick={ev => { ev.stopPropagation(); setProbTransModal({ emp: e, action: null, newSalary: e.base_salary || 0, extendMonths: 1 }); }} style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, fontWeight: 800, background: p.bg, color: p.color, whiteSpace: "nowrap", cursor: "pointer" }} title="클릭하여 수습 전환 처리">{p.label}</span> : null; })()}
                     {(() => { const ci = getContractExpiryInfo(e, allContracts); return ci ? <span title={`만기 ${ci.endDate}`} style={{ fontSize: 9, padding: "2px 5px", borderRadius: 4, fontWeight: 800, background: ci.bg, color: ci.color, whiteSpace: "nowrap" }}>{ci.label}</span> : null; })()}
                   </div>
                 </td>
@@ -2564,7 +2573,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     {infoRow("근무조건", se.employment_type)}
                     {infoRow("수습기간", se.probation_months ? `${se.probation_months}개월` : "없음")}
                     {se.probation_end && infoRow("수습종료일", se.probation_end)}
-                    {(() => { const p = getProbInfo(se); return p ? <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}><span style={{ fontSize: 11, color: C.gray }}>수습상태</span><span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6, background: p.bg, color: p.color }}>{p.label}</span></div> : null; })()}
+                    {(() => { const p = getProbInfo(se); return p ? <><div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}><span style={{ fontSize: 11, color: C.gray }}>수습상태</span><div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6, background: p.bg, color: p.color }}>{p.label}</span><button onClick={() => setProbTransModal({ emp: se, action: null, newSalary: se.base_salary || 0, extendMonths: 1 })} style={{ fontSize: 10, fontWeight: 800, padding: "2px 8px", borderRadius: 6, border: `1.5px solid ${C.orange}`, background: "#FFF3E0", color: C.orange, cursor: "pointer" }}>전환 처리</button></div></div></> : null; })()}
                     {(() => { const ci = getContractExpiryInfo(se, allContracts); return ci ? <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}><span style={{ fontSize: 11, color: C.gray }}>계약상태</span><span style={{ fontSize: 11, fontWeight: 800, padding: "1px 8px", borderRadius: 6, background: ci.bg, color: ci.color }}>{ci.label} ({ci.endDate})</span></div> : null; })()}
                     {infoRow("상태", se.status)}
                     {se.resign_date && infoRow("퇴사일", se.resign_date)}
@@ -3410,6 +3419,137 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
           existingEmpNos={new Set(employees.map(e => String(e.emp_no)))}
         />
       )}
+
+      {/* ── v10.1 F2: 수습→정규 전환 모달 ── */}
+      {probTransModal && (() => {
+        const pm = probTransModal;
+        const emp = pm.emp;
+        const probEnd = (() => { const d = new Date(emp.hire_date); d.setMonth(d.getMonth() + parseInt(emp.probation_months)); return d; })();
+        const probEndStr = `${probEnd.getFullYear()}-${String(probEnd.getMonth()+1).padStart(2,"0")}-${String(probEnd.getDate()).padStart(2,"0")}`;
+        const tenure = (() => { const diff = Math.floor((new Date() - new Date(emp.hire_date)) / 86400000); return diff; })();
+        const tenureLabel = tenure >= 365 ? `${Math.floor(tenure/365)}년 ${tenure%365}일` : `${tenure}일`;
+
+        const handleConvert = async () => {
+          const ok = await confirm("정규직 전환 처리하시겠습니까?", `${emp.name} (${emp.emp_no})의 수습기간을 종료하고 정규직으로 전환합니다.${pm.newSalary > 0 ? `\n기본급: ${fmt(emp.base_salary)}원 → ${fmt(pm.newSalary)}원` : ""}`, { okLabel: "전환 확정", okColor: C.success });
+          if (!ok) return;
+          const updates = { probation_months: 0 };
+          if (pm.newSalary > 0) updates.base_salary = pm.newSalary;
+          await saveEmployee({ ...emp, ...updates });
+          setProbTransModal(null);
+        };
+        const handleExtend = async () => {
+          const months = pm.extendMonths || 1;
+          const newTotal = parseInt(emp.probation_months) + months;
+          const ok = await confirm("수습기간을 연장하시겠습니까?", `${emp.name}의 수습기간을 ${months}개월 연장합니다.\n기존 ${emp.probation_months}개월 → ${newTotal}개월`, { okLabel: "연장 확정", okColor: C.orange });
+          if (!ok) return;
+          await saveEmployee({ ...emp, probation_months: newTotal });
+          setProbTransModal(null);
+        };
+        const handleTerminate = () => {
+          setProbTransModal(null);
+          const target = employees.find(x => x.id === emp.id);
+          if (target) { setSelectedEmp(target); setDetailTab("resign"); }
+        };
+
+        const actionBtnSt = (bg, color) => ({ padding: "12px 16px", borderRadius: 10, border: "none", cursor: "pointer", fontWeight: 800, fontSize: 13, color, background: bg, flex: 1, textAlign: "center" });
+
+        return (
+          <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100 }}
+            onClick={() => setProbTransModal(null)}>
+            <div style={{ background: C.white, borderRadius: 16, width: 460, maxHeight: "88vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
+              {/* 헤더 */}
+              <div style={{ background: C.orange, padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 20 }}>🔄</span>
+                <h3 style={{ fontSize: 16, fontWeight: 900, color: "#fff", margin: 0 }}>수습 전환 처리</h3>
+              </div>
+              <div style={{ padding: 24 }}>
+                {/* 직원 정보 */}
+                <div style={{ background: "#F5F6FA", borderRadius: 12, padding: 16, marginBottom: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+                    <span style={{ fontSize: 15, fontWeight: 800, color: C.dark }}>{emp.name}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: C.gray }}>{emp.emp_no}</span>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6, fontSize: 12 }}>
+                    <div><span style={{ color: C.gray }}>사업장: </span><span style={{ fontWeight: 700 }}>{getSiteName(emp.site_code_1)}</span></div>
+                    <div><span style={{ color: C.gray }}>입사일: </span><span style={{ fontWeight: 700 }}>{emp.hire_date}</span></div>
+                    <div><span style={{ color: C.gray }}>재직기간: </span><span style={{ fontWeight: 700 }}>{tenureLabel}</span></div>
+                    <div><span style={{ color: C.gray }}>근무형태: </span><span style={{ fontWeight: 700 }}>{emp.work_code}</span></div>
+                    <div><span style={{ color: C.gray }}>수습기간: </span><span style={{ fontWeight: 700 }}>{emp.probation_months}개월</span></div>
+                    <div><span style={{ color: C.gray }}>수습종료일: </span><span style={{ fontWeight: 800, color: probEnd <= new Date() ? C.error : C.orange }}>{probEndStr}</span></div>
+                  </div>
+                  {emp.base_salary > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 12 }}><span style={{ color: C.gray }}>현재 기본급: </span><span style={{ fontWeight: 800, color: C.navy }}>{fmt(emp.base_salary)}원</span></div>
+                  )}
+                </div>
+
+                {/* 액션 선택 */}
+                {!pm.action && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                    <button onClick={() => setProbTransModal(p => ({ ...p, action: "convert", newSalary: emp.base_salary || 0 }))} style={{ ...actionBtnSt("#E8F5E9", C.success), display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      ✅ 정규직 전환 <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>— 수습 종료, 기본급 조정</span>
+                    </button>
+                    <button onClick={() => setProbTransModal(p => ({ ...p, action: "extend", extendMonths: 1 }))} style={{ ...actionBtnSt("#FFF3E0", C.orange), display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      🔄 수습 연장 <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>— 1~6개월 추가</span>
+                    </button>
+                    <button onClick={handleTerminate} style={{ ...actionBtnSt("#FFEBEE", C.error), display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      🚪 계약 종료 <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>— 퇴직 처리로 이동</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* 정규직 전환 상세 */}
+                {pm.action === "convert" && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.success, marginBottom: 14 }}>✅ 정규직 전환</div>
+                    <div style={{ background: "#E8F5E9", borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 12 }}>
+                      <p style={{ margin: "0 0 6px", fontWeight: 700, color: C.success }}>처리 내용:</p>
+                      <p style={{ margin: "2px 0", color: "#2E7D32" }}>• 수습기간 → 0 (수습 해제)</p>
+                      <p style={{ margin: "2px 0", color: "#2E7D32" }}>• 수습 뱃지 자동 제거</p>
+                      {pm.newSalary !== emp.base_salary && <p style={{ margin: "2px 0", color: "#2E7D32" }}>• 기본급 변경: {fmt(emp.base_salary)}원 → {fmt(pm.newSalary)}원</p>}
+                    </div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 6 }}>기본급 조정 (선택)</label>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 20 }}>
+                      <NumInput value={pm.newSalary} onChange={v => setProbTransModal(p => ({ ...p, newSalary: v }))} style={{ ...inputStyle, flex: 1, fontSize: 15, fontWeight: 800 }} />
+                      <span style={{ fontSize: 12, color: C.gray }}>원</span>
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setProbTransModal(p => ({ ...p, action: null }))} style={{ ...actionBtnSt("#F5F5F5", C.gray) }}>← 돌아가기</button>
+                      <button onClick={handleConvert} style={{ ...actionBtnSt(C.success, C.white) }}>✅ 전환 확정</button>
+                    </div>
+                  </div>
+                )}
+
+                {/* 수습 연장 상세 */}
+                {pm.action === "extend" && (
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 800, color: C.orange, marginBottom: 14 }}>🔄 수습 연장</div>
+                    <div style={{ background: "#FFF3E0", borderRadius: 10, padding: 14, marginBottom: 16, fontSize: 12 }}>
+                      <p style={{ margin: "0 0 6px", fontWeight: 700, color: C.orange }}>연장 후 수습기간:</p>
+                      <p style={{ margin: "2px 0", color: "#E65100" }}>• 기존 {emp.probation_months}개월 + {pm.extendMonths}개월 = {parseInt(emp.probation_months) + pm.extendMonths}개월</p>
+                    </div>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 6 }}>연장 기간 선택</label>
+                    <div style={{ display: "flex", gap: 6, marginBottom: 20 }}>
+                      {[1, 2, 3, 4, 5, 6].map(m => (
+                        <button key={m} onClick={() => setProbTransModal(p => ({ ...p, extendMonths: m }))}
+                          style={{ padding: "8px 14px", borderRadius: 8, fontWeight: 800, fontSize: 13, cursor: "pointer",
+                            border: `2px solid ${pm.extendMonths === m ? C.orange : C.border}`,
+                            background: pm.extendMonths === m ? C.orange : C.white,
+                            color: pm.extendMonths === m ? C.white : C.gray }}>
+                          {m}개월
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{ display: "flex", gap: 8 }}>
+                      <button onClick={() => setProbTransModal(p => ({ ...p, action: null }))} style={{ ...actionBtnSt("#F5F5F5", C.gray) }}>← 돌아가기</button>
+                      <button onClick={handleExtend} style={{ ...actionBtnSt(C.orange, C.white) }}>🔄 연장 확정</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -13415,7 +13555,7 @@ function MainApp() {
       {/* 메인 콘텐츠 */}
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
         {page === "main_dashboard" && <MainDashboard employees={employees} allContracts={allContracts} onNavigate={setPage} profitState={profitState} />}
-        {page === "dashboard" && <Dashboard employees={employees} allContracts={allContracts} />}
+        {page === "dashboard" && <Dashboard employees={employees} allContracts={allContracts} onNavigate={setPage} />}
         {page === "employees" && <EmployeeRoster employees={employees} allContracts={allContracts} saveEmployee={saveEmployee} deleteEmployee={deleteEmployee} onContract={goContract} onResign={goResign} onCertificate={goCertificate} onReload={loadEmployees} onNavigate={setPage} />}
         {page === "contract" && <ContractWriter employees={employees} initialEmp={contractEmp} initialContract={contractEdit} onSave={loadAllContracts} />}
         {page === "history" && <ContractHistory employees={employees} onEditContract={goEditContract} onNewContract={goNewContract} />}
