@@ -2,7 +2,7 @@ import { useState, useMemo, useEffect, useCallback, useRef, createContext, useCo
 import { supabase, supabaseUrl, supabaseAnonKey, callAdminApi } from "./supabaseClient";
 import { createClient } from "@supabase/supabase-js";
 import * as XLSX from "xlsx";
-import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, LineChart, Cell, Legend } from "recharts";
+import { ComposedChart, Bar, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, BarChart, LineChart, Cell, Legend, PieChart, Pie } from "recharts";
 import { Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell, HeadingLevel, AlignmentType, BorderStyle, ShadingType, Header, Footer, PageNumber, WidthType, TableLayoutType } from "docx";
 
 /* ═══════════════════════════════════════════════════════
@@ -1544,6 +1544,26 @@ function Dashboard({ employees }) {
     resignReasons[r] = (resignReasons[r] || 0) + 1;
   });
 
+  // ── 입퇴사 추이 (최근 12개월) ──
+  const trendMonths = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+    trendMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`);
+  }
+  const hireTrend = trendMonths.map(m => {
+    const hired = employees.filter(e => e.hire_date && e.hire_date.startsWith(m)).length;
+    const resigned = employees.filter(e => e.resign_date && e.resign_date.startsWith(m)).length;
+    return { month: m.slice(5) + "월", 입사: hired, 퇴사: resigned };
+  });
+
+  // ── 근무유형 도넛 데이터 ──
+  const workTypePie = [
+    { name: "평일", value: weekday.length, color: C.navy },
+    { name: "주말", value: weekend.length, color: C.orange },
+    { name: "복합", value: mixed.length, color: "#0F9ED5" },
+    { name: "알바", value: parttime.length, color: C.gray },
+  ].filter(d => d.value > 0);
+
   // ── KPI 정의 (12개) ──
   const KPIS = [
     { icon: "👥", label: "총 재직",    value: `${active.length}명`,   color: C.navy,    sub: `전체 ${employees.length}명` },
@@ -1679,6 +1699,55 @@ function Dashboard({ employees }) {
               </div>
             </div>
           )}
+        </div>
+      </div>
+
+      {/* ── v10.1 P6: Recharts 차트 2종 ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 16 }}>
+        {/* 입퇴사 추이 (최근 12개월) */}
+        <div style={{ ...cardStyle }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>📈 입퇴사 추이 <span style={{ fontSize: 11, fontWeight: 600, color: C.gray }}>최근 12개월</span></h3>
+          <ResponsiveContainer width="100%" height={200}>
+            <BarChart data={hireTrend} margin={{ top: 5, right: 10, left: -10, bottom: 5 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke={C.lightGray} />
+              <XAxis dataKey="month" tick={{ fontSize: 10 }} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 10 }} />
+              <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}` }} />
+              <Bar dataKey="입사" fill={C.navy} radius={[3, 3, 0, 0]} maxBarSize={20} />
+              <Bar dataKey="퇴사" fill={C.error} radius={[3, 3, 0, 0]} maxBarSize={20} />
+              <Legend wrapperStyle={{ fontSize: 11 }} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* 근무유형 도넛 */}
+        <div style={{ ...cardStyle }}>
+          <h3 style={{ fontSize: 13, fontWeight: 800, color: C.dark, margin: "0 0 12px" }}>🍩 근무유형 분포</h3>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <ResponsiveContainer width="60%" height={200}>
+              <PieChart>
+                <Pie data={workTypePie} dataKey="value" nameKey="name" cx="50%" cy="50%"
+                  innerRadius={50} outerRadius={80} paddingAngle={3} strokeWidth={0}>
+                  {workTypePie.map((d, i) => <Cell key={i} fill={d.color} />)}
+                </Pie>
+                <Tooltip contentStyle={{ fontSize: 12, borderRadius: 8, border: `1px solid ${C.border}` }}
+                  formatter={(v, name) => [`${v}명 (${active.length > 0 ? ((v / active.length) * 100).toFixed(1) : 0}%)`, name]} />
+              </PieChart>
+            </ResponsiveContainer>
+            <div style={{ width: "40%", paddingLeft: 10 }}>
+              {workTypePie.map(d => (
+                <div key={d.name} style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                  <div style={{ width: 10, height: 10, borderRadius: 3, background: d.color, flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 700, color: C.dark, flex: 1 }}>{d.name}</span>
+                  <span style={{ fontSize: 14, fontWeight: 900, color: d.color }}>{d.value}명</span>
+                  <span style={{ fontSize: 10, color: C.gray }}>{active.length > 0 ? ((d.value / active.length) * 100).toFixed(0) : 0}%</span>
+                </div>
+              ))}
+              <div style={{ borderTop: `1px solid ${C.lightGray}`, paddingTop: 8, marginTop: 4 }}>
+                <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>합계 {active.length}명</span>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
