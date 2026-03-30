@@ -9803,7 +9803,7 @@ function SalaryCalculatorPage() {
   const [opSupport, setOpSupport] = useState(2000000);
   const [insurance, setInsurance] = useState(500000);
 
-  /* ── 에누리 ── */
+  /* ── 할인 ── */
   const [discountMode, setDiscountMode] = useState("amount"); // "amount" | "percent"
   const [discountValue, setDiscountValue] = useState(0);
 
@@ -10105,10 +10105,10 @@ function SalaryCalculatorPage() {
               </div>
             ))}
 
-            {/* 에누리 표시 */}
+            {/* 할인 표시 */}
             {discountAmt > 0 && (
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, color: "#ff9800", marginTop: 4 }}>
-                <span>에누리 ({discountMode === "percent" ? `${discountValue}%` : "직접입력"})</span>
+                <span>할인 ({discountMode === "percent" ? `${discountValue}%` : "직접입력"})</span>
                 <span style={{ fontWeight: 800, fontFamily: numFont }}>-{qFmt(discountAmt)}원</span>
               </div>
             )}
@@ -10134,11 +10134,11 @@ function SalaryCalculatorPage() {
             </div>
           </div>
 
-          {/* ── 에누리 ── */}
+          {/* ── 할인 ── */}
           <div style={{ background: QC.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${QC.border}` }}>
             <div style={{ background: "#ff9800", padding: "10px 16px", display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 16 }}>🏷️</span>
-              <span style={{ color: QC.white, fontWeight: 800, fontSize: 14 }}>에누리 (할인)</span>
+              <span style={{ color: QC.white, fontWeight: 800, fontSize: 14 }}>할인</span>
               {discountAmt > 0 && <span style={{ color: "rgba(255,255,255,0.8)", fontSize: 11 }}>-{qFmt(discountAmt)}원 적용중</span>}
             </div>
             <div style={{ padding: 16 }}>
@@ -10339,13 +10339,13 @@ function SalaryCalculatorPage() {
                 </div>
                 {discountAmt > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4, color: "#ff9800" }}>
-                    <span style={{ fontWeight: 700 }}>에누리 {discountMode === "percent" ? `(${discountValue}%)` : ""}</span>
+                    <span style={{ fontWeight: 700 }}>할인 {discountMode === "percent" ? `(${discountValue}%)` : ""}</span>
                     <span style={{ fontWeight: 800, fontFamily: numFont }}>- ₩ {qFmt(discountAmt)}</span>
                   </div>
                 )}
                 {discountAmt > 0 && (
                   <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, marginBottom: 4 }}>
-                    <span style={{ color: QC.gray }}>공급가액 (에누리 적용)</span>
+                    <span style={{ color: QC.gray }}>공급가액 (할인 적용)</span>
                     <span style={{ fontWeight: 700, fontFamily: numFont }}>₩ {qFmt(subtotal)}</span>
                   </div>
                 )}
