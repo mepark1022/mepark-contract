@@ -5079,7 +5079,18 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
   };
 
   // ── 전체 요약 ──
-  const SummaryView = () => (
+  const SummaryView = () => {
+    // ★ v11: 가용자금 KPI
+    const cfMi = cashflowItems[currentMonth] || [];
+    const cfBal = cashflowBalances[currentMonth] || {};
+    const cfPrevBal = toNum(cfBal.balance_062) + toNum(cfBal.balance_928);
+    const cfInflowAct = cfMi.filter(it => it.flow_type === "inflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+    const cfOutflowAct = cfMi.filter(it => it.flow_type === "outflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+    const cfCardAct = cfMi.filter(it => it.flow_type === "card" && it.cost_group !== "billing").reduce((s, it) => s + toNum(it.expected_amount), 0);
+    const cfHasData = cfMi.length > 0 || cfPrevBal > 0;
+    const cfAvailFund = cfPrevBal + cfInflowAct - cfOutflowAct - cfCardAct;
+
+    return (
     <div>
       {pSectionTitle("📊 전체 요약 — " + currentMonth)}
       <div style={{ display: "flex", gap: 8, marginBottom: 12, flexWrap: "wrap" }}>
@@ -5091,7 +5102,8 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
           ["총 인건비", pFmt(totals.labor), C.orange],
           ["간접비 배부", pFmt(totals.overhead), C.gray],
           ["영업이익", pFmt(totals.profit), totals.profit >= 0 ? C.success : C.error],
-          ["흑자/적자", `${totals.black}곳 / ${totals.red}곳`, C.navy],
+          ["인건비율", totals.rev > 0 ? ((totals.labor / totals.rev) * 100).toFixed(1) + "%" : "—", C.orange],
+          ["가용자금", cfHasData ? pFmt(cfAvailFund) : "—", cfAvailFund >= 0 ? C.navy : C.error],
         ].map(([l, v, color]) => (
           <div key={l} style={{ ...pcardStyle, textAlign: "center", padding: 16 }}>
             <div style={{ fontSize: 20, fontWeight: 900, color, fontFamily: "'Noto Sans KR', sans-serif" }}>{v}</div>
@@ -5176,8 +5188,67 @@ function ProfitabilityPage({ employees, subPage, profitState }) {
           </tbody>
         </table>
       </div>
+
+      {/* ── 현금흐름 추이 차트 (v11) ── */}
+      {(() => {
+        const allMonths = Object.keys(cashflowItems).sort();
+        if (allMonths.length === 0) return null;
+        const chartData = allMonths.map(m => {
+          const mi = cashflowItems[m] || [];
+          const bal = cashflowBalances[m] || {};
+          const prevBal = toNum(bal.balance_062) + toNum(bal.balance_928);
+          const inflow = mi.filter(it => it.flow_type === "inflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const outflow = mi.filter(it => it.flow_type === "outflow").reduce((s, it) => s + toNum(it.actual_amount), 0);
+          const card = mi.filter(it => it.flow_type === "card" && it.cost_group !== "billing").reduce((s, it) => s + toNum(it.expected_amount), 0);
+          const balance = prevBal + inflow - outflow - card;
+          return { month: m.slice(5), fullMonth: m, inflow: Math.round(inflow), outflow: Math.round(outflow + card), balance: Math.round(balance) };
+        });
+        const cfTip = ({ active, payload }) => {
+          if (!active || !payload?.length) return null;
+          return (
+            <div style={{ background: "#fff", border: `1px solid ${C.border}`, borderRadius: 8, padding: "10px 14px", fontSize: 11, boxShadow: "0 2px 8px rgba(0,0,0,0.1)" }}>
+              <div style={{ fontWeight: 800, color: C.dark, marginBottom: 6 }}>{payload[0]?.payload?.fullMonth}</div>
+              {payload.map((p, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", gap: 16, marginBottom: 2 }}>
+                  <span style={{ color: p.color, fontWeight: 700 }}>{p.name}</span>
+                  <span style={{ fontWeight: 800, fontFamily: "monospace" }}>{fmt(p.value)}원</span>
+                </div>
+              ))}
+            </div>
+          );
+        };
+        return (
+          <div style={{ ...pcardStyle, marginTop: 20 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>📊 현금흐름 추이</div>
+              <span style={{ fontSize: 10, color: C.gray }}>월별 유입/유출 · 잔액</span>
+            </div>
+            <ResponsiveContainer width="100%" height={260}>
+              <ComposedChart data={chartData} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: C.gray }} />
+                <YAxis yAxisId="amount" tick={{ fontSize: 10, fill: C.gray }} tickFormatter={v => v >= 1e8 ? (v / 1e8).toFixed(0) + "억" : v >= 1e4 ? (v / 1e4).toFixed(0) + "만" : v} width={52} />
+                <YAxis yAxisId="balance" orientation="right" tick={{ fontSize: 10, fill: C.gold }} tickFormatter={v => v >= 1e8 ? (v / 1e8).toFixed(1) + "억" : v >= 1e4 ? (v / 1e4).toFixed(0) + "만" : v} width={52} />
+                <Tooltip content={cfTip} />
+                <Bar yAxisId="amount" dataKey="inflow" fill={C.navy} name="유입" radius={[4, 4, 0, 0]} barSize={28} />
+                <Bar yAxisId="amount" dataKey="outflow" fill={C.error} name="유출" radius={[4, 4, 0, 0]} barSize={28} opacity={0.75} />
+                <Line yAxisId="balance" dataKey="balance" stroke={C.gold} strokeWidth={2.5} dot={{ r: 4, fill: C.gold, stroke: "#fff", strokeWidth: 2 }} name="잔액" />
+              </ComposedChart>
+            </ResponsiveContainer>
+            <div style={{ display: "flex", justifyContent: "center", gap: 20, marginTop: 8 }}>
+              {[["유입", C.navy], ["유출", C.error], ["잔액", C.gold]].map(([label, color]) => (
+                <div key={label} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: C.gray }}>
+                  <div style={{ width: label === "잔액" ? 16 : 10, height: label === "잔액" ? 3 : 10, borderRadius: label === "잔액" ? 0 : 2, background: color }} />
+                  <span style={{ fontWeight: 700 }}>{label}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
     </div>
-  );
+    );
+  };
 
   // ── 사업장 PL ──
   const SitePLView = () => {
