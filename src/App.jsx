@@ -12609,9 +12609,10 @@ function BugReportDashboard() {
 // ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
   const { profile, signOut, can, isCrewRole } = useAuth();
-  // 크루 역할: 기본 페이지를 현장일보로 고정
-  const [page, setPage] = useState(isCrewRole ? "daily_report" : "profit_summary");
-  const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: !isCrewRole, calc: false });
+  const isSuperAdmin = profile?.role === "super_admin";
+  // 크루 역할: 현장일보 고정 / 일반: HR 대시보드 기본
+  const [page, setPage] = useState(isCrewRole ? "daily_report" : "dashboard");
+  const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: isSuperAdmin, calc: false });
   // 발렛비 관리 → 현장일보 날짜/사업장 점프
   const [jumpDate, setJumpDate] = useState(null);
   const [jumpSite, setJumpSite] = useState(null);
@@ -12849,7 +12850,7 @@ function MainApp() {
     ...(can("settings") ? [{ key: "settings", icon: "⚙️", label: "계약서 조항변경" }] : []),
   ];
 
-  const profitNavItems = isCrewRole ? [] : [
+  const profitNavItems = !isSuperAdmin ? [] : [
     { key: "profit_summary", icon: "📊", label: "분석대시보드" },
     { key: "profit_site_pl", icon: "🏢", label: "사업장 PL" },
     { key: "profit_cost_input", icon: "✏️", label: "비용 입력" },
@@ -12870,7 +12871,7 @@ function MainApp() {
         { key: "full_calendar", icon: "📆", label: "전체 캘린더" },
       ];
 
-  const calcNavItems = isCrewRole ? [] : [
+  const calcNavItems = !isSuperAdmin ? [] : [
     { key: "salary_calc", icon: "📋", label: "인건비 견적" },
   ];
   const bugNavItems = (profile?.role === "super_admin" || profile?.role === "admin")
@@ -12950,9 +12951,10 @@ function MainApp() {
           ))}
 
           {/* 구분선 */}
-          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
+          {isSuperAdmin && <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />}
 
-          {/* 수익성 분석 영역 */}
+          {/* 수익성 분석 영역 — super_admin 전용 */}
+          {isSuperAdmin && <>
           <div onClick={() => toggleSection("profit")} style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
             <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1, flex: 1 }}>수익성 분석</span>
@@ -12970,11 +12972,13 @@ function MainApp() {
               <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
             </button>
           ))}
+          </>}
 
           {/* 구분선 */}
-          <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />
+          {isSuperAdmin && <div style={{ height: 1, background: "rgba(255,255,255,0.1)", margin: "10px 8px" }} />}
 
-          {/* 견적 계산기 영역 */}
+          {/* 견적 계산기 영역 — super_admin 전용 */}
+          {isSuperAdmin && <>
           <div onClick={() => toggleSection("calc")} style={{ margin: "4px 4px 8px", padding: "8px 14px", borderRadius: 20, background: "rgba(245,183,49,0.15)", display: "flex", alignItems: "center", gap: 7, cursor: "pointer", userSelect: "none" }}>
             <span style={{ width: 7, height: 7, borderRadius: "50%", background: C.gold, flexShrink: 0 }} />
             <span style={{ fontSize: 13, fontWeight: 900, color: C.gold, letterSpacing: 1, flex: 1 }}>견적 계산기</span>
@@ -12992,6 +12996,7 @@ function MainApp() {
               <span style={{ fontSize: 16 }}>{item.icon}</span> {item.label}
             </button>
           ))}
+          </>}
         </nav>
 
         {/* 오류보고 메뉴 (admin 이상) */}
