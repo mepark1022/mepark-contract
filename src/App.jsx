@@ -2139,17 +2139,69 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
               )}
 
               {/* ② 급여조건 */}
-              {detailTab === "salary" && (
+              {detailTab === "salary" && (() => {
+                const cat = getWorkCat(se.work_code);
+                const wdPay = toNum(se.weekday_pay) || toNum(se.base_salary);
+                const wePay = toNum(se.weekend_pay) || toNum(se.weekend_daily);
+                const hasWd = cat === "weekday" || cat === "mixed";
+                const hasWe = cat === "weekend" || cat === "mixed";
+                const wdB = (se.wd_basic > 0) ? { wd_basic: toNum(se.wd_basic), wd_annual: toNum(se.wd_annual), wd_overtime: toNum(se.wd_overtime), wd_holiday: toNum(se.wd_holiday), wd_hourly_rate: toNum(se.wd_hourly_rate) } : calcWdBreakdown(wdPay, se.work_code, se.site_code_1);
+                const weB = (se.we_basic > 0) ? { we_basic: toNum(se.we_basic), we_overtime: toNum(se.we_overtime), we_weekly_hol: toNum(se.we_weekly_hol), we_holiday: toNum(se.we_holiday), we_hourly_rate: toNum(se.we_hourly_rate) } : calcWeBreakdown(wePay, se.work_code, se.site_code_1);
+                const wageRow = (label, amount, color) => (
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "4px 0", borderBottom: `1px solid ${C.lightGray}` }}>
+                    <span style={{ fontSize: 11, color: C.gray }}>{label}</span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: color || C.dark, fontFamily: "monospace" }}>{amount != null ? fmt(amount) + "원" : "—"}</span>
+                  </div>
+                );
+                return (
                 <div>
+                  {/* 평일 임금테이블 */}
+                  {hasWd && (
                   <div style={sectionBox}>
-                    {sectionTitle("💰", "급여대장 연동 조건")}
-                    <div style={{ fontSize: 10, color: C.navy, fontWeight: 700, marginBottom: 8 }}>★ 항목은 급여대장 생성 시 자동 반영됩니다.</div>
-                    {infoRow("★ 평일수당(월급)", (se.weekday_pay || se.base_salary) ? fmt(se.weekday_pay || se.base_salary) + "원" : "—")}
-                    {infoRow("주말수당(일당)", (se.weekend_pay || se.weekend_daily) ? fmt(se.weekend_pay || se.weekend_daily) + "원" : "—")}
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ background: C.navy, color: "#fff", fontSize: 9, fontWeight: 900, padding: "2px 6px", borderRadius: 4 }}>평일</span><span style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>임금테이블</span></div>
+                      <span style={{ fontSize: 14, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{wdPay > 0 ? fmt(wdPay) + "원/월" : "미설정"}</span>
+                    </div>
+                    {wdB ? (<>
+                      {wageRow("기본급", wdB.wd_basic, C.navy)}
+                      {wageRow("연차수당", wdB.wd_annual)}
+                      {wageRow("연장수당", wdB.wd_overtime)}
+                      {wageRow("공휴수당", wdB.wd_holiday)}
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", marginTop: 2 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: C.navy }}>통상시급</span>
+                        <span style={{ fontSize: 13, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(wdB.wd_hourly_rate)}원/h</span>
+                      </div>
+                      {!se.wd_basic && <div style={{ fontSize: 9, color: C.orange, marginTop: 4 }}>⚡ 자동산출값 (저장 시 확정)</div>}
+                    </>) : <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: 8 }}>평일수당(월급)을 입력하면 자동 산출됩니다.</div>}
+                  </div>
+                  )}
+                  {/* 주말 임금테이블 */}
+                  {hasWe && (
+                  <div style={sectionBox}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 6 }}><span style={{ background: C.orange, color: "#fff", fontSize: 9, fontWeight: 900, padding: "2px 6px", borderRadius: 4 }}>주말</span><span style={{ fontSize: 13, fontWeight: 800, color: C.orange }}>임금테이블</span></div>
+                      <span style={{ fontSize: 14, fontWeight: 900, color: C.orange, fontFamily: "monospace" }}>{wePay > 0 ? fmt(wePay) + "원/일" : "미설정"}</span>
+                    </div>
+                    {weB ? (<>
+                      {wageRow("기본급", weB.we_basic, C.orange)}
+                      {wageRow("연장수당", weB.we_overtime)}
+                      {wageRow("주휴수당", weB.we_weekly_hol)}
+                      {wageRow("공휴수당", weB.we_holiday)}
+                      <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", marginTop: 2 }}>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: C.orange }}>통상시급</span>
+                        <span style={{ fontSize: 13, fontWeight: 900, color: C.orange, fontFamily: "monospace" }}>{fmt(weB.we_hourly_rate)}원/h</span>
+                      </div>
+                      {!se.we_basic && <div style={{ fontSize: 9, color: C.orange, marginTop: 4 }}>⚡ 자동산출값 (저장 시 확정)</div>}
+                    </>) : <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: 8 }}>주말수당(일당)을 입력하면 자동 산출됩니다.</div>}
+                  </div>
+                  )}
+                  {/* 수당 항목 */}
+                  <div style={sectionBox}>
+                    {sectionTitle("💰", "수당 항목")}
                     {infoRow("★ 급여식대", (se.meal || se.meal_allow) ? fmt(se.meal || se.meal_allow) + "원" : "—")}
+                    {infoRow("★ 직책수당", (se.team_allowance || se.leader_allow) ? fmt(se.team_allowance || se.leader_allow) + "원" : "—")}
                     {infoRow("★ 보육수당", (se.childcare || se.childcare_allow) ? fmt(se.childcare || se.childcare_allow) + "원" : "—")}
                     {infoRow("★ 자가운전보조", (se.car_allowance || se.car_allow) ? fmt(se.car_allowance || se.car_allow) + "원" : "—")}
-                    {infoRow("★ 직책수당", (se.team_allowance || se.leader_allow) ? fmt(se.team_allowance || se.leader_allow) + "원" : "—")}
                     {infoRow("★ 인센티브", se.incentive ? fmt(se.incentive) + "원" : "—")}
                     {infoRow("기타수당", se.extra1 ? fmt(se.extra1) + "원" : "—")}
                   </div>
@@ -2232,7 +2284,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     <button onClick={() => { setEditEmp({ ...se }); setShowForm(true); }} style={{ ...btnPrimary, padding: "10px 32px", fontSize: 13 }}>✏️ 급여조건 수정</button>
                   </div>
                 </div>
-              )}
+              ); })()}
 
               {/* ③ 계정관리 */}
               {detailTab === "account" && (
