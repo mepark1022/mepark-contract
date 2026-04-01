@@ -460,6 +460,16 @@ Deno.serve(async (req) => {
       return jsonRes({ success: true });
     }
 
+    // ACTION: sync_email — 역할 변경 시 이메일 도메인 동기화 (v11)
+    if (action === "sync_email") {
+      const { userId, newEmail } = body;
+      if (!userId || !newEmail) return jsonRes({ error: "userId와 newEmail이 필요합니다." }, 400);
+      const adminClient = makeAdminClient();
+      const { error } = await adminClient.auth.admin.updateUserById(userId, { email: newEmail, email_confirm: true });
+      if (error) return jsonRes({ error: "이메일 변경 실패: " + error.message }, 500);
+      return jsonRes({ success: true });
+    }
+
     // ACTION: bulk_create_field
     if (action === "bulk_create_field") {
       const { accounts } = body;

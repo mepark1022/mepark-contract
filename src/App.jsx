@@ -1525,6 +1525,18 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
     setAccountLoading(true); setAccountMsg("");
     await updateRole(selectedEmp.auth_id, newRole);
     await supabase.from("employees").update({ system_role: newRole }).eq("id", selectedEmp.id);
+    // v11: 이메일 도메인 동기화 (field_member ↔ ERP 역할 전환 시)
+    const isERP = ["crew", "admin", "super_admin"].includes(newRole);
+    const empNo = (selectedEmp.emp_no || "").toLowerCase();
+    const newEmail = isERP ? `${empNo}@mepark.internal` : `${empNo}@field.mepark.internal`;
+    const currentEmail = selectedEmp.account_email || "";
+    if (currentEmail && currentEmail !== newEmail) {
+      try {
+        await callAdminApi({ action: "sync_email", userId: selectedEmp.auth_id, newEmail });
+        await supabase.from("profiles").update({ email: newEmail }).eq("id", selectedEmp.auth_id);
+        await supabase.from("employees").update({ account_email: newEmail }).eq("id", selectedEmp.id);
+      } catch (e) { console.error("이메일 동기화 실패:", e); }
+    }
     setAccountMsg("✅ 역할 변경 완료: " + newRole);
     if (onReload) await onReload();
     const { data: updated } = await supabase.from("employees").select("*").eq("id", selectedEmp.id).single();
