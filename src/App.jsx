@@ -12879,8 +12879,21 @@ function BugReportDashboard() {
 
 // ── 17. 메인 앱 쉘 ────────────────────────────────────
 function MainApp() {
-  const { profile, signOut, can, isCrewRole } = useAuth();
+  const { profile, signOut, can, isCrewRole, changePassword } = useAuth();
   const isSuperAdmin = profile?.role === "super_admin";
+  // 내 비밀번호 변경 (v11.1)
+  const [showMyPw, setShowMyPw] = useState(false);
+  const [myPw, setMyPw] = useState("");
+  const [myPw2, setMyPw2] = useState("");
+  const [myPwMsg, setMyPwMsg] = useState("");
+  const handleMyPwChange = async () => {
+    if (myPw.length < 6) { setMyPwMsg("비밀번호는 6자 이상이어야 합니다."); return; }
+    if (myPw !== myPw2) { setMyPwMsg("비밀번호가 일치하지 않습니다."); return; }
+    const { error } = await changePassword(myPw);
+    if (error) { setMyPwMsg(error); return; }
+    setMyPwMsg("✅ 비밀번호가 변경되었습니다."); setMyPw(""); setMyPw2("");
+    setTimeout(() => { setMyPwMsg(""); setShowMyPw(false); }, 1500);
+  };
   // 크루 역할: 현장일보 고정 / 일반: HR 대시보드 기본
   const [page, setPage] = useState(isCrewRole ? "daily_report" : "dashboard");
   const [openSections, setOpenSections] = useState({ hr: !isCrewRole, site: true, profit: isSuperAdmin, calc: false });
@@ -13291,12 +13304,40 @@ function MainApp() {
           <div style={{ fontSize: 10, color: "rgba(255,255,255,0.55)", marginBottom: 8 }}>
             {ROLES[profile?.role]} · {profile?.email}
           </div>
-          <button onClick={signOut}
-            style={{ width: "100%", padding: "6px 0", background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 6, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
-            로그아웃
-          </button>
+          <div style={{ display: "flex", gap: 6 }}>
+            <button onClick={() => setShowMyPw(true)}
+              style={{ flex: 1, padding: "6px 0", background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 6, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+              🔑 비밀번호
+            </button>
+            <button onClick={signOut}
+              style={{ flex: 1, padding: "6px 0", background: "rgba(255,255,255,0.1)", border: "none", borderRadius: 6, color: "rgba(255,255,255,0.6)", fontSize: 11, fontWeight: 600, cursor: "pointer" }}>
+              로그아웃
+            </button>
+          </div>
         </div>
       </aside>
+
+      {/* 내 비밀번호 변경 모달 */}
+      {showMyPw && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setShowMyPw(false); setMyPw(""); setMyPw2(""); setMyPwMsg(""); }}>
+          <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: 360, maxWidth: "90vw" }} onClick={e => e.stopPropagation()}>
+            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 800, color: C.navy }}>🔑 내 비밀번호 변경</h3>
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>새 비밀번호</label>
+              <input type="password" value={myPw} onChange={e => setMyPw(e.target.value)} placeholder="6자 이상" style={{ ...inputStyle, padding: "11px 14px" }} />
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>비밀번호 확인</label>
+              <input type="password" value={myPw2} onChange={e => setMyPw2(e.target.value)} placeholder="다시 입력" onKeyDown={e => e.key === "Enter" && handleMyPwChange()} style={{ ...inputStyle, padding: "11px 14px" }} />
+            </div>
+            {myPwMsg && <div style={{ fontSize: 12, fontWeight: 700, color: myPwMsg.includes("✅") ? C.success : C.error, marginBottom: 12 }}>{myPwMsg}</div>}
+            <div style={{ display: "flex", gap: 10 }}>
+              <button onClick={() => { setShowMyPw(false); setMyPw(""); setMyPw2(""); setMyPwMsg(""); }} style={{ ...btnOutline, flex: 1 }}>취소</button>
+              <button onClick={handleMyPwChange} style={{ ...btnPrimary, flex: 1 }}>변경</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 메인 콘텐츠 */}
       <main style={{ flex: 1, padding: 24, overflowY: "auto" }}>
