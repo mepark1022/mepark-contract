@@ -8589,7 +8589,7 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
       valet_count: prev.valet_count || 0,
       valet_amount: prev.valet_amount || 0,
       staffList: stf.length > 0
-        ? stf.map(s => ({ employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0 }))
+        ? stf.map(s => ({ employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0, extra_type: s.extra_type || null, extra_amount: s.extra_amount || 0 }))
         : f.staffList,
       payList: PAYMENT_TYPES.map(pt => {
         const existing = pay.find(p => p.payment_type === pt.key);
@@ -8608,7 +8608,7 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
       id: report.id, site_code: report.site_code,
       valet_count: report.valet_count || 0, valet_amount: report.valet_amount || 0, memo: report.memo || "",
       images: report.images || [],
-      staffList: stf.length > 0 ? stf.map(s => ({ id: s.id, employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0 }))
+      staffList: stf.length > 0 ? stf.map(s => ({ id: s.id, employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0, extra_type: s.extra_type || null, extra_amount: s.extra_amount || 0 }))
         : employees.filter(e => (e.site_code_1 === report.site_code || e.site_code_2 === report.site_code) && e.status === "재직").map(e => ({ employee_id: e.id, name_raw: e.name, staff_type: "regular", work_hours: 8 })),
       payList: PAYMENT_TYPES.map(pt => {
         const existing = pay.find(p => p.payment_type === pt.key);
@@ -8652,7 +8652,7 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
       }
       await supabase.from("daily_report_staff").delete().eq("report_id", reportId);
       const staffRows = form.staffList.filter(s => s.employee_id || s.name_raw).map(s => ({
-        report_id: reportId, employee_id: s.employee_id || null, name_raw: s.name_raw || null, staff_type: s.staff_type, work_hours: toNum(s.work_hours),
+        report_id: reportId, employee_id: s.employee_id || null, name_raw: s.name_raw || null, staff_type: s.staff_type, work_hours: toNum(s.work_hours), extra_type: s.extra_type || null, extra_amount: toNum(s.extra_amount) || null,
       }));
       if (staffRows.length > 0) await supabase.from("daily_report_staff").insert(staffRows);
       await supabase.from("daily_report_payment").delete().eq("report_id", reportId);
@@ -9275,9 +9275,11 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
                 const emp = s.employee_id ? employees.find(e => e.id === s.employee_id) : null;
                 const typeBg = s.staff_type === "regular" ? "#E3F2FD" : s.staff_type === "substitute" ? "#FFF3E0" : "#F3E5F5";
                 const typeLabel = s.staff_type === "regular" ? "" : s.staff_type === "substitute" ? " 대근" : " 추가";
+                const hasExtra = s.extra_type && toNum(s.extra_amount) > 0;
                 return (
-                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: typeBg, color: C.dark, fontWeight: 600 }}>
+                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: hasExtra ? "#FFF8E1" : typeBg, color: C.dark, fontWeight: 600, border: hasExtra ? "1px solid #FFE082" : "none" }}>
                     {emp?.name || s.name_raw || "?"}{typeLabel} · {s.work_hours}h
+                    {hasExtra && <span style={{ color: C.orange, fontWeight: 800, marginLeft: 4 }}>💰{s.extra_type} {fmt(s.extra_amount)}원</span>}
                   </span>
                 );
               })}
@@ -9403,7 +9405,8 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
             <button onClick={() => setForm(f => ({ ...f, staffList: [...f.staffList, { employee_id: "", name_raw: "", staff_type: "substitute", work_hours: 8 }] }))} style={{ ...miniBtn, background: "#E3F2FD", color: C.navy }}>+ 추가</button>
           </div>
           {form.staffList.map((s, i) => (
-            <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
+            <div key={i} style={{ marginBottom: 6 }}>
+              <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <select value={s.employee_id || ""} onChange={e => { const empId = e.target.value; const emp = employees.find(emp2 => emp2.id === empId); setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, employee_id: empId, name_raw: emp?.name || ss.name_raw } : ss) })); }} style={{ ...fieldSt, flex: 2, minWidth: 120 }}>
                 <option value="">직접입력</option>
                 {siteEmployees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.emp_no})</option>)}
@@ -9414,7 +9417,18 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
               </select>
               {renderNumField(s.work_hours, v => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, work_hours: v } : ss) })), { placeholder: "h", style: { ...fieldSt, width: 52, flex: "none", textAlign: "center" }, step: 0.5 })}
               <span style={{ fontSize: 10, color: C.gray, flexShrink: 0 }}>h</span>
+              {!s.extra_type && <button onClick={() => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, extra_type: "연장근무", extra_amount: 0 } : ss) }))} style={{ ...miniBtn, background: "#FFF3E0", color: C.orange, padding: "4px 6px", fontSize: 10 }}>+수당</button>}
               <button onClick={() => setForm(f => ({ ...f, staffList: f.staffList.filter((_, j) => j !== i) }))} style={{ ...miniBtn, background: "#FFEBEE", color: C.error, padding: "4px 8px" }}>✕</button>
+              </div>
+              {s.extra_type && (
+                <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 4, marginLeft: 8, padding: "4px 8px", background: "#FFF8E1", borderRadius: 6, border: "1px solid #FFE082" }}>
+                  <span style={{ fontSize: 10, color: C.orange, fontWeight: 800, flexShrink: 0 }}>💰</span>
+                  <input value={s.extra_type} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, extra_type: e.target.value } : ss) }))} style={{ ...fieldSt, flex: 1, minWidth: 70, fontSize: 11, padding: "4px 8px" }} placeholder="유형 (키전달, 연장근무 등)" />
+                  {renderNumField(s.extra_amount, v => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, extra_amount: v } : ss) })), { placeholder: "금액", style: { ...fieldSt, width: 80, flex: "none", fontSize: 11, padding: "4px 8px" } })}
+                  <span style={{ fontSize: 10, color: C.gray, flexShrink: 0 }}>원</span>
+                  <button onClick={() => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, extra_type: null, extra_amount: 0 } : ss) }))} style={{ ...miniBtn, background: "#FFF3E0", color: C.orange, padding: "2px 6px", fontSize: 10 }}>✕</button>
+                </div>
+              )}
             </div>
           ))}
         </div>
