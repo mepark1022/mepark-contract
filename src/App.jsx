@@ -1914,7 +1914,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, background: C.white, borderRadius: 12, overflow: "hidden", border: `1px solid ${C.border}` }}>
           <thead>
             <tr style={{ background: C.navy }}>
-              {["사번", "이름", "직위", "사업장", "사업장2", "근무형태", "기본급", "일당", "연락처", "계정", "상태", "액션"].map(h => (
+              {["사번", "이름", "직위", "사업장", "사업장2", "근무형태", "평일수당", "주말수당", "연락처", "계정", "상태", "액션"].map(h => (
                 <th key={h} style={{ padding: "10px 8px", color: C.white, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>{h}</th>
               ))}
             </tr>
@@ -2088,7 +2088,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     {infoRow("★ 급여식대", (se.meal || se.meal_allow) ? fmt(se.meal || se.meal_allow) + "원" : "—")}
                     {infoRow("★ 보육수당", (se.childcare || se.childcare_allow) ? fmt(se.childcare || se.childcare_allow) + "원" : "—")}
                     {infoRow("★ 자가운전보조", (se.car_allowance || se.car_allow) ? fmt(se.car_allowance || se.car_allow) + "원" : "—")}
-                    {infoRow("★ 팀장수당", (se.team_allowance || se.leader_allow) ? fmt(se.team_allowance || se.leader_allow) + "원" : "—")}
+                    {infoRow("★ 직책수당", (se.team_allowance || se.leader_allow) ? fmt(se.team_allowance || se.leader_allow) + "원" : "—")}
                     {infoRow("★ 인센티브", se.incentive ? fmt(se.incentive) + "원" : "—")}
                     {infoRow("기타수당", se.extra1 ? fmt(se.extra1) + "원" : "—")}
                   </div>
@@ -2621,11 +2621,11 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     </div>
                   </>)}
                   <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기본급(월급)</label>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>평일수당(월급)</label>
                     <NumInput value={editEmp.base_salary} onChange={v => setEditEmp(p => ({ ...p, base_salary: v }))} />
                   </div>
                   <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>주말일당</label>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>주말수당(일당)</label>
                     <NumInput value={editEmp.weekend_daily} onChange={v => setEditEmp(p => ({ ...p, weekend_daily: v }))} />
                   </div>
                   <div>
@@ -2633,7 +2633,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     <NumInput value={editEmp.meal_allow} onChange={v => setEditEmp(p => ({ ...p, meal_allow: v }))} />
                   </div>
                   <div>
-                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>팀장수당</label>
+                    <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>직책수당</label>
                     <NumInput value={editEmp.leader_allow} onChange={v => setEditEmp(p => ({ ...p, leader_allow: v }))} />
                   </div>
                 </div>
@@ -2669,7 +2669,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                       <NumInput value={editEmp.car_allowance} onChange={v => setEditEmp(p => ({ ...p, car_allowance: v }))} />
                     </div>
                     <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>팀장수당 <span style={{ color: C.navy }}>★</span></label>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>직책수당 <span style={{ color: C.navy }}>★</span></label>
                       <NumInput value={editEmp.team_allowance} onChange={v => setEditEmp(p => ({ ...p, team_allowance: v }))} />
                     </div>
                     <div>
@@ -2912,7 +2912,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
         const tenureLabel = tenure >= 365 ? `${Math.floor(tenure/365)}년 ${tenure%365}일` : `${tenure}일`;
 
         const handleConvert = async () => {
-          const ok = await confirm("정규직 전환 처리하시겠습니까?", `${emp.name} (${emp.emp_no})의 수습기간을 종료하고 정규직으로 전환합니다.${pm.newSalary > 0 ? `\n기본급: ${fmt(emp.base_salary)}원 → ${fmt(pm.newSalary)}원` : ""}`, { okLabel: "전환 확정", okColor: C.success });
+          const ok = await confirm("정규직 전환 처리하시겠습니까?", `${emp.name} (${emp.emp_no})의 수습기간을 종료하고 정규직으로 전환합니다.${pm.newSalary > 0 ? `\n평일수당: ${fmt(emp.base_salary)}원 → ${fmt(pm.newSalary)}원` : ""}`, { okLabel: "전환 확정", okColor: C.success });
           if (!ok) return;
           const updates = { probation_months: 0 };
           if (pm.newSalary > 0) updates.base_salary = pm.newSalary;
@@ -2960,7 +2960,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     <div><span style={{ color: C.gray }}>수습종료일: </span><span style={{ fontWeight: 800, color: probEnd <= new Date() ? C.error : C.orange }}>{probEndStr}</span></div>
                   </div>
                   {emp.base_salary > 0 && (
-                    <div style={{ marginTop: 8, fontSize: 12 }}><span style={{ color: C.gray }}>현재 기본급: </span><span style={{ fontWeight: 800, color: C.navy }}>{fmt(emp.base_salary)}원</span></div>
+                    <div style={{ marginTop: 8, fontSize: 12 }}><span style={{ color: C.gray }}>현재 평일수당: </span><span style={{ fontWeight: 800, color: C.navy }}>{fmt(emp.base_salary)}원</span></div>
                   )}
                 </div>
 
@@ -2968,7 +2968,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                 {!pm.action && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                     <button onClick={() => setProbTransModal(p => ({ ...p, action: "convert", newSalary: emp.base_salary || 0 }))} style={{ ...actionBtnSt("#E8F5E9", C.success), display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                      ✅ 정규직 전환 <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>— 수습 종료, 기본급 조정</span>
+                      ✅ 정규직 전환 <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>— 수습 종료, 평일수당 조정</span>
                     </button>
                     <button onClick={() => setProbTransModal(p => ({ ...p, action: "extend", extendMonths: 1 }))} style={{ ...actionBtnSt("#FFF3E0", C.orange), display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                       🔄 수습 연장 <span style={{ fontSize: 11, fontWeight: 600, opacity: 0.8 }}>— 1~6개월 추가</span>
@@ -2987,9 +2987,9 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                       <p style={{ margin: "0 0 6px", fontWeight: 700, color: C.success }}>처리 내용:</p>
                       <p style={{ margin: "2px 0", color: "#2E7D32" }}>• 수습기간 → 0 (수습 해제)</p>
                       <p style={{ margin: "2px 0", color: "#2E7D32" }}>• 수습 뱃지 자동 제거</p>
-                      {pm.newSalary !== emp.base_salary && <p style={{ margin: "2px 0", color: "#2E7D32" }}>• 기본급 변경: {fmt(emp.base_salary)}원 → {fmt(pm.newSalary)}원</p>}
+                      {pm.newSalary !== emp.base_salary && <p style={{ margin: "2px 0", color: "#2E7D32" }}>• 평일수당 변경: {fmt(emp.base_salary)}원 → {fmt(pm.newSalary)}원</p>}
                     </div>
-                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 6 }}>기본급 조정 (선택)</label>
+                    <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 6 }}>평일수당 조정 (선택)</label>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 20 }}>
                       <NumInput value={pm.newSalary} onChange={v => setProbTransModal(p => ({ ...p, newSalary: v }))} style={{ ...inputStyle, flex: 1, fontSize: 15, fontWeight: 800 }} />
                       <span style={{ fontSize: 12, color: C.gray }}>원</span>
@@ -3044,7 +3044,7 @@ const EXCEL_COL_MAP = {
   "입사일": "hire_date", "수습종료일": "probation_end",
   "근무조건": "employment_type", "퇴사일": "resign_date",
   "수당구분": "salary_type", "평일수당": "base_salary", "기본급": "base_salary",
-  "주말수당": "weekend_daily", "팀장수당": "leader_allow", "식대": "meal_allow",
+  "주말수당": "weekend_daily", "팀장수당": "leader_allow", "직책수당": "leader_allow", "식대": "meal_allow",
   "보육수당": "childcare_allow", "자가운전보조금": "car_allow",
   "신고여부": "tax_type", "신고자": "reporter_name", "신고자명": "reporter_name",
   "주민번호": "reporter_rrn", "신고자주민번호": "reporter_rrn",
@@ -3309,7 +3309,7 @@ function ExcelImportModal({ onClose, onImport, existingEmpNos }) {
               <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
                 <thead>
                   <tr style={{ background: C.navy, position: "sticky", top: 0 }}>
-                    {["", "사번", "이름", "직위", "사업장", "근무형태", "기본급", "일당", "상태"].map(h => (
+                    {["", "사번", "이름", "직위", "사업장", "근무형태", "평일수당", "주말수당", "상태"].map(h => (
                       <th key={h} style={{ padding: "8px 6px", color: C.white, fontWeight: 700, textAlign: "center", whiteSpace: "nowrap" }}>{h}</th>
                     ))}
                   </tr>
@@ -4389,7 +4389,7 @@ function ContractHistory({ employees, onEditContract, onNewContract }) {
                               {c.contract_type !== "weekend" && <div style={detailRow}>총 월급: <strong style={{ color: C.navy }}>{fmt(c.total_salary)}원</strong></div>}
                               {c.contract_type === "weekend" && <div style={detailRow}>일당: <strong style={{ color: C.orange }}>{fmt(c.weekend_daily)}원</strong></div>}
                               <div style={detailRow}>식대: <strong>{fmt(c.meal_allow)}원</strong></div>
-                              {c.leader_allow > 0 && <div style={detailRow}>팀장수당: <strong>{fmt(c.leader_allow)}원</strong></div>}
+                              {c.leader_allow > 0 && <div style={detailRow}>직책수당: <strong>{fmt(c.leader_allow)}원</strong></div>}
                               <div style={detailRow}>급여일: <strong>매월 {c.pay_day}일</strong></div>
                             </div>
                             <div>
@@ -10439,7 +10439,7 @@ const PY_PAY_FIELDS = [
   { key: "meal", label: "식대" },
   { key: "childcare", label: "보육수당" },
   { key: "car_allow", label: "자가운전" },
-  { key: "team_allow", label: "팀장수당" },
+  { key: "team_allow", label: "직책수당" },
   { key: "incentive", label: "인센티브" },
   { key: "manual_write", label: "수기수당" },
 ];
@@ -10995,7 +10995,7 @@ function PayrollPage({ employees, profitState }) {
         "식대": r.meal || 0,
         "보육수당": r.childcare || 0,
         "자가운전": r.car_allow || 0,
-        "팀장수당": r.team_allow || 0,
+        "직책수당": r.team_allow || 0,
         "인센티브": r.incentive || 0,
         ...allowancesCols,
         "수기수당": r.manual_write || 0,
