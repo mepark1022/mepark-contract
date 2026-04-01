@@ -143,6 +143,67 @@ const getSiteName = (code) => SITES.find(s => s.code === code)?.name || "";
 const getWorkLabel = (code) => WORK_CODES.find(w => w.code === code)?.label || code;
 const getWorkCat = (code) => WORK_CODES.find(w => w.code === code)?.cat || "weekday";
 
+// ── 임금테이블 분해 헬퍼 (v11.1 P3) ──────────────────────
+// 평일 — monthlyPay(총월급) → wd_basic/wd_annual/wd_overtime/wd_holiday/wd_hourly_rate
+function calcWdBreakdown(monthlyPay, workCode, siteCode) {
+  if (!monthlyPay || monthlyPay <= 0) return null;
+  const preset = SITE_PRESETS[siteCode];
+  const wStart = preset?.wdStart || "09:00";
+  const wEnd = preset?.wdEnd || "18:00";
+  const bMin = preset?.breakMin || 60;
+  const [sh, sm] = wStart.split(":").map(Number);
+  const [eh, em] = wEnd.split(":").map(Number);
+  const dailyMin = (eh * 60 + em) - (sh * 60 + sm) - bMin;
+  const dailyH = Math.max(0, dailyMin / 60);
+  const label = WORK_CODES.find(w => w.code === workCode)?.label || "";
+  const daysPerWeek = label.includes("(3)") ? 3 : label.includes("(4)") ? 4 : label.includes("(6)") ? 6 : 5;
+  const weeklyH = dailyH * daysPerWeek;
+  const basicH = Math.round(Math.min(weeklyH, 40) * 4.345 * 100) / 100;
+  const annualH = weeklyH >= 15 ? 8.75 : 0;
+  const overtimeH = Math.round(Math.max(0, dailyH - 8) * daysPerWeek * 4.345 * 100) / 100;
+  const holidayH = Math.round(dailyH * (daysPerWeek / 5) * 4.84 * 100) / 100;
+  const totalH = basicH + annualH + overtimeH + holidayH;
+  if (totalH <= 0) return null;
+  const exactRate = monthlyPay / totalH;
+  const annualPay = Math.round(exactRate * annualH);
+  const overtimePay = Math.round(exactRate * overtimeH);
+  const holidayPay = Math.round(exactRate * holidayH);
+  const basicPay = monthlyPay - annualPay - overtimePay - holidayPay;
+  return {
+    wd_basic: basicPay, wd_annual: annualPay, wd_overtime: overtimePay, wd_holiday: holidayPay,
+    wd_hourly_rate: Math.floor(exactRate),
+    hours: { basicH, annualH, overtimeH, holidayH, totalH, dailyH, daysPerWeek },
+  };
+}
+// 주말 — dailyPay(일당) → we_basic/we_overtime/we_weekly_hol/we_holiday/we_hourly_rate
+function calcWeBreakdown(dailyPay, workCode, siteCode) {
+  if (!dailyPay || dailyPay <= 0) return null;
+  const preset = SITE_PRESETS[siteCode];
+  const wStart = preset?.weStart || "09:00";
+  const wEnd = preset?.weEnd || "14:00";
+  const bMin = preset ? Math.min(preset.breakMin, 60) : 30;
+  const [sh, sm] = wStart.split(":").map(Number);
+  const [eh, em] = wEnd.split(":").map(Number);
+  const dailyMin = (eh * 60 + em) - (sh * 60 + sm) - bMin;
+  const dailyH = Math.max(0, dailyMin / 60);
+  const basicH = dailyH;
+  const overtimeH = Math.max(0, dailyH - 8);
+  const weeklyHolH = 0;
+  const holidayH = Math.round(dailyH * 0.333 * 100) / 100;
+  const totalH = basicH + overtimeH + weeklyHolH + holidayH;
+  if (totalH <= 0) return null;
+  const exactRate = dailyPay / totalH;
+  const overtimePay = Math.round(exactRate * overtimeH);
+  const weeklyHolPay = 0;
+  const holidayPay = Math.round(exactRate * holidayH);
+  const basicPay = dailyPay - overtimePay - weeklyHolPay - holidayPay;
+  return {
+    we_basic: basicPay, we_overtime: overtimePay, we_weekly_hol: weeklyHolPay, we_holiday: holidayPay,
+    we_hourly_rate: Math.floor(exactRate),
+    hours: { basicH, overtimeH, weeklyHolH, holidayH, totalH, dailyH },
+  };
+}
+
 // ★ F1: 근로계약 만료 알림 — 5단계 판정 헬퍼
 // tier: 0=만료초과, 1=D-day, 2=D-7이내(긴급), 3=D-30이내(주의), 4=D-90이내(사전안내), 5=여유
 const getContractExpiryInfo = (emp, allContracts) => {
