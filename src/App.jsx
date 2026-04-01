@@ -2753,6 +2753,19 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
               </div>
 
               {/* ── 3+4: 급여조건 & 계좌정보 (2컬럼 배치) ── */}
+              {(() => {
+                const eCat = getWorkCat(editEmp.work_code);
+                const eHasWd = eCat === "weekday" || eCat === "mixed";
+                const eHasWe = eCat === "weekend" || eCat === "mixed";
+                const eWdB = calcWdBreakdown(toNum(editEmp.weekday_pay), editEmp.work_code, editEmp.site_code_1);
+                const eWeB = calcWeBreakdown(toNum(editEmp.weekend_pay), editEmp.work_code, editEmp.site_code_1);
+                const miniRow = (label, val, color) => (
+                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 10 }}>
+                    <span style={{ color: C.gray }}>{label}</span>
+                    <span style={{ fontWeight: 700, color: color || C.dark, fontFamily: "monospace" }}>{fmt(val)}원</span>
+                  </div>
+                );
+                return (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
                 {/* 급여조건 */}
                 <div style={{ background: C.white, borderRadius: 14, padding: "18px 20px", border: `1.5px solid ${C.lightGray}` }}>
@@ -2760,38 +2773,77 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     <span style={{ background: C.navy, color: C.gold, fontSize: 10, fontWeight: 900, padding: "2px 8px", borderRadius: 4 }}>03</span>
                     💰 급여조건 <span style={{ fontSize: 10, color: C.gray, fontWeight: 500 }}>(급여대장 연동)</span>
                   </div>
-                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "10px 14px" }}>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>평일수당(월급) <span style={{ color: C.navy }}>★</span></label>
-                      <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} />
+
+                  {/* 평일 임금 */}
+                  {eHasWd && (<div style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <span style={{ background: C.navy, color: "#fff", fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 3 }}>평일</span>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.navy }}>평일수당(월급) ★</label>
                     </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>주말수당(일당)</label>
-                      <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} />
+                    <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} style={{ borderColor: C.navy, fontWeight: 800, fontSize: 15 }} />
+                    {eWdB && (
+                      <div style={{ marginTop: 6, padding: "8px 10px", background: "#EFF6FF", borderRadius: 8, border: `1px solid ${C.navy}22` }}>
+                        {miniRow("기본급", eWdB.wd_basic, C.navy)}
+                        {miniRow("연차수당", eWdB.wd_annual)}
+                        {miniRow("연장수당", eWdB.wd_overtime)}
+                        {miniRow("공휴수당", eWdB.wd_holiday)}
+                        <div style={{ borderTop: `1px solid ${C.navy}33`, marginTop: 3, paddingTop: 3, display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                          <span style={{ fontWeight: 800, color: C.navy }}>통상시급</span>
+                          <span style={{ fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(eWdB.wd_hourly_rate)}원/h</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>)}
+
+                  {/* 주말 임금 */}
+                  {eHasWe && (<div style={{ marginBottom: 14 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                      <span style={{ background: C.orange, color: "#fff", fontSize: 9, fontWeight: 900, padding: "1px 6px", borderRadius: 3 }}>주말</span>
+                      <label style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>주말수당(일당)</label>
                     </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>급여식대 <span style={{ color: C.navy }}>★</span></label>
-                      <NumInput value={editEmp.meal} onChange={v => setEditEmp(p => ({ ...p, meal: v }))} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>보육수당 <span style={{ color: C.navy }}>★</span></label>
-                      <NumInput value={editEmp.childcare} onChange={v => setEditEmp(p => ({ ...p, childcare: v }))} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>자가운전보조 <span style={{ color: C.navy }}>★</span></label>
-                      <NumInput value={editEmp.car_allowance} onChange={v => setEditEmp(p => ({ ...p, car_allowance: v }))} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>직책수당 <span style={{ color: C.navy }}>★</span></label>
-                      <NumInput value={editEmp.team_allowance} onChange={v => setEditEmp(p => ({ ...p, team_allowance: v }))} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>인센티브 <span style={{ color: C.navy }}>★</span></label>
-                      <NumInput value={editEmp.incentive} onChange={v => setEditEmp(p => ({ ...p, incentive: v }))} />
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기타수당</label>
-                      <NumInput value={editEmp.extra1} onChange={v => setEditEmp(p => ({ ...p, extra1: v }))} />
+                    <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} style={{ borderColor: C.orange, fontWeight: 800, fontSize: 15 }} />
+                    {eWeB && (
+                      <div style={{ marginTop: 6, padding: "8px 10px", background: "#FFF8E1", borderRadius: 8, border: `1px solid ${C.orange}22` }}>
+                        {miniRow("기본급", eWeB.we_basic, C.orange)}
+                        {miniRow("연장수당", eWeB.we_overtime)}
+                        {miniRow("주휴수당", eWeB.we_weekly_hol)}
+                        {miniRow("공휴수당", eWeB.we_holiday)}
+                        <div style={{ borderTop: `1px solid ${C.orange}33`, marginTop: 3, paddingTop: 3, display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                          <span style={{ fontWeight: 800, color: C.orange }}>통상시급</span>
+                          <span style={{ fontWeight: 900, color: C.orange, fontFamily: "monospace" }}>{fmt(eWeB.we_hourly_rate)}원/h</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>)}
+
+                  {/* 수당 항목 */}
+                  <div style={{ borderTop: `2px solid ${C.lightGray}`, paddingTop: 10 }}>
+                    <div style={{ fontSize: 11, fontWeight: 800, color: C.gray, marginBottom: 8 }}>수당 항목</div>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px 14px" }}>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>급여식대 ★</label>
+                        <NumInput value={editEmp.meal} onChange={v => setEditEmp(p => ({ ...p, meal: v }))} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>직책수당 ★</label>
+                        <NumInput value={editEmp.team_allowance} onChange={v => setEditEmp(p => ({ ...p, team_allowance: v }))} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>보육수당 ★</label>
+                        <NumInput value={editEmp.childcare} onChange={v => setEditEmp(p => ({ ...p, childcare: v }))} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>자가운전보조 ★</label>
+                        <NumInput value={editEmp.car_allowance} onChange={v => setEditEmp(p => ({ ...p, car_allowance: v }))} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>인센티브 ★</label>
+                        <NumInput value={editEmp.incentive} onChange={v => setEditEmp(p => ({ ...p, incentive: v }))} />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: 11, fontWeight: 700, color: C.gray, marginBottom: 3, display: "block" }}>기타수당</label>
+                        <NumInput value={editEmp.extra1} onChange={v => setEditEmp(p => ({ ...p, extra1: v }))} />
+                      </div>
                     </div>
                   </div>
                   <div style={{ marginTop: 8, fontSize: 10, color: C.navy, fontWeight: 700 }}>★ 표시 항목은 급여대장 생성 시 자동 반영됩니다.</div>
@@ -2858,9 +2910,8 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                   </div>
                 </div>
               </div>
+              ); })()}
             </div>
-
-            {/* 하단 버튼 (고정) */}
             <div style={{ padding: "14px 28px", borderTop: `1.5px solid ${C.lightGray}`, background: C.white, display: "flex", gap: 10, justifyContent: "flex-end", flexShrink: 0 }}>
               <button onClick={() => setShowForm(false)} style={{ ...btnOutline, padding: "10px 28px", fontSize: 13 }}>취소</button>
               <button onClick={() => saveEmp(editEmp)} disabled={saving} style={{ ...btnPrimary, padding: "10px 28px", fontSize: 13, opacity: saving ? 0.6 : 1 }}>{saving ? "💾 저장 중..." : "💾 저장"}</button>
