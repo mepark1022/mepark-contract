@@ -1832,6 +1832,16 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
       return;
     }
     setSaving(true);
+    // v11.1 P3-d: 임금분해 자동산출 → DB 저장
+    const cat = getWorkCat(emp.work_code);
+    if (cat === "weekday" || cat === "mixed") {
+      const wb = calcWdBreakdown(toNum(emp.weekday_pay), emp.work_code, emp.site_code_1);
+      if (wb) { emp.wd_basic = wb.wd_basic; emp.wd_annual = wb.wd_annual; emp.wd_overtime = wb.wd_overtime; emp.wd_holiday = wb.wd_holiday; emp.wd_hourly_rate = wb.wd_hourly_rate; }
+    }
+    if (cat === "weekend" || cat === "mixed") {
+      const wb = calcWeBreakdown(toNum(emp.weekend_pay), emp.work_code, emp.site_code_1);
+      if (wb) { emp.we_basic = wb.we_basic; emp.we_overtime = wb.we_overtime; emp.we_weekly_hol = wb.we_weekly_hol; emp.we_holiday = wb.we_holiday; emp.we_hourly_rate = wb.we_hourly_rate; }
+    }
     await saveEmployee(emp);
     setSaving(false);
     setEditEmp(null); setShowForm(false);
