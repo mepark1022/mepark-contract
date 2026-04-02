@@ -10906,7 +10906,7 @@ function PayrollPage({ employees, profitState }) {
           const emp = employees.find(e => e.id === rec.employee_id);
           if (!emp) continue;
           const newBasic = toNum(emp.weekday_pay) || toNum(emp.base_salary) || 0;
-          const newMeal = toNum(emp.meal) || toNum(emp.meal_allow) || 200000;
+          const newMeal = toNum(emp.meal) || toNum(emp.meal_allow) || 0;
           const newChildcare = toNum(emp.childcare) || toNum(emp.childcare_allow) || 0;
           const newCar = toNum(emp.car_allowance) || toNum(emp.car_allow) || 0;
           const newTeam = toNum(emp.team_allowance) || toNum(emp.leader_allow) || 0;
@@ -11029,7 +11029,7 @@ function PayrollPage({ employees, profitState }) {
         work_type: e.work_code || e.work_type || "",
         // 신규 필드(급여조건 편집폼 저장값) 우선, 없으면 기존 필드 fallback
         basic_pay: toNum(e.weekday_pay) || toNum(e.base_salary) || 0,
-        meal: toNum(e.meal) || toNum(e.meal_allow) || 200000,
+        meal: toNum(e.meal) || toNum(e.meal_allow) || 0,
         childcare: toNum(e.childcare) || toNum(e.childcare_allow) || 0,
         car_allow: toNum(e.car_allowance) || toNum(e.car_allow) || 0,
         team_allow: toNum(e.team_allowance) || toNum(e.leader_allow) || 0,
