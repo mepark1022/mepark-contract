@@ -13214,6 +13214,41 @@ function MainApp() {
     else if (rest.status === "퇴사") rest.status = "inactive";
     if (id) {
       await supabase.from("employees").update({ ...rest, updated_at: new Date().toISOString() }).eq("id", id);
+
+      // ── 급여대장 즉시 동기화 (draft 상태만) ──
+      try {
+        const basicPay = toNum(emp.weekday_pay) || toNum(emp.base_salary) || 0;
+        const meal = toNum(emp.meal) || toNum(emp.meal_allow) || 0;
+        const childcare = toNum(emp.childcare) || toNum(emp.childcare_allow) || 0;
+        const carAllow = toNum(emp.car_allowance) || toNum(emp.car_allow) || 0;
+        const teamAllow = toNum(emp.team_allowance) || toNum(emp.leader_allow) || 0;
+        const incentive = toNum(emp.incentive) || 0;
+        const siteCode = emp.site_code_1 || "";
+        const workType = emp.work_code || "";
+        const taxType = emp.tax_type || "4대보험";
+
+        // draft 상태 payroll_months 조회
+        const { data: draftMonths } = await supabase.from("payroll_months")
+          .select("id").eq("status", "draft");
+        if (draftMonths && draftMonths.length > 0) {
+          const monthIds = draftMonths.map(m => m.id);
+          const { data: recs } = await supabase.from("payroll_records")
+            .select("id, basic_pay, meal, childcare, car_allow, team_allow, incentive, manual_write, allowances, gross_pay, net_pay")
+            .eq("employee_id", id).in("month_id", monthIds);
+          if (recs) {
+            for (const rec of recs) {
+              const newGross = basicPay + meal + childcare + carAllow + teamAllow + incentive +
+                (rec.manual_write || 0) + ((rec.allowances || []).reduce((s, a) => s + (toNum(a.amount) || 0), 0));
+              const oldDed = (rec.gross_pay || 0) - (rec.net_pay || 0);
+              await supabase.from("payroll_records").update({
+                basic_pay: basicPay, meal, childcare, car_allow: carAllow, team_allow: teamAllow,
+                incentive, site_code: siteCode, work_type: workType, tax_type: taxType,
+                gross_pay: newGross, net_pay: newGross - oldDed,
+              }).eq("id", rec.id);
+            }
+          }
+        }
+      } catch (e) { console.error("급여대장 동기화 오류:", e); }
     } else {
       await supabase.from("employees").insert(rest);
     }
