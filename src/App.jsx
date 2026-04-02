@@ -4689,11 +4689,13 @@ const RESIGN_REASONS = [
 ];
 
 const RESIGN_PLEDGES = [
-  { id: "secret", text: "재직 중 취득한 회사의 경영상·기술상 일체의 기밀 정보를 퇴사 후에도 외부에 누설하거나 이용하지 않겠습니다.", default: true },
+  { id: "handover", text: "담당 업무 및 사업장 운영에 관한 인수인계를 철저히 이행하여, 업무에 차질이 없도록 하겠습니다.", default: true },
+  { id: "secret", text: "업무상 알게 된 제반 회사의 비밀 및 고객 정보를 퇴사 후에도 외부에 누설하거나 이용하지 않겠습니다.", default: true },
   { id: "customer", text: "재직 중 알게 된 고객(이용자) 정보 및 개인정보를 퇴사 후 일체 사용·보관·유출하지 않으며, 보유 중인 사본이 있을 경우 즉시 파기하겠습니다.", default: true },
-  { id: "property", text: "회사 소유의 유니폼, 장비, 차량열쇠, 사업장 출입카드, 기타 비품 등 일체의 회사 자산을 최종 근무일까지 반납하겠습니다.", default: true },
-  { id: "handover", text: "담당 업무 및 사업장 운영에 관한 인수인계를 성실히 이행하며, 인수인계 완료 전까지 협조하겠습니다.", default: true },
-  { id: "damage", text: "위 서약사항을 위반하여 회사에 손해가 발생한 경우, 민·형사상 책임을 부담할 수 있음을 확인합니다.", default: true },
+  { id: "property", text: "사직일까지 회사 소유의 유니폼, 장비, 차량열쇠, 사업장 출입카드, 기타 비품 등 일체의 회사 자산을 반납하겠습니다.", default: true },
+  { id: "incident", text: "재직 중 발생한 사고나 민원을 사실대로 보고하고, 확인 절차에 성실히 협조하겠습니다.", default: true },
+  { id: "pay_agreement", text: "임금 및 퇴직금 등 일체의 금품을 사직일이 속한 달의 임금지급일에 받는 것에 동의합니다.", default: true },
+  { id: "damage", text: "위 서약사항을 위반하여 회사에 손해를 끼쳤을 경우, 민·형사상 책임을 부담할 수 있음을 확인합니다.", default: true },
   { id: "noncompete", text: "퇴사 후 6개월간 동종 업계(발렛파킹 서비스) 경쟁업체에 취업하거나 동종 사업을 영위하지 않겠습니다.", default: false },
   { id: "vehicle", text: "재직 중 고객 차량 관련하여 미해결된 사고·분쟁이 있을 경우, 퇴사 후에도 해결 완료 시까지 성실히 협조하겠습니다.", default: false },
 ];
@@ -4885,15 +4887,9 @@ function Resignation({ employees, initialEmp }) {
             </table>
           </div>
 
-          {/* 본문 */}
-          <div style={{ fontSize: 14, lineHeight: 2.2, marginBottom: 30, textAlign: "center" }}>
-            <p>위와 같은 사유로 사직하고자 하오니 허락하여 주시기 바랍니다.</p>
-            <p>아울러, 아래 서약사항을 준수할 것을 확인합니다.</p>
-          </div>
-
           {/* 서약사항 */}
           {RESIGN_PLEDGES.filter(p => pledges[p.id]).length > 0 && (
-            <div style={{ marginBottom: 40 }}>
+            <div style={{ marginBottom: 30 }}>
               <div style={{ fontSize: 15, fontWeight: 800, color: C.dark, marginBottom: 12, borderBottom: `2px solid ${C.dark}`, paddingBottom: 6 }}>서 약 사 항</div>
               <div style={{ lineHeight: 2.0 }}>
                 {RESIGN_PLEDGES.filter(p => pledges[p.id]).map((p, idx) => (
@@ -4906,36 +4902,23 @@ function Resignation({ employees, initialEmp }) {
             </div>
           )}
 
+          {/* 본문 */}
+          <div style={{ fontSize: 14, lineHeight: 2.4, marginBottom: 30, textAlign: "center" }}>
+            <p style={{ fontWeight: 700 }}>상기 본인은 위의 서약사항을 충분히 숙지하고 동의하며,</p>
+            <p>위와 같은 사유로 인하여 <strong>{lastWorkDate ? dateFmt(lastWorkDate) : (resignDate ? dateFmt(resignDate) : "____년 __월 __일")}</strong>부로 사직하고자 합니다.</p>
+          </div>
+
           {/* 일자 */}
           <div style={{ textAlign: "center", marginBottom: 50 }}>
             <p style={{ fontSize: 16, fontWeight: 700, letterSpacing: 2 }}>{resignDate ? dateFmt(resignDate) : "____년 __월 __일"}</p>
           </div>
 
-          {/* 서명란 — 테이블 기반 정렬 */}
-          <table style={{ width: 320, marginLeft: "auto", borderCollapse: "collapse", fontSize: 14, marginBottom: 60 }}>
-            <tbody>
-              <tr>
-                <td style={{ width: 80, padding: "12px 0", fontWeight: 700, border: "none", verticalAlign: "bottom", letterSpacing: 4 }}>성 명</td>
-                <td style={{ padding: "12px 0", border: "none", borderBottom: `1px solid ${C.dark}`, textAlign: "center", verticalAlign: "bottom", minWidth: 160 }}>
-                  {emp?.name || ""}
-                </td>
-                <td style={{ width: 40, padding: "12px 0 12px 8px", border: "none", color: C.gray, verticalAlign: "bottom" }}>(인)</td>
-              </tr>
-              <tr>
-                <td style={{ padding: "12px 0", fontWeight: 700, border: "none", verticalAlign: "bottom", letterSpacing: 4 }}>연락처</td>
-                <td style={{ padding: "12px 0", border: "none", borderBottom: `1px solid ${C.dark}`, textAlign: "center", verticalAlign: "bottom" }}>
-                  {emp?.phone || ""}
-                </td>
-                <td style={{ border: "none" }}></td>
-              </tr>
-              <tr>
-                <td style={{ padding: "12px 0", fontWeight: 700, border: "none", verticalAlign: "bottom", letterSpacing: 4 }}>서 명</td>
-                <td style={{ padding: "12px 0", border: "none", borderBottom: `1px solid ${C.dark}`, textAlign: "center", verticalAlign: "bottom" }}>
-                </td>
-                <td style={{ border: "none" }}></td>
-              </tr>
-            </tbody>
-          </table>
+          {/* 서명란 */}
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "baseline", gap: 24, fontSize: 15, marginBottom: 60 }}>
+            <span style={{ fontWeight: 700, letterSpacing: 4 }}>신청인</span>
+            <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: 6, borderBottom: `1px solid ${C.dark}`, padding: "0 20px 4px" }}>{emp?.name || ""}</span>
+            <span style={{ color: C.gray }}>(서명)</span>
+          </div>
 
           {/* 수신 */}
           <div style={{ borderTop: `2px solid ${C.dark}`, paddingTop: 20, textAlign: "center" }}>
