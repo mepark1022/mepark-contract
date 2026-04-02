@@ -10897,7 +10897,44 @@ function PayrollPage({ employees, profitState }) {
     if (mData) {
       const { data: recs } = await supabase.from("payroll_records")
         .select("*").eq("month_id", mData.id).order("site_code");
-      const recList = recs || [];
+      let recList = recs || [];
+
+      // ── 직원현황 급여정보 자동 동기화 (draft 상태만) ──
+      if (mData.status === "draft" && recList.length > 0) {
+        const syncUpdates = [];
+        for (const rec of recList) {
+          const emp = employees.find(e => e.id === rec.employee_id);
+          if (!emp) continue;
+          const newBasic = toNum(emp.weekday_pay) || toNum(emp.base_salary) || 0;
+          const newMeal = toNum(emp.meal) || toNum(emp.meal_allow) || 200000;
+          const newChildcare = toNum(emp.childcare) || toNum(emp.childcare_allow) || 0;
+          const newCar = toNum(emp.car_allowance) || toNum(emp.car_allow) || 0;
+          const newTeam = toNum(emp.team_allowance) || toNum(emp.leader_allow) || 0;
+          const newIncentive = toNum(emp.incentive) || 0;
+          const newSite = emp.site_code_1 || rec.site_code;
+          const newWorkType = emp.work_code || rec.work_type;
+          const newTaxType = emp.tax_type || rec.tax_type;
+          const changed = rec.basic_pay !== newBasic || rec.meal !== newMeal || rec.childcare !== newChildcare ||
+            rec.car_allow !== newCar || rec.team_allow !== newTeam || rec.incentive !== newIncentive ||
+            rec.site_code !== newSite || rec.work_type !== newWorkType || rec.tax_type !== newTaxType;
+          if (changed) {
+            const upd = { basic_pay: newBasic, meal: newMeal, childcare: newChildcare, car_allow: newCar, team_allow: newTeam, incentive: newIncentive, site_code: newSite, work_type: newWorkType, tax_type: newTaxType };
+            const newGross = newBasic + newMeal + newChildcare + newCar + newTeam + newIncentive + (rec.manual_write || 0) + calcAllowancesSum(rec.allowances);
+            const oldDed = (rec.gross_pay || 0) - (rec.net_pay || 0);
+            upd.gross_pay = newGross;
+            upd.net_pay = newGross - oldDed;
+            syncUpdates.push({ id: rec.id, ...upd });
+            Object.assign(rec, upd);
+          }
+        }
+        if (syncUpdates.length > 0) {
+          for (const u of syncUpdates) {
+            const { id, ...fields } = u;
+            await supabase.from("payroll_records").update(fields).eq("id", id);
+          }
+          console.log(`급여대장 동기화: ${syncUpdates.length}건 업데이트`);
+        }
+      }
 
       // ── 일보 추가수당 자동 동기화 ──
       const monthStart = `${pyYear}-${String(pyMonth).padStart(2, "0")}-01`;
@@ -10966,7 +11003,7 @@ function PayrollPage({ employees, profitState }) {
       setPyRecords([]);
     }
     setPyLoading(false);
-  }, [pyYear, pyMonth]);
+  }, [pyYear, pyMonth, employees]);
 
   useEffect(() => { loadPayrollMonth(); }, [loadPayrollMonth]);
 
