@@ -14500,8 +14500,9 @@ function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, to
   const [payrollCache, setPayrollCache] = useState({}); // { "empId-YYYY-MM": net_pay }
   const [loadingPayroll, setLoadingPayroll] = useState(false);
 
-  // 직원 필터
-  const activeEmps = useMemo(() => employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000"), [employees]);
+  // 직원 필터 — 해당 월 일보 기록이 있는 퇴사자도 포함
+  const monthStaffEmpIds = useMemo(() => new Set(staffRows.map(s => s.employee_id).filter(Boolean)), [staffRows]);
+  const activeEmps = useMemo(() => employees.filter(e => e.site_code_1 && e.site_code_1 !== "V000" && (e.status === "재직" || monthStaffEmpIds.has(e.id))), [employees, monthStaffEmpIds]);
   const filteredEmps = useMemo(() => {
     let list = activeEmps;
     if (siteFilter !== "all") list = list.filter(e => e.site_code_1 === siteFilter);
@@ -14694,6 +14695,7 @@ function PersonalAnalyticsTab({ employees, year, month, dates, getCellStatus, to
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div>
                     <span style={{ fontWeight: 800, fontSize: 13, color: isSelected ? C.navy : C.dark }}>{emp.name}</span>
+                    {emp.status === "퇴사" && <span style={{ fontSize: 9, padding: "1px 4px", borderRadius: 3, background: "#FFEBEE", color: C.error, fontWeight: 800, marginLeft: 4 }}>퇴사</span>}
                     <span style={{ fontSize: 11, color: C.gray, marginLeft: 6 }}>{emp.emp_no}</span>
                   </div>
                   <span style={{ fontSize: 11, fontWeight: 800, color: gr.color, background: gr.color + "18", padding: "2px 8px", borderRadius: 6 }}>{gr.grade}</span>
@@ -14845,8 +14847,9 @@ function SiteAnalyticsTab({ employees, year, month, dates, getCellStatus, todayS
   const [trendData, setTrendData] = useState([]);
   const [loadingTrend, setLoadingTrend] = useState(false);
 
-  // 재직 현장직원 (V000 제외)
-  const activeEmps = useMemo(() => employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000"), [employees]);
+  // 재직 현장직원 (V000 제외) — 해당 월 일보 기록이 있는 퇴사자도 포함
+  const monthStaffEmpIds = useMemo(() => new Set(staffRows.map(s => s.employee_id).filter(Boolean)), [staffRows]);
+  const activeEmps = useMemo(() => employees.filter(e => e.site_code_1 && e.site_code_1 !== "V000" && (e.status === "재직" || monthStaffEmpIds.has(e.id))), [employees, monthStaffEmpIds]);
 
   // 사업장 목록
   const siteOptions = useMemo(() => {
@@ -15242,7 +15245,8 @@ function AnomalyDetectionTab({ employees, year, month, dates, getCellStatus, tod
   const [sevFilter, setSevFilter] = useState("all"); // all / critical / warning / info
   const [siteFilter, setSiteFilter] = useState("all");
 
-  const activeEmps = useMemo(() => employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000"), [employees]);
+  const monthStaffEmpIds = useMemo(() => new Set(staffRows.map(s => s.employee_id).filter(Boolean)), [staffRows]);
+  const activeEmps = useMemo(() => employees.filter(e => e.site_code_1 && e.site_code_1 !== "V000" && (e.status === "재직" || monthStaffEmpIds.has(e.id))), [employees, monthStaffEmpIds]);
 
   // ── 이상 패턴 감지 엔진 ────────────────
   const anomalies = useMemo(() => {
@@ -15787,8 +15791,9 @@ function AttendancePage({ employees }) {
     return null;
   };
 
-  // 사업장별 직원 그룹
-  const activeEmps = employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000");
+  // 사업장별 직원 그룹 — 해당 월 일보 기록이 있는 퇴사자도 포함
+  const monthStaffEmpIds = useMemo(() => new Set(staffRows.map(s => s.employee_id).filter(Boolean)), [staffRows]);
+  const activeEmps = employees.filter(e => e.site_code_1 && e.site_code_1 !== "V000" && (e.status === "재직" || monthStaffEmpIds.has(e.id)));
   const siteGroups = useMemo(() => {
     const groups = {};
     activeEmps.forEach(e => {
@@ -15899,7 +15904,7 @@ function AttendancePage({ employees }) {
 
     // Sheet 4: 이상감지 목록
     const anomalyRows = [];
-    const allActiveForAnomaly = employees.filter(e => e.status === "재직" && e.site_code_1 && e.site_code_1 !== "V000");
+    const allActiveForAnomaly = employees.filter(e => e.site_code_1 && e.site_code_1 !== "V000" && (e.status === "재직" || monthStaffEmpIds.has(e.id)));
     allActiveForAnomaly.forEach(emp => {
       const stats = calcPersonalAttStats(emp.id, emp.work_code, dates, getCellStatus, todayStr);
       if (!stats || stats.totalWorkable < 3) return;
@@ -16223,7 +16228,10 @@ function AttendancePage({ employees }) {
                       {/* 카드 헤더 */}
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
                         <div>
-                          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark }}>{emp.name}</div>
+                          <div style={{ fontSize: 16, fontWeight: 800, color: C.dark }}>
+                            {emp.name}
+                            {emp.status === "퇴사" && <span style={{ fontSize: 10, padding: "1px 5px", borderRadius: 4, background: "#FFEBEE", color: C.error, fontWeight: 800, marginLeft: 6 }}>퇴사{emp.resign_date ? ` ${emp.resign_date.slice(5)}` : ""}</span>}
+                          </div>
                           <div style={{ fontSize: 13, color: C.gray }}>{emp.emp_no} · {getWorkLabel(emp.work_code)}</div>
                         </div>
                         <div style={{ textAlign: "right" }}>
@@ -16375,6 +16383,7 @@ function AttendancePage({ employees }) {
                           background: idx % 2 === 0 ? "#fff" : "#FAFBFC", whiteSpace: "nowrap", overflow: "hidden",
                         }}>
                           <span style={{ fontWeight: 800 }}>{emp.name}</span>
+                          {emp.status === "퇴사" && <span style={{ fontSize: 9, padding: "0 3px", borderRadius: 3, background: "#FFEBEE", color: C.error, fontWeight: 800, marginLeft: 2 }}>퇴사</span>}
                           {emp.work_code && (() => {
                             const cat = getWorkCat(emp.work_code);
                             const wl = WORK_CODES.find(w => w.code === emp.work_code)?.label || emp.work_code;
