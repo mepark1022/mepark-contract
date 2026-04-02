@@ -10649,7 +10649,7 @@ const PY_TAX_TYPES = [
 ];
 
 const PY_PAY_FIELDS = [
-  { key: "basic_pay", label: "기본급" },
+  { key: "basic_pay", label: "월급여" },
   { key: "meal", label: "식대" },
   { key: "childcare", label: "보육수당" },
   { key: "car_allow", label: "자가운전" },
@@ -11423,8 +11423,37 @@ function PayrollPage({ employees, profitState }) {
             </button>
           </div>
 
+          {/* ── 임금테이블 참조 (직원현황 연동) ── */}
+          {emp && (toNum(emp.wd_basic) > 0 || toNum(emp.we_daily) > 0) && (() => {
+            const cat = getWorkCat(rec.work_type);
+            const showWd = cat === "weekday" || cat === "mixed";
+            const showWe = cat === "weekend" || cat === "mixed";
+            return (
+              <div style={{ marginTop: 10, padding: "10px 14px", background: "#F5F7FF", borderRadius: 8, border: `1px solid #E0E4F0` }}>
+                <div style={{ fontSize: 10, fontWeight: 800, color: C.navy, marginBottom: 6 }}>📋 임금테이블 분해 (직원현황 참조)</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 12px", fontSize: 11 }}>
+                  {showWd && [
+                    ["기본급", emp.wd_basic], ["연차수당", emp.wd_annual],
+                    ["연장수당", emp.wd_overtime], ["공휴수당", emp.wd_holiday],
+                  ].map(([l, v]) => toNum(v) > 0 ? (
+                    <div key={l} style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: C.gray }}>{l}</span>
+                      <span style={{ fontWeight: 700, color: C.dark, fontFamily: "monospace" }}>{fmt(v)}</span>
+                    </div>
+                  ) : null)}
+                  {showWe && toNum(emp.we_daily) > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between" }}>
+                      <span style={{ color: C.orange }}>주말일당</span>
+                      <span style={{ fontWeight: 700, color: C.orange, fontFamily: "monospace" }}>{fmt(emp.we_daily)}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
+
           {/* ── 총 지급액 ── */}
-          <div style={{ marginTop: 14, padding: "12px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <div style={{ marginTop: 14, padding: "10px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: C.navy }}>총 지급액</span>
             <span style={{ fontSize: 16, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(gross)}원</span>
           </div>
