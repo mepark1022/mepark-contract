@@ -4688,12 +4688,23 @@ const RESIGN_REASONS = [
   "기타 사유",
 ];
 
+const RESIGN_PLEDGES = [
+  { id: "secret", text: "재직 중 취득한 회사의 경영상·기술상 일체의 기밀 정보를 퇴사 후에도 외부에 누설하거나 이용하지 않겠습니다.", default: true },
+  { id: "customer", text: "재직 중 알게 된 고객(이용자) 정보 및 개인정보를 퇴사 후 일체 사용·보관·유출하지 않으며, 보유 중인 사본이 있을 경우 즉시 파기하겠습니다.", default: true },
+  { id: "property", text: "회사 소유의 유니폼, 장비, 차량열쇠, 사업장 출입카드, 기타 비품 등 일체의 회사 자산을 최종 근무일까지 반납하겠습니다.", default: true },
+  { id: "handover", text: "담당 업무 및 사업장 운영에 관한 인수인계를 성실히 이행하며, 인수인계 완료 전까지 협조하겠습니다.", default: true },
+  { id: "damage", text: "위 서약사항을 위반하여 회사에 손해가 발생한 경우, 민·형사상 책임을 부담할 수 있음을 확인합니다.", default: true },
+  { id: "noncompete", text: "퇴사 후 6개월간 동종 업계(발렛파킹 서비스) 경쟁업체에 취업하거나 동종 사업을 영위하지 않겠습니다.", default: false },
+  { id: "vehicle", text: "재직 중 고객 차량 관련하여 미해결된 사고·분쟁이 있을 경우, 퇴사 후에도 해결 완료 시까지 성실히 협조하겠습니다.", default: false },
+];
+
 function Resignation({ employees, initialEmp }) {
   const [selId, setSelId] = useState(initialEmp?.id || "");
   const [reason, setReason] = useState(RESIGN_REASONS[0]);
   const [customReason, setCustomReason] = useState("");
   const [resignDate, setResignDate] = useState(today());
   const [lastWorkDate, setLastWorkDate] = useState("");
+  const [pledges, setPledges] = useState(() => RESIGN_PLEDGES.reduce((m, p) => ({ ...m, [p.id]: p.default }), {}));
 
   const active = employees.filter(e => e.status === "재직");
   const emp = employees.find(e => e.id === selId);
@@ -4790,6 +4801,36 @@ function Resignation({ employees, initialEmp }) {
           </div>
         </div>
 
+        <div style={cardStyle}>
+          <div style={sectionHeader("서약사항")}><span style={{ color: C.white, fontWeight: 800, fontSize: 13 }}>📜 서약사항</span></div>
+          <div style={{ padding: 16 }}>
+            <div style={{ fontSize: 11, color: C.gray, marginBottom: 10, lineHeight: 1.6 }}>퇴사 시 서약할 항목을 선택하세요. 체크된 항목만 사직서에 포함됩니다.</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {RESIGN_PLEDGES.map(p => (
+                <label key={p.id} onClick={() => setPledges(prev => ({ ...prev, [p.id]: !prev[p.id] }))}
+                  style={{
+                    display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", borderRadius: 8, cursor: "pointer",
+                    border: `1.5px solid ${pledges[p.id] ? C.navy : C.border}`,
+                    background: pledges[p.id] ? "#EFF6FF" : C.white, transition: "all .15s",
+                  }}>
+                  <span style={{ fontSize: 16, flexShrink: 0, marginTop: 1 }}>{pledges[p.id] ? "☑" : "☐"}</span>
+                  <span style={{ fontSize: 11, lineHeight: 1.6, color: pledges[p.id] ? C.dark : C.gray, fontWeight: pledges[p.id] ? 600 : 400 }}>{p.text}</span>
+                </label>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+              <button onClick={() => setPledges(RESIGN_PLEDGES.reduce((m, p) => ({ ...m, [p.id]: true }), {}))}
+                style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, color: C.navy }}>
+                전체 선택
+              </button>
+              <button onClick={() => setPledges(RESIGN_PLEDGES.reduce((m, p) => ({ ...m, [p.id]: p.default }), {}))}
+                style={{ flex: 1, padding: "7px 0", borderRadius: 6, border: `1.5px solid ${C.border}`, background: C.white, fontSize: 11, fontWeight: 700, cursor: "pointer", fontFamily: FONT, color: C.gray }}>
+                기본값 복원
+              </button>
+            </div>
+          </div>
+        </div>
+
         <button onClick={handlePrint} style={{ ...btnGold, width: "100%", padding: 14, fontSize: 15 }}>🖨️ 인쇄 / PDF 출력</button>
       </div>
 
@@ -4845,9 +4886,25 @@ function Resignation({ employees, initialEmp }) {
           </div>
 
           {/* 본문 */}
-          <div style={{ fontSize: 14, lineHeight: 2.2, marginBottom: 50, textAlign: "center" }}>
+          <div style={{ fontSize: 14, lineHeight: 2.2, marginBottom: 30, textAlign: "center" }}>
             <p>위와 같은 사유로 사직하고자 하오니 허락하여 주시기 바랍니다.</p>
+            <p>아울러, 아래 서약사항을 준수할 것을 확인합니다.</p>
           </div>
+
+          {/* 서약사항 */}
+          {RESIGN_PLEDGES.filter(p => pledges[p.id]).length > 0 && (
+            <div style={{ marginBottom: 40 }}>
+              <div style={{ fontSize: 15, fontWeight: 800, color: C.dark, marginBottom: 12, borderBottom: `2px solid ${C.dark}`, paddingBottom: 6 }}>서 약 사 항</div>
+              <div style={{ lineHeight: 2.0 }}>
+                {RESIGN_PLEDGES.filter(p => pledges[p.id]).map((p, idx) => (
+                  <div key={p.id} style={{ display: "flex", gap: 8, marginBottom: 6, fontSize: 13 }}>
+                    <span style={{ flexShrink: 0, fontWeight: 700 }}>{idx + 1}.</span>
+                    <span>{p.text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* 일자 */}
           <div style={{ textAlign: "center", marginBottom: 50 }}>
