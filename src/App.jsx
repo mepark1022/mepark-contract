@@ -14297,21 +14297,45 @@ function FullCalendarPage({ employees }) {
 
 // ── 16-6-B. 근태현황 — 전체캘린더 (v8.5) ─────────────────────────────
 
-// 2026년 법정공휴일
+// 2026년 법정공휴일 (대체공휴일·제헌절·지방선거 포함)
 const HOLIDAYS_2026 = new Set([
-  "2026-01-01","2026-01-27","2026-01-28","2026-01-29","2026-01-30",
-  "2026-03-01","2026-05-05","2026-05-06","2026-05-15",
-  "2026-06-06","2026-08-15",
-  "2026-09-17","2026-09-18","2026-09-19",
-  "2026-10-03","2026-10-09","2026-12-25",
+  "2026-01-01",
+  "2026-02-16","2026-02-17","2026-02-18",
+  "2026-03-01","2026-03-02",
+  "2026-05-05",
+  "2026-05-24","2026-05-25",
+  "2026-06-03",
+  "2026-06-06",
+  "2026-07-17",
+  "2026-08-15","2026-08-17",
+  "2026-09-24","2026-09-25","2026-09-26",
+  "2026-10-03","2026-10-05",
+  "2026-10-09",
+  "2026-12-25",
 ]);
 const isHoliday = (dateStr) => HOLIDAYS_2026.has(dateStr);
 const HOLIDAY_NAMES = {
-  "2026-01-01":"신정","2026-01-27":"설날전날","2026-01-28":"설날","2026-01-29":"설날다음날","2026-01-30":"대체공휴일",
-  "2026-03-01":"삼일절","2026-05-05":"어린이날","2026-05-06":"대체공휴일","2026-05-15":"부처님오신날",
-  "2026-06-06":"현충일","2026-08-15":"광복절",
-  "2026-09-17":"추석전날","2026-09-18":"추석","2026-09-19":"추석다음날",
-  "2026-10-03":"개천절","2026-10-09":"한글날","2026-12-25":"크리스마스",
+  "2026-01-01":"신정",
+  "2026-02-16":"설날전날","2026-02-17":"설날","2026-02-18":"설날다음날",
+  "2026-03-01":"삼일절","2026-03-02":"대체공휴일",
+  "2026-05-05":"어린이날",
+  "2026-05-24":"부처님오신날","2026-05-25":"대체공휴일",
+  "2026-06-03":"지방선거","2026-06-06":"현충일",
+  "2026-07-17":"제헌절",
+  "2026-08-15":"광복절","2026-08-17":"대체공휴일",
+  "2026-09-24":"추석전날","2026-09-25":"추석","2026-09-26":"추석다음날",
+  "2026-10-03":"개천절","2026-10-05":"대체공휴일",
+  "2026-10-09":"한글날","2026-12-25":"크리스마스",
+};
+
+// 근무유형별 공휴일 판정 — 주말 공휴일은 주말근무자에게 일반주말, 대체공휴일(평일)은 평일근무자에게 공휴
+const isHolidayForWorker = (dateStr, workCode) => {
+  if (!HOLIDAYS_2026.has(dateStr)) return false;
+  const dow = new Date(dateStr + "T00:00:00").getDay();
+  const isWeekendDay = dow === 0 || dow === 6;
+  const cat = getWorkCat(workCode);
+  if (isWeekendDay && (cat === "weekend" || cat === "mixed")) return false;
+  return true;
 };
 
 const ATT_STATUSES = [
@@ -14356,7 +14380,7 @@ function getExpectedWorkDays(workCode, year, month) {
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const dow = new Date(year, month - 1, d).getDay();
-    if (HOLIDAYS_2026.has(dateStr)) continue;
+    if (isHolidayForWorker(dateStr, workCode)) continue;
     if (offDays && offDays.includes(dow)) continue;
     count++;
   }
@@ -14373,7 +14397,7 @@ function getExpectedWeekendDays(workCode, year, month) {
   for (let d = 1; d <= daysInMonth; d++) {
     const dateStr = `${year}-${String(month).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
     const dow = new Date(year, month - 1, d).getDay();
-    if (HOLIDAYS_2026.has(dateStr)) continue;
+    if (isHolidayForWorker(dateStr, workCode)) continue;
     if (dow !== 0 && dow !== 6) continue; // 평일 skip
     const offDays = getOffDays(workCode);
     if (offDays && offDays.includes(dow)) continue;
@@ -16343,12 +16367,12 @@ function AttendancePage({ employees }) {
                       if (!st || st === "휴무" || st === "연차" || st === "결근") return;
                       if (st === "출근" || st === "지각") {
                         if (isPeakWorker(emp.work_code) && staffRows.some(s => s.employee_id === emp.id && s.staff_type === "peak" && reports.find(r => r.id === s.report_id)?.report_date === d.dateStr)) pk++;
-                        else if (d.isHoliday) hol++;
+                        else if (isHolidayForWorker(d.dateStr, emp.work_code)) hol++;
                         else if (d.isWeekend) we++;
                         else wd++;
                       } else if (st === "피크") pk++;
                       else if (st === "지원") sp++;
-                      else if (st === "추가") { d.isHoliday ? hol++ : ex++; }
+                      else if (st === "추가") { isHolidayForWorker(d.dateStr, emp.work_code) ? hol++ : ex++; }
                       // 키전달(추가수당): staff_type 무관, 해당 날짜 extra_amount 있으면 카운트
                       if (extraAmountByDateMap[`${emp.id}-${d.dateStr}`]) kd++;
                     });
@@ -16439,12 +16463,12 @@ function AttendancePage({ employees }) {
                         if (!st || st === "휴무" || st === "연차" || st === "결근") return;
                         if (st === "출근" || st === "지각") {
                           if (isPeakWorker(emp.work_code) && staffRows.some(s => s.employee_id === emp.id && s.staff_type === "peak" && reports.find(r => r.id === s.report_id)?.report_date === d.dateStr)) sPk++;
-                          else if (d.isHoliday) sHol++;
+                          else if (isHolidayForWorker(d.dateStr, emp.work_code)) sHol++;
                           else if (d.isWeekend) sWe++;
                           else sWd++;
                         } else if (st === "피크") sPk++;
                         else if (st === "지원") sSp++;
-                        else if (st === "추가") { d.isHoliday ? sHol++ : sEx++; }
+                        else if (st === "추가") { isHolidayForWorker(d.dateStr, emp.work_code) ? sHol++ : sEx++; }
                         if (extraAmountByDateMap[`${emp.id}-${d.dateStr}`]) sKd++;
                       });
                     });
