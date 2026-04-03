@@ -10675,6 +10675,35 @@ const PY_DED_FIELDS_4 = [
   { key: "local_tax", label: "지방소득세" },
 ];
 
+// 직원 근무유형별 급여대장 기본급 산출 헬퍼
+function buildPayrollPayFromEmp(emp) {
+  const cat = getWorkCat(emp.work_code);
+  const wdPay = toNum(emp.weekday_pay) || toNum(emp.base_salary) || 0;
+  const wePay = toNum(emp.weekend_pay) || toNum(emp.weekend_daily) || 0;
+  let basicPay = 0;
+  const autoAllowances = [];
+  if (cat === "weekend") {
+    basicPay = wePay; // 주말제: 일당을 기본급으로
+  } else if (cat === "mixed") {
+    basicPay = wdPay; // 복합: 평일 월급을 기본급으로
+    if (wePay > 0) autoAllowances.push({ label: "주말수당(일당)", amount: wePay, source: "employee" });
+  } else {
+    basicPay = wdPay; // 평일제/알바/기타
+  }
+  return {
+    basic_pay: basicPay,
+    meal: toNum(emp.meal) || toNum(emp.meal_allow) || 0,
+    childcare: toNum(emp.childcare) || toNum(emp.childcare_allow) || 0,
+    car_allow: toNum(emp.car_allowance) || toNum(emp.car_allow) || 0,
+    team_allow: toNum(emp.team_allowance) || toNum(emp.leader_allow) || 0,
+    incentive: toNum(emp.incentive) || 0,
+    site_code: emp.site_code_1 || "V000",
+    work_type: emp.work_code || "",
+    tax_type: emp.tax_type || "4대보험",
+    _autoAllowances: autoAllowances,
+  };
+}
+
 function calcPyDeductions(record) {
   const gross = (record.basic_pay || 0) + (record.meal || 0) + (record.childcare || 0) +
     (record.car_allow || 0) + (record.team_allow || 0) +
@@ -10905,21 +10934,17 @@ function PayrollPage({ employees, profitState }) {
         for (const rec of recList) {
           const emp = employees.find(e => e.id === rec.employee_id);
           if (!emp) continue;
-          const newBasic = toNum(emp.weekday_pay) || toNum(emp.base_salary) || 0;
-          const newMeal = toNum(emp.meal) || toNum(emp.meal_allow) || 0;
-          const newChildcare = toNum(emp.childcare) || toNum(emp.childcare_allow) || 0;
-          const newCar = toNum(emp.car_allowance) || toNum(emp.car_allow) || 0;
-          const newTeam = toNum(emp.team_allowance) || toNum(emp.leader_allow) || 0;
-          const newIncentive = toNum(emp.incentive) || 0;
-          const newSite = emp.site_code_1 || rec.site_code;
-          const newWorkType = emp.work_code || rec.work_type;
-          const newTaxType = emp.tax_type || rec.tax_type;
-          const changed = rec.basic_pay !== newBasic || rec.meal !== newMeal || rec.childcare !== newChildcare ||
-            rec.car_allow !== newCar || rec.team_allow !== newTeam || rec.incentive !== newIncentive ||
-            rec.site_code !== newSite || rec.work_type !== newWorkType || rec.tax_type !== newTaxType;
+          const pp = buildPayrollPayFromEmp(emp);
+          // allowances: employee 소스 교체, auto/manual 유지
+          const keepAllowances = (rec.allowances || []).filter(a => a.source !== "employee");
+          const newAllowances = [...pp._autoAllowances, ...keepAllowances];
+          const changed = rec.basic_pay !== pp.basic_pay || rec.meal !== pp.meal || rec.childcare !== pp.childcare ||
+            rec.car_allow !== pp.car_allow || rec.team_allow !== pp.team_allow || rec.incentive !== pp.incentive ||
+            rec.site_code !== pp.site_code || rec.work_type !== pp.work_type || rec.tax_type !== pp.tax_type ||
+            JSON.stringify(rec.allowances || []) !== JSON.stringify(newAllowances);
           if (changed) {
-            const upd = { basic_pay: newBasic, meal: newMeal, childcare: newChildcare, car_allow: newCar, team_allow: newTeam, incentive: newIncentive, site_code: newSite, work_type: newWorkType, tax_type: newTaxType };
-            const newGross = newBasic + newMeal + newChildcare + newCar + newTeam + newIncentive + (rec.manual_write || 0) + calcAllowancesSum(rec.allowances);
+            const upd = { basic_pay: pp.basic_pay, meal: pp.meal, childcare: pp.childcare, car_allow: pp.car_allow, team_allow: pp.team_allow, incentive: pp.incentive, site_code: pp.site_code, work_type: pp.work_type, tax_type: pp.tax_type, allowances: newAllowances };
+            const newGross = pp.basic_pay + pp.meal + pp.childcare + pp.car_allow + pp.team_allow + pp.incentive + (rec.manual_write || 0) + calcAllowancesSum(newAllowances);
             const oldDed = (rec.gross_pay || 0) - (rec.net_pay || 0);
             upd.gross_pay = newGross;
             upd.net_pay = newGross - oldDed;
@@ -11022,23 +11047,27 @@ function PayrollPage({ employees, profitState }) {
       // 2. 재직 직원 기준 레코드 생성 (allowances는 loadPayrollMonth에서 자동 동기화)
       const activeEmps = employees.filter(e => e.status === "재직");
 
-      const records = activeEmps.map(e => ({
-        month_id: newMonth.id,
-        employee_id: e.id,
-        site_code: e.site_code_1 || "V000",
-        work_type: e.work_code || e.work_type || "",
-        // 신규 필드(급여조건 편집폼 저장값) 우선, 없으면 기존 필드 fallback
-        basic_pay: toNum(e.weekday_pay) || toNum(e.base_salary) || 0,
-        meal: toNum(e.meal) || toNum(e.meal_allow) || 0,
-        childcare: toNum(e.childcare) || toNum(e.childcare_allow) || 0,
-        car_allow: toNum(e.car_allowance) || toNum(e.car_allow) || 0,
-        team_allow: toNum(e.team_allowance) || toNum(e.leader_allow) || 0,
-        incentive: toNum(e.incentive) || 0,
-        allowances: [],
-        tax_type: e.tax_type || "4대보험",
-        reporter_name: e.reporter_name || "",
-        reporter_rrn: e.reporter_rrn || "",
-      }));
+      const records = activeEmps.map(e => {
+        const pp = buildPayrollPayFromEmp(e);
+        // 복합근무 주말수당 → allowances에 자동 추가
+        const empAllowances = pp._autoAllowances.length > 0 ? [...pp._autoAllowances] : [];
+        return {
+          month_id: newMonth.id,
+          employee_id: e.id,
+          site_code: pp.site_code,
+          work_type: pp.work_type,
+          basic_pay: pp.basic_pay,
+          meal: pp.meal,
+          childcare: pp.childcare,
+          car_allow: pp.car_allow,
+          team_allow: pp.team_allow,
+          incentive: pp.incentive,
+          allowances: empAllowances,
+          tax_type: pp.tax_type,
+          reporter_name: e.reporter_name || "",
+          reporter_rrn: e.reporter_rrn || "",
+        };
+      });
 
       // gross, net 계산 후 저장
       const finalRecords = records.map(r => {
@@ -11380,8 +11409,10 @@ function PayrollPage({ employees, profitState }) {
           {/* ── 직원현황 급여 (읽기전용) ── */}
           {(() => {
             const empGross = (rec.basic_pay || 0) + (rec.meal || 0) + (rec.childcare || 0) + (rec.car_allow || 0) + (rec.team_allow || 0) + (rec.incentive || 0);
+            const cat = getWorkCat(rec.work_type);
+            const payLabel = cat === "weekend" ? "일당" : "월급여";
             const details = [
-              ["월급여", rec.basic_pay], ["식대", rec.meal], ["보육", rec.childcare],
+              [payLabel, rec.basic_pay], ["식대", rec.meal], ["보육", rec.childcare],
               ["자가운전", rec.car_allow], ["직책", rec.team_allow], ["인센티브", rec.incentive],
             ].filter(([, v]) => v > 0);
             return (
@@ -13211,15 +13242,7 @@ function MainApp() {
 
       // ── 급여대장 즉시 동기화 (draft 상태만) ──
       try {
-        const basicPay = toNum(emp.weekday_pay) || toNum(emp.base_salary) || 0;
-        const meal = toNum(emp.meal) || toNum(emp.meal_allow) || 0;
-        const childcare = toNum(emp.childcare) || toNum(emp.childcare_allow) || 0;
-        const carAllow = toNum(emp.car_allowance) || toNum(emp.car_allow) || 0;
-        const teamAllow = toNum(emp.team_allowance) || toNum(emp.leader_allow) || 0;
-        const incentive = toNum(emp.incentive) || 0;
-        const siteCode = emp.site_code_1 || "";
-        const workType = emp.work_code || "";
-        const taxType = emp.tax_type || "4대보험";
+        const pp = buildPayrollPayFromEmp(emp);
 
         // draft 상태 payroll_months 조회
         const { data: draftMonths } = await supabase.from("payroll_months")
@@ -13231,13 +13254,15 @@ function MainApp() {
             .eq("employee_id", id).in("month_id", monthIds);
           if (recs) {
             for (const rec of recs) {
-              const newGross = basicPay + meal + childcare + carAllow + teamAllow + incentive +
-                (rec.manual_write || 0) + ((rec.allowances || []).reduce((s, a) => s + (toNum(a.amount) || 0), 0));
+              const keepAllowances = (rec.allowances || []).filter(a => a.source !== "employee");
+              const newAllowances = [...pp._autoAllowances, ...keepAllowances];
+              const newGross = pp.basic_pay + pp.meal + pp.childcare + pp.car_allow + pp.team_allow + pp.incentive +
+                (rec.manual_write || 0) + calcAllowancesSum(newAllowances);
               const oldDed = (rec.gross_pay || 0) - (rec.net_pay || 0);
               await supabase.from("payroll_records").update({
-                basic_pay: basicPay, meal, childcare, car_allow: carAllow, team_allow: teamAllow,
-                incentive, site_code: siteCode, work_type: workType, tax_type: taxType,
-                gross_pay: newGross, net_pay: newGross - oldDed,
+                basic_pay: pp.basic_pay, meal: pp.meal, childcare: pp.childcare, car_allow: pp.car_allow, team_allow: pp.team_allow,
+                incentive: pp.incentive, site_code: pp.site_code, work_type: pp.work_type, tax_type: pp.tax_type,
+                allowances: newAllowances, gross_pay: newGross, net_pay: newGross - oldDed,
               }).eq("id", rec.id);
             }
           }
