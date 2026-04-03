@@ -1441,6 +1441,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
   const [empContracts, setEmpContracts] = useState([]);
   const [contractsLoading, setContractsLoading] = useState(false);
   const [latestPayroll, setLatestPayroll] = useState(null); // 최근 급여 공제 읽기전용
+  const [empAttSummary, setEmpAttSummary] = useState(null); // 근태 연동 요약
   const [accountLoading, setAccountLoading] = useState(false);
   const [accountForm, setAccountForm] = useState({ email: "", password: "", role: "field_member" });
   const [accountMsg, setAccountMsg] = useState("");
@@ -1524,6 +1525,28 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
         .eq("employee_id", emp.id).order("created_at", { ascending: false }).limit(1);
       setLatestPayroll(prData && prData.length > 0 ? prData[0] : null);
     } catch { setLatestPayroll(null); }
+    // S5: 근태 연동 체크 — 이달 출근 데이터 조회
+    try {
+      const now = new Date();
+      const ym = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+      const startDate = ym + "-01";
+      const endDate = ym + "-31";
+      const { data: attData } = await supabase.from("daily_report_staff")
+        .select("id, report_id, staff_type, check_in, check_out, extra_amount, daily_reports!inner(report_date, site_code)")
+        .eq("employee_id", emp.id)
+        .gte("daily_reports.report_date", startDate)
+        .lte("daily_reports.report_date", endDate);
+      if (attData && attData.length > 0) {
+        const regular = attData.filter(a => a.staff_type === "site").length;
+        const extra = attData.filter(a => a.staff_type === "extra" || a.staff_type === "substitute").length;
+        const peak = attData.filter(a => a.staff_type === "peak").length;
+        const support = attData.filter(a => a.staff_type === "support").length;
+        const totalExtra = attData.reduce((s, a) => s + (toNum(a.extra_amount)), 0);
+        setEmpAttSummary({ total: attData.length, regular, extra, peak, support, totalExtra, month: ym });
+      } else {
+        setEmpAttSummary({ total: 0, month: ym });
+      }
+    } catch { setEmpAttSummary(null); }
   };
 
   // 계정 생성
@@ -1832,19 +1855,35 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
       return;
     }
     setSaving(true);
-    // v11.1 P3-d: 임금분해 자동산출 → DB 저장
+    // v11.1 P3-d → v11.2: 임금분해 수기편집 지원 — editEmp 값 그대로 저장 (자동산출 덮어쓰기 제거)
+    // 분해값이 모두 0인 경우에만 자동산출 fallback
     const cat = getWorkCat(emp.work_code);
-    if (cat === "weekday" || cat === "mixed") {
+    if ((cat === "weekday" || cat === "mixed") && !toNum(emp.wd_basic) && toNum(emp.weekday_pay) > 0) {
       const wb = calcWdBreakdown(toNum(emp.weekday_pay), emp.work_code, emp.site_code_1);
       if (wb) { emp.wd_basic = wb.wd_basic; emp.wd_annual = wb.wd_annual; emp.wd_overtime = wb.wd_overtime; emp.wd_holiday = wb.wd_holiday; emp.wd_hourly_rate = wb.wd_hourly_rate; }
     }
-    if (cat === "weekend" || cat === "mixed") {
+    if ((cat === "weekend" || cat === "mixed") && !toNum(emp.we_basic) && toNum(emp.weekend_pay) > 0) {
       const wb = calcWeBreakdown(toNum(emp.weekend_pay), emp.work_code, emp.site_code_1);
       if (wb) { emp.we_basic = wb.we_basic; emp.we_overtime = wb.we_overtime; emp.we_weekly_hol = wb.we_weekly_hol; emp.we_holiday = wb.we_holiday; emp.we_hourly_rate = wb.we_hourly_rate; }
     }
     await saveEmployee(emp);
     setSaving(false);
     setEditEmp(null); setShowForm(false);
+  };
+
+  // ── 편집폼 열기 헬퍼: DB에 임금분해 없으면 자동산출로 초기화 ──
+  const openEditForm = (emp) => {
+    const e = { ...emp };
+    const cat = getWorkCat(e.work_code);
+    if ((cat === "weekday" || cat === "mixed") && !toNum(e.wd_basic) && toNum(e.weekday_pay || e.base_salary) > 0) {
+      const wb = calcWdBreakdown(toNum(e.weekday_pay || e.base_salary), e.work_code, e.site_code_1);
+      if (wb) { e.wd_basic = wb.wd_basic; e.wd_annual = wb.wd_annual; e.wd_overtime = wb.wd_overtime; e.wd_holiday = wb.wd_holiday; e.wd_hourly_rate = wb.wd_hourly_rate; }
+    }
+    if ((cat === "weekend" || cat === "mixed") && !toNum(e.we_basic) && toNum(e.weekend_pay || e.weekend_daily) > 0) {
+      const wb = calcWeBreakdown(toNum(e.weekend_pay || e.weekend_daily), e.work_code, e.site_code_1);
+      if (wb) { e.we_basic = wb.we_basic; e.we_overtime = wb.we_overtime; e.we_weekly_hol = wb.we_weekly_hol; e.we_holiday = wb.we_holiday; e.we_hourly_rate = wb.we_hourly_rate; }
+    }
+    setEditEmp(e); setShowForm(true);
   };
 
   const deleteEmp = async (id) => {
@@ -2046,7 +2085,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                 </td>
                 <td style={{ padding: "8px", textAlign: "center", whiteSpace: "nowrap" }}>
                   {can("edit") && <button onClick={() => onContract(e)} title="계약서" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>📝</button>}
-                  {can("edit") && <button onClick={() => { setEditEmp({ ...e }); setShowForm(true); }} title="편집" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>✏️</button>}
+                  {can("edit") && <button onClick={() => openEditForm(e)} title="편집" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>✏️</button>}
                   {can("edit") && <button onClick={() => onResign(e)} title="사직서" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>📋</button>}
                   {can("edit") && <button onClick={() => deleteEmp(e.id)} title="삭제" style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, padding: 2 }}>🗑</button>}
                 </td>
@@ -2143,7 +2182,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                   </div>
                   {se.memo && <div style={sectionBox}>{sectionTitle("📝", "메모")}<div style={{ fontSize: 12, color: C.dark, whiteSpace: "pre-wrap" }}>{se.memo}</div></div>}
                   <div style={{ textAlign: "center", paddingTop: 8 }}>
-                    <button onClick={() => { setEditEmp({ ...se }); setShowForm(true); }} style={{ ...btnPrimary, padding: "10px 32px", fontSize: 13 }}>✏️ 정보 수정</button>
+                    <button onClick={() => openEditForm(se)} style={{ ...btnPrimary, padding: "10px 32px", fontSize: 13 }}>✏️ 정보 수정</button>
                   </div>
                 </div>
               )}
@@ -2225,6 +2264,26 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                       <div style={{ marginTop: 8, padding: "8px 12px", background: "#FFF3E0", borderRadius: 8, fontSize: 11, color: C.orange, fontWeight: 700 }}>⚠️ 계좌정보가 미등록입니다. 급여이체 시 누락됩니다.</div>
                     )}
                   </div>
+                  {/* 근태 연동 현황 */}
+                  <div style={sectionBox}>
+                    {sectionTitle("📅", "근태 연동 현황")}
+                    {empAttSummary ? (empAttSummary.total > 0 ? (
+                      <div>
+                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
+                          <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, background: "#EBF0FF", color: C.navy, fontWeight: 700 }}>출근 {empAttSummary.regular}일</span>
+                          {empAttSummary.extra > 0 && <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, background: "#E8F5E9", color: C.success, fontWeight: 700 }}>추가 {empAttSummary.extra}일</span>}
+                          {empAttSummary.peak > 0 && <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, background: "#FFEBEE", color: C.error, fontWeight: 700 }}>피크 {empAttSummary.peak}일</span>}
+                          {empAttSummary.support > 0 && <span style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, background: "#FFF8E1", color: C.orange, fontWeight: 700 }}>지원 {empAttSummary.support}일</span>}
+                        </div>
+                        {empAttSummary.totalExtra > 0 && <div style={{ fontSize: 10, color: C.gray }}>추가수당 합계: <strong style={{ color: C.navy }}>{fmt(empAttSummary.totalExtra)}원</strong></div>}
+                        <div style={{ fontSize: 9, color: C.success, marginTop: 4, fontWeight: 700 }}>✅ {empAttSummary.month} 근태 데이터 연동됨 (총 {empAttSummary.total}건)</div>
+                      </div>
+                    ) : (
+                      <div style={{ fontSize: 11, color: C.orange, textAlign: "center", padding: 8 }}>⚠️ {empAttSummary.month} 근태 데이터 없음 — 현장일보 미제출</div>
+                    )) : (
+                      <div style={{ fontSize: 11, color: C.gray, textAlign: "center", padding: 8 }}>근태 데이터 로딩 중...</div>
+                    )}
+                  </div>
                   {/* 최근 급여 공제 내역 (읽기 전용) */}
                   <div style={sectionBox}>
                     {sectionTitle("📊", "최근 급여 공제 내역")}
@@ -2291,7 +2350,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     )}
                   </div>
                   <div style={{ textAlign: "center", paddingTop: 8 }}>
-                    <button onClick={() => { setEditEmp({ ...se }); setShowForm(true); }} style={{ ...btnPrimary, padding: "10px 32px", fontSize: 13 }}>✏️ 급여조건 수정</button>
+                    <button onClick={() => openEditForm(se)} style={{ ...btnPrimary, padding: "10px 32px", fontSize: 13 }}>✏️ 급여조건 수정</button>
                   </div>
                 </div>
               ); })()}
@@ -2767,14 +2826,20 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                 const eCat = getWorkCat(editEmp.work_code);
                 const eHasWd = eCat === "weekday" || eCat === "mixed";
                 const eHasWe = eCat === "weekend" || eCat === "mixed";
-                const eWdB = calcWdBreakdown(toNum(editEmp.weekday_pay), editEmp.work_code, editEmp.site_code_1);
-                const eWeB = calcWeBreakdown(toNum(editEmp.weekend_pay), editEmp.work_code, editEmp.site_code_1);
-                const miniRow = (label, val, color) => (
-                  <div style={{ display: "flex", justifyContent: "space-between", padding: "2px 0", fontSize: 10 }}>
-                    <span style={{ color: C.gray }}>{label}</span>
-                    <span style={{ fontWeight: 700, color: color || C.dark, fontFamily: "monospace" }}>{fmt(val)}원</span>
+                const bdInput = (label, field, color) => (
+                  <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 0" }}>
+                    <span style={{ fontSize: 10, color: C.gray, minWidth: 52, flexShrink: 0 }}>{label}</span>
+                    <NumInput value={editEmp[field]} onChange={v => setEditEmp(p => ({ ...p, [field]: v }))} style={{ flex: 1, fontSize: 11, padding: "3px 6px", borderRadius: 6, border: `1px solid ${color}33`, textAlign: "right", fontWeight: 700 }} />
                   </div>
                 );
+                const autoCalcWd = () => {
+                  const wb = calcWdBreakdown(toNum(editEmp.weekday_pay), editEmp.work_code, editEmp.site_code_1);
+                  if (wb) setEditEmp(p => ({ ...p, wd_basic: wb.wd_basic, wd_annual: wb.wd_annual, wd_overtime: wb.wd_overtime, wd_holiday: wb.wd_holiday, wd_hourly_rate: wb.wd_hourly_rate }));
+                };
+                const autoCalcWe = () => {
+                  const wb = calcWeBreakdown(toNum(editEmp.weekend_pay), editEmp.work_code, editEmp.site_code_1);
+                  if (wb) setEditEmp(p => ({ ...p, we_basic: wb.we_basic, we_overtime: wb.we_overtime, we_weekly_hol: wb.we_weekly_hol, we_holiday: wb.we_holiday, we_hourly_rate: wb.we_hourly_rate }));
+                };
                 return (
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
                 {/* 급여조건 */}
@@ -2791,18 +2856,22 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                       <label style={{ fontSize: 11, fontWeight: 700, color: C.navy }}>평일수당(월급) ★</label>
                     </div>
                     <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} style={{ borderColor: C.navy, fontWeight: 800, fontSize: 15 }} />
-                    {eWdB && (
-                      <div style={{ marginTop: 6, padding: "8px 10px", background: "#EFF6FF", borderRadius: 8, border: `1px solid ${C.navy}22` }}>
-                        {miniRow("기본급", eWdB.wd_basic, C.navy)}
-                        {miniRow("연차수당", eWdB.wd_annual)}
-                        {miniRow("연장수당", eWdB.wd_overtime)}
-                        {miniRow("공휴수당", eWdB.wd_holiday)}
-                        <div style={{ borderTop: `1px solid ${C.navy}33`, marginTop: 3, paddingTop: 3, display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-                          <span style={{ fontWeight: 800, color: C.navy }}>통상시급</span>
-                          <span style={{ fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(eWdB.wd_hourly_rate)}원/h</span>
-                        </div>
+                    <div style={{ marginTop: 6, padding: "8px 10px", background: "#EFF6FF", borderRadius: 8, border: `1px solid ${C.navy}22` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: C.navy }}>임금분해 (수기편집)</span>
+                        <button onClick={autoCalcWd} style={{ fontSize: 9, padding: "2px 8px", borderRadius: 4, border: `1px solid ${C.navy}44`, background: "#fff", color: C.navy, fontWeight: 700, cursor: "pointer" }}>🔄 자동산출</button>
                       </div>
-                    )}
+                      {bdInput("기본급", "wd_basic", C.navy)}
+                      {bdInput("연차수당", "wd_annual", C.navy)}
+                      {bdInput("연장수당", "wd_overtime", C.navy)}
+                      {bdInput("공휴수당", "wd_holiday", C.navy)}
+                      <div style={{ borderTop: `1px solid ${C.navy}33`, marginTop: 4, paddingTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 10, color: C.gray, minWidth: 52 }}>통상시급</span>
+                        <NumInput value={editEmp.wd_hourly_rate} onChange={v => setEditEmp(p => ({ ...p, wd_hourly_rate: v }))} style={{ flex: 1, fontSize: 11, padding: "3px 6px", borderRadius: 6, border: `1px solid ${C.navy}33`, textAlign: "right", fontWeight: 800, color: C.navy }} />
+                        <span style={{ fontSize: 9, color: C.gray }}>원/h</span>
+                      </div>
+                      {(() => { const sum = toNum(editEmp.wd_basic) + toNum(editEmp.wd_annual) + toNum(editEmp.wd_overtime) + toNum(editEmp.wd_holiday); const pay = toNum(editEmp.weekday_pay); const diff = pay - sum; return diff !== 0 ? <div style={{ fontSize: 9, color: diff > 0 ? C.orange : C.error, marginTop: 4, fontWeight: 700 }}>⚠️ 합계 {fmt(sum)}원 (차이 {diff > 0 ? "+" : ""}{fmt(diff)}원)</div> : <div style={{ fontSize: 9, color: C.success, marginTop: 4, fontWeight: 700 }}>✅ 합계 일치 {fmt(sum)}원</div>; })()}
+                    </div>
                   </div>)}
 
                   {/* 주말 임금 */}
@@ -2812,18 +2881,22 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                       <label style={{ fontSize: 11, fontWeight: 700, color: C.orange }}>주말수당(일당)</label>
                     </div>
                     <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} style={{ borderColor: C.orange, fontWeight: 800, fontSize: 15 }} />
-                    {eWeB && (
-                      <div style={{ marginTop: 6, padding: "8px 10px", background: "#FFF8E1", borderRadius: 8, border: `1px solid ${C.orange}22` }}>
-                        {miniRow("기본급", eWeB.we_basic, C.orange)}
-                        {miniRow("연장수당", eWeB.we_overtime)}
-                        {miniRow("주휴수당", eWeB.we_weekly_hol)}
-                        {miniRow("공휴수당", eWeB.we_holiday)}
-                        <div style={{ borderTop: `1px solid ${C.orange}33`, marginTop: 3, paddingTop: 3, display: "flex", justifyContent: "space-between", fontSize: 11 }}>
-                          <span style={{ fontWeight: 800, color: C.orange }}>통상시급</span>
-                          <span style={{ fontWeight: 900, color: C.orange, fontFamily: "monospace" }}>{fmt(eWeB.we_hourly_rate)}원/h</span>
-                        </div>
+                    <div style={{ marginTop: 6, padding: "8px 10px", background: "#FFF8E1", borderRadius: 8, border: `1px solid ${C.orange}22` }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: C.orange }}>임금분해 (수기편집)</span>
+                        <button onClick={autoCalcWe} style={{ fontSize: 9, padding: "2px 8px", borderRadius: 4, border: `1px solid ${C.orange}44`, background: "#fff", color: C.orange, fontWeight: 700, cursor: "pointer" }}>🔄 자동산출</button>
                       </div>
-                    )}
+                      {bdInput("기본급", "we_basic", C.orange)}
+                      {bdInput("연장수당", "we_overtime", C.orange)}
+                      {bdInput("주휴수당", "we_weekly_hol", C.orange)}
+                      {bdInput("공휴수당", "we_holiday", C.orange)}
+                      <div style={{ borderTop: `1px solid ${C.orange}33`, marginTop: 4, paddingTop: 4, display: "flex", alignItems: "center", gap: 4 }}>
+                        <span style={{ fontSize: 10, color: C.gray, minWidth: 52 }}>통상시급</span>
+                        <NumInput value={editEmp.we_hourly_rate} onChange={v => setEditEmp(p => ({ ...p, we_hourly_rate: v }))} style={{ flex: 1, fontSize: 11, padding: "3px 6px", borderRadius: 6, border: `1px solid ${C.orange}33`, textAlign: "right", fontWeight: 800, color: C.orange }} />
+                        <span style={{ fontSize: 9, color: C.gray }}>원/h</span>
+                      </div>
+                      {(() => { const sum = toNum(editEmp.we_basic) + toNum(editEmp.we_overtime) + toNum(editEmp.we_weekly_hol) + toNum(editEmp.we_holiday); const pay = toNum(editEmp.weekend_pay); const diff = pay - sum; return diff !== 0 ? <div style={{ fontSize: 9, color: diff > 0 ? C.orange : C.error, marginTop: 4, fontWeight: 700 }}>⚠️ 합계 {fmt(sum)}원 (차이 {diff > 0 ? "+" : ""}{fmt(diff)}원)</div> : <div style={{ fontSize: 9, color: C.success, marginTop: 4, fontWeight: 700 }}>✅ 합계 일치 {fmt(sum)}원</div>; })()}
+                    </div>
                   </div>)}
 
                   {/* 수당 항목 */}
