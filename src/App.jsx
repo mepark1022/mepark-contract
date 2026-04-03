@@ -11377,15 +11377,37 @@ function PayrollPage({ employees, profitState }) {
         {/* 통합 급여 편집 (1화면 스크롤) */}
         <div style={{ flex: 1, overflowY: "auto", padding: 20 }}>
 
-          {/* ── 기본 급여 ── */}
-          <div style={{ fontSize: 12, fontWeight: 800, color: C.navy, marginBottom: 8, paddingBottom: 6, borderBottom: `2px solid ${C.navy}` }}>기본 급여</div>
-          {PY_PAY_FIELDS.map(f => (
-            <div key={f.key} style={{ display: "flex", alignItems: "center", marginBottom: 8, gap: 8 }}>
-              <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>{f.label}</label>
-              <NumInput value={rec[f.key] || 0} onChange={v => handleFieldChange(f.key, v)}
-                style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }} />
-            </div>
-          ))}
+          {/* ── 직원현황 급여 (읽기전용) ── */}
+          {(() => {
+            const empGross = (rec.basic_pay || 0) + (rec.meal || 0) + (rec.childcare || 0) + (rec.car_allow || 0) + (rec.team_allow || 0) + (rec.incentive || 0);
+            const details = [
+              ["월급여", rec.basic_pay], ["식대", rec.meal], ["보육", rec.childcare],
+              ["자가운전", rec.car_allow], ["직책", rec.team_allow], ["인센티브", rec.incentive],
+            ].filter(([, v]) => v > 0);
+            return (
+              <div style={{ padding: "12px 14px", background: "#F5F7FF", borderRadius: 10, border: `1px solid #E0E4F0`, marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: details.length > 1 ? 8 : 0 }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.navy }}>직원현황 급여</span>
+                  <span style={{ fontSize: 15, fontWeight: 900, color: C.navy, fontFamily: "monospace" }}>{fmt(empGross)}원</span>
+                </div>
+                {details.length > 1 && (
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: "2px 12px", fontSize: 11 }}>
+                    {details.map(([l, v]) => (
+                      <span key={l} style={{ color: C.gray }}>{l} <strong style={{ color: C.dark }}>{fmt(v)}</strong></span>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize: 9, color: C.gray, marginTop: 6 }}>※ 수정은 직원현황 → 급여조건 탭에서</div>
+              </div>
+            );
+          })()}
+
+          {/* ── 수기수당 (급여대장 전용) ── */}
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 4, gap: 8 }}>
+            <label style={{ width: 80, fontSize: 12, fontWeight: 600, color: C.gray, flexShrink: 0 }}>수기수당</label>
+            <NumInput value={rec.manual_write || 0} onChange={v => handleFieldChange("manual_write", v)}
+              style={{ flex: 1, textAlign: "right", fontWeight: 700, fontSize: 13 }} />
+          </div>
 
           {/* ── 추가수당 ── */}
           <div style={{ marginTop: 16 }}>
@@ -11423,34 +11445,6 @@ function PayrollPage({ employees, profitState }) {
             </button>
           </div>
 
-          {/* ── 임금테이블 참조 (직원현황 연동) ── */}
-          {emp && (toNum(emp.wd_basic) > 0 || toNum(emp.we_daily) > 0) && (() => {
-            const cat = getWorkCat(rec.work_type);
-            const showWd = cat === "weekday" || cat === "mixed";
-            const showWe = cat === "weekend" || cat === "mixed";
-            return (
-              <div style={{ marginTop: 10, padding: "10px 14px", background: "#F5F7FF", borderRadius: 8, border: `1px solid #E0E4F0` }}>
-                <div style={{ fontSize: 10, fontWeight: 800, color: C.navy, marginBottom: 6 }}>📋 임금테이블 분해 (직원현황 참조)</div>
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "2px 12px", fontSize: 11 }}>
-                  {showWd && [
-                    ["기본급", emp.wd_basic], ["연차수당", emp.wd_annual],
-                    ["연장수당", emp.wd_overtime], ["공휴수당", emp.wd_holiday],
-                  ].map(([l, v]) => toNum(v) > 0 ? (
-                    <div key={l} style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ color: C.gray }}>{l}</span>
-                      <span style={{ fontWeight: 700, color: C.dark, fontFamily: "monospace" }}>{fmt(v)}</span>
-                    </div>
-                  ) : null)}
-                  {showWe && toNum(emp.we_daily) > 0 && (
-                    <div style={{ display: "flex", justifyContent: "space-between" }}>
-                      <span style={{ color: C.orange }}>주말일당</span>
-                      <span style={{ fontWeight: 700, color: C.orange, fontFamily: "monospace" }}>{fmt(emp.we_daily)}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            );
-          })()}
 
           {/* ── 총 지급액 ── */}
           <div style={{ marginTop: 14, padding: "10px 16px", background: "#EBF0FF", borderRadius: 8, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
