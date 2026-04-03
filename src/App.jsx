@@ -11242,7 +11242,7 @@ function PayrollPage({ employees, profitState }) {
         "사업장": getSiteName(r.site_code),
         "근무형태": getWorkLabel(r.work_type),
         "세금처리": r.tax_type || "",
-        "기본급": r.basic_pay || 0,
+        "월급여": r.basic_pay || 0,
         "식대": r.meal || 0,
         "보육수당": r.childcare || 0,
         "자가운전": r.car_allow || 0,
@@ -11790,7 +11790,7 @@ function PayrollPage({ employees, profitState }) {
                     <th style={{ ...pyThStyle, textAlign: "left" }}>근무형태</th>
                     <th style={{ ...pyThStyle, textAlign: "left" }}>세금처리</th>
                     {/* 지급 그룹 */}
-                    <th style={amtTh}>기본급</th>
+                    <th style={amtTh}>월급여</th>
                     <th style={amtTh}>식대</th>
                     {payGroupOpen && PAY_EX_COLS.map(c => (
                       <th key={c.key} style={{ ...amtTh, background: "#1E3AB0", fontSize: 10 }}>{c.label}</th>
