@@ -304,7 +304,7 @@ function ConfirmProvider({ children }) {
       {children}
       {state && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 9999, fontFamily: FONT }}
-          onClick={handleCancel}>
+          onMouseDown={e => { if (e.target === e.currentTarget) handleCancel(); }}>
           <div style={{ background: "#fff", borderRadius: 16, width: 380, maxWidth: "90vw", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}
             onClick={e => e.stopPropagation()}>
             {/* 헤더 */}
@@ -2647,7 +2647,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
 
       {showForm && editEmp && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
-          onClick={() => setShowForm(false)}>
+          onMouseDown={e => { if (e.target === e.currentTarget) setShowForm(false); }}>
           <div style={{ background: "#F5F6FA", borderRadius: 20, width: 960, maxWidth: "95vw", maxHeight: "92vh", display: "flex", flexDirection: "column", overflow: "hidden", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}
             onClick={e => e.stopPropagation()}>
             {/* 헤더 */}
@@ -3024,7 +3024,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
       {/* v9.1: 일괄 계정생성 모달 */}
       {showBulk && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
-          onClick={bulkCreating ? null : closeBulk}>
+          onMouseDown={e => { if (e.target === e.currentTarget && !bulkCreating) closeBulk(); }}>
           <div style={{ background: C.white, borderRadius: 16, width: 560, maxHeight: "88vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={{ background: "#E97132", padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 20 }}>📊</span>
@@ -3091,7 +3091,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
       {/* v9.1: 일괄 수정 모달 */}
       {showBulkEdit && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
-          onClick={bulkEditing ? null : closeBulkEdit}>
+          onMouseDown={e => { if (e.target === e.currentTarget && !bulkEditing) closeBulkEdit(); }}>
           <div style={{ background: C.white, borderRadius: 16, width: 520, maxHeight: "88vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={{ background: C.skyBlue, padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
               <span style={{ fontSize: 20 }}>📤</span>
@@ -3134,7 +3134,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
       {/* v9.1: 내 비밀번호 변경 모달 */}
       {showPwChange && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }}
-          onClick={() => setShowPwChange(false)}>
+          onMouseDown={e => { if (e.target === e.currentTarget) setShowPwChange(false); }}>
           <div style={{ background: C.white, borderRadius: 16, width: 380, padding: 0 }} onClick={e => e.stopPropagation()}>
             <div style={{ background: C.navy, padding: "16px 24px", borderRadius: "16px 16px 0 0" }}>
               <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>🔑 내 비밀번호 변경</h3>
@@ -3203,7 +3203,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
 
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1100 }}
-            onClick={() => setProbTransModal(null)}>
+            onMouseDown={e => { if (e.target === e.currentTarget) setProbTransModal(null); }}>
             <div style={{ background: C.white, borderRadius: 16, width: 460, maxHeight: "88vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
               {/* 헤더 */}
               <div style={{ background: C.orange, padding: "16px 24px", borderRadius: "16px 16px 0 0", display: "flex", alignItems: "center", gap: 10 }}>
@@ -8568,7 +8568,7 @@ function ValetFeePage({ profitState, onNavigate }) {
         return (
           <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.45)", zIndex: 1000,
             display: "flex", alignItems: "center", justifyContent: "center" }}
-            onClick={() => setShowSubmittedModal(false)}>
+            onMouseDown={e => { if (e.target === e.currentTarget) setShowSubmittedModal(false); }}>
             <div style={{ background: "#fff", borderRadius: 16, width: 520, maxWidth: "92vw",
               maxHeight: "80vh", display: "flex", flexDirection: "column",
               boxShadow: "0 20px 60px rgba(0,0,0,0.25)", overflow: "hidden" }}
@@ -13889,7 +13889,7 @@ function MainApp() {
 
       {/* 내 비밀번호 변경 모달 */}
       {showMyPw && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setShowMyPw(false); setMyPw(""); setMyPw2(""); setMyPwMsg(""); }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onMouseDown={e => { if (e.target === e.currentTarget) { setShowMyPw(false); setMyPw(""); setMyPw2(""); setMyPwMsg(""); } }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: 360, maxWidth: "90vw" }} onClick={e => e.stopPropagation()}>
             <h3 style={{ margin: "0 0 6px", fontSize: 16, fontWeight: 800, color: C.navy }}>🔑 내 비밀번호 변경</h3>
             <div style={{ fontSize: 11, color: C.gray, marginBottom: 16 }}>현재 로그인된 내 계정의 비밀번호를 변경합니다</div>
