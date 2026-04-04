@@ -10749,17 +10749,19 @@ const PY_DED_FIELDS_4 = [
 ];
 
 // 직원 근무유형별 급여대장 기본급 산출 헬퍼
-function buildPayrollPayFromEmp(emp) {
+function buildPayrollPayFromEmp(emp, workDays) {
   const cat = getWorkCat(emp.work_code);
   const wdPay = toNum(emp.weekday_pay) || toNum(emp.base_salary) || 0;
   const wePay = toNum(emp.weekend_pay) || toNum(emp.weekend_daily) || 0;
+  const wd = toNum(workDays) || 0;
   let basicPay = 0;
   const autoAllowances = [];
   if (cat === "weekend") {
-    basicPay = wePay; // 주말제: 일당을 기본급으로
+    basicPay = wd > 0 ? wePay * wd : wePay; // 주말제: 일당 × 근무일수
   } else if (cat === "mixed") {
     basicPay = wdPay; // 복합: 평일 월급을 기본급으로
-    if (wePay > 0) autoAllowances.push({ label: "주말수당(일당)", amount: wePay, source: "employee" });
+    const weAmount = wd > 0 ? wePay * wd : wePay;
+    if (wePay > 0) autoAllowances.push({ label: "주말수당(일당)", amount: weAmount, source: "employee" });
   } else {
     basicPay = wdPay; // 평일제/알바/기타
   }
@@ -10774,6 +10776,8 @@ function buildPayrollPayFromEmp(emp) {
     work_type: emp.work_code || "",
     tax_type: emp.tax_type || "4대보험",
     _autoAllowances: autoAllowances,
+    _workDays: wd,
+    _dailyPay: wePay,
   };
 }
 
@@ -11001,22 +11005,50 @@ function PayrollPage({ employees, profitState }) {
         .select("*").eq("month_id", mData.id).order("site_code");
       let recList = recs || [];
 
+      // ── v11.3: 일보 기반 근무일수 자동 카운트 (주말제/복합 대상) ──
+      const monthStart = `${pyYear}-${String(pyMonth).padStart(2, "0")}-01`;
+      const nextM = pyMonth === 12 ? 1 : pyMonth + 1;
+      const nextY = pyMonth === 12 ? pyYear + 1 : pyYear;
+      const monthEnd = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
+
+      const { data: staffForCount } = await supabase.from("daily_report_staff")
+        .select("employee_id, staff_type, daily_reports!inner(report_date)")
+        .gte("daily_reports.report_date", monthStart).lt("daily_reports.report_date", monthEnd);
+      const empWorkDaysMap = {};
+      (staffForCount || []).forEach(s => {
+        if (!s.employee_id) return;
+        // site(정규출근), peak, support 모두 근무일수에 포함 (extra/substitute는 추가근무라 제외)
+        if (s.staff_type === "extra" || s.staff_type === "substitute") return;
+        const date = s.daily_reports?.report_date;
+        if (!date) return;
+        if (!empWorkDaysMap[s.employee_id]) empWorkDaysMap[s.employee_id] = new Set();
+        empWorkDaysMap[s.employee_id].add(date); // Set으로 날짜 중복 방지
+      });
+
       // ── 직원현황 급여정보 자동 동기화 (draft 상태만) ──
       if (mData.status === "draft" && recList.length > 0) {
         const syncUpdates = [];
         for (const rec of recList) {
           const emp = employees.find(e => e.id === rec.employee_id);
           if (!emp) continue;
-          const pp = buildPayrollPayFromEmp(emp);
+          const cat = getWorkCat(emp.work_code);
+          const needsWorkDays = cat === "weekend" || cat === "mixed";
+          // 근무일수: 수동설정(work_days_auto=false)이면 기존값 유지, 아니면 일보 카운트
+          let workDays = rec.work_days || 0;
+          if (needsWorkDays && rec.work_days_auto !== false) {
+            workDays = empWorkDaysMap[rec.employee_id]?.size || 0;
+          }
+          const pp = buildPayrollPayFromEmp(emp, workDays);
           // allowances: employee 소스 교체, auto/manual 유지
           const keepAllowances = (rec.allowances || []).filter(a => a.source !== "employee");
           const newAllowances = [...pp._autoAllowances, ...keepAllowances];
           const changed = rec.basic_pay !== pp.basic_pay || rec.meal !== pp.meal || rec.childcare !== pp.childcare ||
             rec.car_allow !== pp.car_allow || rec.team_allow !== pp.team_allow || rec.incentive !== pp.incentive ||
             rec.site_code !== pp.site_code || rec.work_type !== pp.work_type || rec.tax_type !== pp.tax_type ||
+            rec.work_days !== workDays ||
             JSON.stringify(rec.allowances || []) !== JSON.stringify(newAllowances);
           if (changed) {
-            const upd = { basic_pay: pp.basic_pay, meal: pp.meal, childcare: pp.childcare, car_allow: pp.car_allow, team_allow: pp.team_allow, incentive: pp.incentive, site_code: pp.site_code, work_type: pp.work_type, tax_type: pp.tax_type, allowances: newAllowances };
+            const upd = { basic_pay: pp.basic_pay, meal: pp.meal, childcare: pp.childcare, car_allow: pp.car_allow, team_allow: pp.team_allow, incentive: pp.incentive, site_code: pp.site_code, work_type: pp.work_type, tax_type: pp.tax_type, allowances: newAllowances, work_days: workDays };
             const newGross = pp.basic_pay + pp.meal + pp.childcare + pp.car_allow + pp.team_allow + pp.incentive + (rec.manual_write || 0) + calcAllowancesSum(newAllowances);
             const oldDed = (rec.gross_pay || 0) - (rec.net_pay || 0);
             upd.gross_pay = newGross;
@@ -11035,10 +11067,6 @@ function PayrollPage({ employees, profitState }) {
       }
 
       // ── 일보 추가수당 자동 동기화 ──
-      const monthStart = `${pyYear}-${String(pyMonth).padStart(2, "0")}-01`;
-      const nextM = pyMonth === 12 ? 1 : pyMonth + 1;
-      const nextY = pyMonth === 12 ? pyYear + 1 : pyYear;
-      const monthEnd = `${nextY}-${String(nextM).padStart(2, "0")}-01`;
 
       // daily_reports id 목록
       const { data: repsData } = await supabase.from("daily_reports")
@@ -11120,8 +11148,28 @@ function PayrollPage({ employees, profitState }) {
       // 2. 재직 직원 기준 레코드 생성 (allowances는 loadPayrollMonth에서 자동 동기화)
       const activeEmps = employees.filter(e => e.status === "재직");
 
+      // v11.3: 일보 기반 근무일수 자동 카운트
+      const cmStart = `${pyYear}-${String(pyMonth).padStart(2, "0")}-01`;
+      const cmNextM = pyMonth === 12 ? 1 : pyMonth + 1;
+      const cmNextY = pyMonth === 12 ? pyYear + 1 : pyYear;
+      const cmEnd = `${cmNextY}-${String(cmNextM).padStart(2, "0")}-01`;
+      const { data: cmStaff } = await supabase.from("daily_report_staff")
+        .select("employee_id, staff_type, daily_reports!inner(report_date)")
+        .gte("daily_reports.report_date", cmStart).lt("daily_reports.report_date", cmEnd);
+      const cmWdMap = {};
+      (cmStaff || []).forEach(s => {
+        if (!s.employee_id || s.staff_type === "extra" || s.staff_type === "substitute") return;
+        const date = s.daily_reports?.report_date;
+        if (!date) return;
+        if (!cmWdMap[s.employee_id]) cmWdMap[s.employee_id] = new Set();
+        cmWdMap[s.employee_id].add(date);
+      });
+
       const records = activeEmps.map(e => {
-        const pp = buildPayrollPayFromEmp(e);
+        const cat = getWorkCat(e.work_code);
+        const needsWd = cat === "weekend" || cat === "mixed";
+        const workDays = needsWd ? (cmWdMap[e.id]?.size || 0) : 0;
+        const pp = buildPayrollPayFromEmp(e, workDays);
         // 복합근무 주말수당 → allowances에 자동 추가
         const empAllowances = pp._autoAllowances.length > 0 ? [...pp._autoAllowances] : [];
         return {
@@ -11137,6 +11185,8 @@ function PayrollPage({ employees, profitState }) {
           incentive: pp.incentive,
           allowances: empAllowances,
           tax_type: pp.tax_type,
+          work_days: workDays,
+          work_days_auto: true,
           reporter_name: e.reporter_name || "",
           reporter_rrn: e.reporter_rrn || "",
         };
@@ -11344,6 +11394,7 @@ function PayrollPage({ employees, profitState }) {
         "사업장": getSiteName(r.site_code),
         "근무형태": getWorkLabel(r.work_type),
         "세금처리": r.tax_type || "",
+        "근무일수": r.work_days || "",
         "월급여": r.basic_pay || 0,
         "식대": r.meal || 0,
         "보육수당": r.childcare || 0,
@@ -11502,6 +11553,42 @@ function PayrollPage({ employees, profitState }) {
                   </div>
                 )}
                 <div style={{ fontSize: 9, color: C.gray, marginTop: 6 }}>※ 수정은 직원현황 → 급여조건 탭에서</div>
+              </div>
+            );
+          })()}
+
+          {/* ── v11.3: 근무일수 (주말제/복합) ── */}
+          {(() => {
+            const cat = getWorkCat(rec.work_type);
+            if (cat !== "weekend" && cat !== "mixed") return null;
+            const dailyPay = emp ? (toNum(emp.weekend_pay) || toNum(emp.weekend_daily) || 0) : 0;
+            const isAuto = rec.work_days_auto !== false;
+            return (
+              <div style={{ padding: "12px 14px", background: "#FFF8E1", borderRadius: 10, border: `1px solid ${C.orange}33`, marginBottom: 12 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, color: C.orange }}>📅 {cat === "weekend" ? "주말" : "주말부분"} 근무일수</span>
+                  <button onClick={() => setPyEditRecord(prev => ({ ...prev, work_days_auto: !isAuto }))}
+                    style={{ fontSize: 10, padding: "2px 8px", borderRadius: 4, border: `1px solid ${isAuto ? C.success : C.orange}`, background: isAuto ? "#E8F5E9" : "#FFF3E0", color: isAuto ? C.success : C.orange, fontWeight: 700, cursor: "pointer" }}>
+                    {isAuto ? "🔄 자동(일보)" : "✏️ 수동입력"}
+                  </button>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <NumInput value={rec.work_days || 0}
+                    onChange={v => setPyEditRecord(prev => ({ ...prev, work_days: toNum(v), work_days_auto: false }))}
+                    style={{ width: 70, textAlign: "center", fontWeight: 800, fontSize: 16, borderColor: C.orange }} />
+                  <span style={{ fontSize: 12, color: C.gray }}>일</span>
+                  <span style={{ fontSize: 11, color: C.gray }}>× 일당 {fmt(dailyPay)}원</span>
+                  <span style={{ fontSize: 12, fontWeight: 900, color: C.orange, marginLeft: "auto", fontFamily: "monospace" }}>
+                    = {fmt(dailyPay * (rec.work_days || 0))}원
+                  </span>
+                </div>
+                {cat === "weekend" && rec.work_days > 0 && rec.basic_pay !== dailyPay * rec.work_days && (
+                  <div style={{ fontSize: 10, color: C.error, marginTop: 6, fontWeight: 700 }}>
+                    ⚠️ 기본급({fmt(rec.basic_pay)}) ≠ 일당×일수({fmt(dailyPay * rec.work_days)}) — 동기화 필요 시 저장 후 새로고침
+                  </div>
+                )}
+                {isAuto && <div style={{ fontSize: 9, color: C.success, marginTop: 4 }}>✅ 일보 데이터 기반 자동 카운트 (수정 시 수동모드 전환)</div>}
+                {!isAuto && <div style={{ fontSize: 9, color: C.orange, marginTop: 4 }}>✏️ 수동 입력 — SSOT 동기화 시 덮어쓰기 안 함</div>}
               </div>
             );
           })()}
@@ -11926,6 +12013,7 @@ function PayrollPage({ employees, profitState }) {
                     const allowancesSum = calcAllowancesSum(allowances);
                     const fixedExtras = (r.car_allow || 0) + (r.team_allow || 0) + (r.incentive || 0) + (r.manual_write || 0);
                     const taxInfo = PY_TAX_TYPES.find(t => t.key === r.tax_type);
+                    const rCat = getWorkCat(r.work_type);
                     const rowBg = idx % 2 ? "#FAFBFC" : C.white;
                     return (
                       <tr key={r.id} style={{ background: rowBg, cursor: "pointer" }}
@@ -11953,7 +12041,14 @@ function PayrollPage({ employees, profitState }) {
                           )}
                         </td>
                         {/* 지급 그룹 */}
-                        <td style={amtTd}>{fmt(r.basic_pay)}</td>
+                        <td style={amtTd}>
+                          {fmt(r.basic_pay)}
+                          {r.work_days > 0 && (rCat === "weekend" || rCat === "mixed") && (
+                            <div style={{ fontSize: 8, color: C.orange, fontWeight: 700, fontFamily: "sans-serif" }}>
+                              {rCat === "weekend" ? "" : "주말"}{r.work_days}일{r.work_days_auto === false ? "✏️" : ""}
+                            </div>
+                          )}
+                        </td>
                         <td style={amtTd}>{fmt(r.meal)}</td>
                         {payGroupOpen && PAY_EX_COLS.map(c => (
                           <td key={c.key} style={{ ...amtTd, fontSize: 11, background: idx % 2 ? "#F5F7FF" : "#FAFCFF" }}>
@@ -13315,18 +13410,17 @@ function MainApp() {
 
       // ── 급여대장 즉시 동기화 (draft 상태만) ──
       try {
-        const pp = buildPayrollPayFromEmp(emp);
-
         // draft 상태 payroll_months 조회
         const { data: draftMonths } = await supabase.from("payroll_months")
           .select("id").eq("status", "draft");
         if (draftMonths && draftMonths.length > 0) {
           const monthIds = draftMonths.map(m => m.id);
           const { data: recs } = await supabase.from("payroll_records")
-            .select("id, basic_pay, meal, childcare, car_allow, team_allow, incentive, manual_write, allowances, gross_pay, net_pay")
+            .select("id, basic_pay, meal, childcare, car_allow, team_allow, incentive, manual_write, allowances, gross_pay, net_pay, work_days, work_days_auto")
             .eq("employee_id", id).in("month_id", monthIds);
           if (recs) {
             for (const rec of recs) {
+              const pp = buildPayrollPayFromEmp(emp, rec.work_days || 0);
               const keepAllowances = (rec.allowances || []).filter(a => a.source !== "employee");
               const newAllowances = [...pp._autoAllowances, ...keepAllowances];
               const newGross = pp.basic_pay + pp.meal + pp.childcare + pp.car_allow + pp.team_allow + pp.incentive +
