@@ -1855,7 +1855,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
       return;
     }
     setSaving(true);
-    // v11.1 P3-d → v11.2: 임금분해 수기편집 지원 — editEmp 값 그대로 저장 (자동산출 덮어쓰기 제거)
+    // v11.1 P3-d → v11.2: 임금상세 수기편집 지원 — editEmp 값 그대로 저장 (자동산출 덮어쓰기 제거)
     // 분해값이 모두 0인 경우에만 자동산출 fallback
     const cat = getWorkCat(emp.work_code);
     if ((cat === "weekday" || cat === "mixed") && !toNum(emp.wd_basic) && toNum(emp.weekday_pay) > 0) {
@@ -1871,7 +1871,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
     setEditEmp(null); setShowForm(false);
   };
 
-  // ── 편집폼 열기 헬퍼: DB에 임금분해 없으면 자동산출로 초기화 ──
+  // ── 편집폼 열기 헬퍼: DB에 임금상세 없으면 자동산출로 초기화 ──
   const openEditForm = (emp) => {
     const e = { ...emp };
     const cat = getWorkCat(e.work_code);
@@ -2858,7 +2858,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     <NumInput value={editEmp.weekday_pay} onChange={v => setEditEmp(p => ({ ...p, weekday_pay: v }))} style={{ borderColor: C.navy, fontWeight: 800, fontSize: 15 }} />
                     <div style={{ marginTop: 6, padding: "8px 10px", background: "#EFF6FF", borderRadius: 8, border: `1px solid ${C.navy}22` }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 10, fontWeight: 800, color: C.navy }}>임금분해 (수기편집)</span>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: C.navy }}>임금상세 (수기편집)</span>
                         <button onClick={autoCalcWd} style={{ fontSize: 9, padding: "2px 8px", borderRadius: 4, border: `1px solid ${C.navy}44`, background: "#fff", color: C.navy, fontWeight: 700, cursor: "pointer" }}>🔄 자동산출</button>
                       </div>
                       {bdInput("기본급", "wd_basic", C.navy)}
@@ -2883,7 +2883,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                     <NumInput value={editEmp.weekend_pay} onChange={v => setEditEmp(p => ({ ...p, weekend_pay: v }))} style={{ borderColor: C.orange, fontWeight: 800, fontSize: 15 }} />
                     <div style={{ marginTop: 6, padding: "8px 10px", background: "#FFF8E1", borderRadius: 8, border: `1px solid ${C.orange}22` }}>
                       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-                        <span style={{ fontSize: 10, fontWeight: 800, color: C.orange }}>임금분해 (수기편집)</span>
+                        <span style={{ fontSize: 10, fontWeight: 800, color: C.orange }}>임금상세 (수기편집)</span>
                         <button onClick={autoCalcWe} style={{ fontSize: 9, padding: "2px 8px", borderRadius: 4, border: `1px solid ${C.orange}44`, background: "#fff", color: C.orange, fontWeight: 700, cursor: "pointer" }}>🔄 자동산출</button>
                       </div>
                       {bdInput("기본급", "we_basic", C.orange)}
@@ -10935,7 +10935,7 @@ function PayrollPage({ employees, profitState }) {
     const gross = PY_PAY_FIELDS.reduce((s, f) => s + (r[f.key] || 0), 0) + calcAllowancesSum(r.allowances);
     const totDed = (r.np || 0) + (r.hi || 0) + (r.lt || 0) + (r.ei || 0) +
       (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
-    // v11 P4: 임금분해 계산식 포함
+    // v11 P4: 임금상세 계산식 포함
     const cat = getWorkCat(r.work_type);
     const wageBreakdown = {};
     if (emp && (cat === "weekday" || cat === "mixed")) {
@@ -12490,7 +12490,7 @@ function PayrollPage({ employees, profitState }) {
           (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
         const net = gross - totDed;
 
-        // 임금분해 계산 (buildSlip과 동일 로직)
+        // 임금상세 계산 (buildSlip과 동일 로직)
         const wageBreakdown = {};
         if (emp && (cat === "weekday" || cat === "mixed")) {
           const wb = (toNum(emp.wd_basic) > 0)
@@ -12574,10 +12574,10 @@ function PayrollPage({ employees, profitState }) {
                   ))}
                 </div>
 
-                {/* 임금분해 */}
+                {/* 임금상세 */}
                 {Object.keys(wageBreakdown).length > 0 && (
                   <div style={psSec}>
-                    <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 10 }}>📊 임금 구성</div>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 10 }}>📊 임금상세</div>
                     {wageBreakdown.weekday && (() => {
                       const wd = wageBreakdown.weekday;
                       return (
