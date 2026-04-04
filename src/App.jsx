@@ -12495,13 +12495,13 @@ function PayrollPage({ employees, profitState }) {
         if (emp && (cat === "weekday" || cat === "mixed")) {
           const wb = (toNum(emp.wd_basic) > 0)
             ? { basic: toNum(emp.wd_basic), annual: toNum(emp.wd_annual), overtime: toNum(emp.wd_overtime), holiday: toNum(emp.wd_holiday), hourly_rate: toNum(emp.wd_hourly_rate) }
-            : (typeof calcWdBreakdown === "function" ? (() => { const c = calcWdBreakdown(toNum(emp.weekday_pay || emp.base_salary), emp.work_code, emp.site_code_1); return c ? { basic: c.wd_basic, annual: c.wd_annual, overtime: c.wd_overtime, holiday: c.wd_holiday, hourly_rate: c.wd_hourly_rate } : null; })() : null);
+            : (() => { const c = calcWdBreakdown(toNum(emp.weekday_pay || emp.base_salary), emp.work_code, emp.site_code_1); return c ? { basic: c.wd_basic, annual: c.wd_annual, overtime: c.wd_overtime, holiday: c.wd_holiday, hourly_rate: c.wd_hourly_rate } : null; })();
           if (wb) wageBreakdown.weekday = { ...wb, total_pay: toNum(emp.weekday_pay || emp.base_salary) };
         }
         if (emp && (cat === "weekend" || cat === "mixed")) {
           const wb = (toNum(emp.we_basic) > 0)
             ? { basic: toNum(emp.we_basic), overtime: toNum(emp.we_overtime), weekly_hol: toNum(emp.we_weekly_hol), holiday: toNum(emp.we_holiday), hourly_rate: toNum(emp.we_hourly_rate) }
-            : (typeof calcWeBreakdown === "function" ? (() => { const c = calcWeBreakdown(toNum(emp.weekend_pay || emp.weekend_daily), emp.work_code, emp.site_code_1); return c ? { basic: c.we_basic, overtime: c.we_overtime, weekly_hol: c.we_weekly_hol, holiday: c.we_holiday, hourly_rate: c.we_hourly_rate } : null; })() : null);
+            : (() => { const c = calcWeBreakdown(toNum(emp.weekend_pay || emp.weekend_daily), emp.work_code, emp.site_code_1); return c ? { basic: c.we_basic, overtime: c.we_overtime, weekly_hol: c.we_weekly_hol, holiday: c.we_holiday, hourly_rate: c.we_hourly_rate } : null; })();
           if (wb) wageBreakdown.weekend = { ...wb, daily_pay: toNum(emp.weekend_pay || emp.weekend_daily), work_days: r.work_days || 0 };
         }
 
