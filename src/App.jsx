@@ -10931,14 +10931,32 @@ function PayrollPage({ employees, profitState }) {
   // 발송 대상 slip 생성 헬퍼
   const buildSlip = (r) => {
     const emp = empMap[r.employee_id];
-    const gross = PY_PAY_FIELDS.reduce((s, f) => s + (r[f.key] || 0), 0);
+    const gross = PY_PAY_FIELDS.reduce((s, f) => s + (r[f.key] || 0), 0) + calcAllowancesSum(r.allowances);
     const totDed = (r.np || 0) + (r.hi || 0) + (r.lt || 0) + (r.ei || 0) +
       (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
+    // v11 P4: 임금분해 계산식 포함
+    const cat = getWorkCat(r.work_type);
+    const wageBreakdown = {};
+    if (emp && (cat === "weekday" || cat === "mixed")) {
+      const wb = (toNum(emp.wd_basic) > 0)
+        ? { basic: toNum(emp.wd_basic), annual: toNum(emp.wd_annual), overtime: toNum(emp.wd_overtime), holiday: toNum(emp.wd_holiday), hourly_rate: toNum(emp.wd_hourly_rate) }
+        : (() => { const c = calcWdBreakdown(toNum(emp.weekday_pay || emp.base_salary), emp.work_code, emp.site_code_1); return c ? { basic: c.wd_basic, annual: c.wd_annual, overtime: c.wd_overtime, holiday: c.wd_holiday, hourly_rate: c.wd_hourly_rate } : null; })();
+      if (wb) wageBreakdown.weekday = { ...wb, total_pay: toNum(emp.weekday_pay || emp.base_salary) };
+    }
+    if (emp && (cat === "weekend" || cat === "mixed")) {
+      const wb = (toNum(emp.we_basic) > 0)
+        ? { basic: toNum(emp.we_basic), overtime: toNum(emp.we_overtime), weekly_hol: toNum(emp.we_weekly_hol), holiday: toNum(emp.we_holiday), hourly_rate: toNum(emp.we_hourly_rate) }
+        : (() => { const c = calcWeBreakdown(toNum(emp.weekend_pay || emp.weekend_daily), emp.work_code, emp.site_code_1); return c ? { basic: c.we_basic, overtime: c.we_overtime, weekly_hol: c.we_weekly_hol, holiday: c.we_holiday, hourly_rate: c.we_hourly_rate } : null; })();
+      if (wb) wageBreakdown.weekend = { ...wb, daily_pay: toNum(emp.weekend_pay || emp.weekend_daily), work_days: r.work_days || 0 };
+    }
     return {
       year: pyYear, month: pyMonth,
       employee_id: r.employee_id,
       emp_no: emp?.emp_no || "", emp_name: emp?.name || "",
       site_code: r.site_code || "",
+      work_type: r.work_type || "",
+      work_days: r.work_days || 0,
+      wage_breakdown: Object.keys(wageBreakdown).length > 0 ? wageBreakdown : null,
       basic_pay: r.basic_pay || 0, meal: r.meal || 0,
       childcare: r.childcare || 0, car_allow: r.car_allow || 0,
       team_allow: r.team_allow || 0,
