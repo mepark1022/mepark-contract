@@ -353,9 +353,14 @@ function AuthProvider({ children }) {
       if (session?.user) loadData();
       setLoading(false);
     });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
-      if (session?.user) loadData();
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === "SIGNED_OUT") {
+        setUser(null);
+      } else if (session?.user) {
+        setUser(session.user);
+        loadData();
+      }
+      // session이 null인데 SIGNED_OUT이 아닌 경우 → user 유지 (토큰 갱신 중간 상태)
     });
     return () => subscription.unsubscribe();
   }, []);
