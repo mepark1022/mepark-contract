@@ -10824,6 +10824,7 @@ function PayrollPage({ employees, profitState }) {
   const [psLoading, setPsLoading] = useState(false);
   const [psSending, setPsSending] = useState(false);
   const [psSelectedIds, setPsSelectedIds] = useState(new Set()); // employee_id Set
+  const [psPreview, setPsPreview] = useState(null); // payroll record for preview
 
   // ── 공제 인라인 편집 ──
   const pyRecordsRef = useRef(pyRecords);
@@ -12435,6 +12436,8 @@ function PayrollPage({ employees, profitState }) {
                               ) : isSent ? "⏳ 미확인" : "-"}
                             </td>
                             <td style={{ ...pyTdStyle, textAlign: "center" }} onClick={e => e.stopPropagation()}>
+                              <button onClick={() => setPsPreview(r)} title="미리보기"
+                                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: C.navy, padding: 2 }}>👁️</button>
                               {isSent && (
                                 <button onClick={() => handleDeletePayslip(slip.id)} title="삭제"
                                   style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14, color: C.gray, padding: 2 }}>🗑️</button>
@@ -12476,7 +12479,210 @@ function PayrollPage({ employees, profitState }) {
         </div>
       )}
 
-      {/* 편집 패널 (슬라이드 오버) */}
+      {/* 급여내역서 미리보기 모달 */}
+      {psPreview && (() => {
+        const r = psPreview;
+        const emp = empMap[r.employee_id];
+        const cat = getWorkCat(r.work_type);
+        const catLabel = cat === "weekday" ? "평일제" : cat === "weekend" ? "주말제" : cat === "mixed" ? "복합근무" : "알바";
+        const gross = PY_PAY_FIELDS.reduce((s, f) => s + (r[f.key] || 0), 0) + calcAllowancesSum(r.allowances);
+        const totDed = (r.np || 0) + (r.hi || 0) + (r.lt || 0) + (r.ei || 0) +
+          (r.income_tax || 0) + (r.local_tax || 0) + (r.accident_deduct || 0) + (r.prepaid || 0);
+        const net = gross - totDed;
+
+        // 임금분해 계산 (buildSlip과 동일 로직)
+        const wageBreakdown = {};
+        if (emp && (cat === "weekday" || cat === "mixed")) {
+          const wb = (toNum(emp.wd_basic) > 0)
+            ? { basic: toNum(emp.wd_basic), annual: toNum(emp.wd_annual), overtime: toNum(emp.wd_overtime), holiday: toNum(emp.wd_holiday), hourly_rate: toNum(emp.wd_hourly_rate) }
+            : (typeof calcWdBreakdown === "function" ? (() => { const c = calcWdBreakdown(toNum(emp.weekday_pay || emp.base_salary), emp.work_code, emp.site_code_1); return c ? { basic: c.wd_basic, annual: c.wd_annual, overtime: c.wd_overtime, holiday: c.wd_holiday, hourly_rate: c.wd_hourly_rate } : null; })() : null);
+          if (wb) wageBreakdown.weekday = { ...wb, total_pay: toNum(emp.weekday_pay || emp.base_salary) };
+        }
+        if (emp && (cat === "weekend" || cat === "mixed")) {
+          const wb = (toNum(emp.we_basic) > 0)
+            ? { basic: toNum(emp.we_basic), overtime: toNum(emp.we_overtime), weekly_hol: toNum(emp.we_weekly_hol), holiday: toNum(emp.we_holiday), hourly_rate: toNum(emp.we_hourly_rate) }
+            : (typeof calcWeBreakdown === "function" ? (() => { const c = calcWeBreakdown(toNum(emp.weekend_pay || emp.weekend_daily), emp.work_code, emp.site_code_1); return c ? { basic: c.we_basic, overtime: c.we_overtime, weekly_hol: c.we_weekly_hol, holiday: c.we_holiday, hourly_rate: c.we_hourly_rate } : null; })() : null);
+          if (wb) wageBreakdown.weekend = { ...wb, daily_pay: toNum(emp.weekend_pay || emp.weekend_daily), work_days: r.work_days || 0 };
+        }
+
+        const payItems = [
+          { label: "월급여(기본급)", value: r.basic_pay },
+          { label: "식대", value: r.meal },
+          { label: "보육수당", value: r.childcare },
+          { label: "자가운전", value: r.car_allow },
+          { label: "직책수당", value: r.team_allow },
+          { label: "인센티브", value: r.incentive },
+          { label: "수기수당", value: r.manual_write },
+          ...((r.allowances || []).map(a => ({ label: a.label || "추가수당", value: toNum(a.amount) }))),
+        ].filter(it => it.value > 0);
+
+        const dedItems = [
+          { label: "국민연금", value: r.np },
+          { label: "건강보험", value: r.hi },
+          { label: "장기요양", value: r.lt },
+          { label: "고용보험", value: r.ei },
+          { label: "소득세", value: r.income_tax },
+          { label: "지방소득세", value: r.local_tax },
+          { label: "사고공제", value: r.accident_deduct },
+          { label: "선지급", value: r.prepaid },
+        ].filter(it => it.value > 0);
+
+        const psSec = { background: C.white, borderRadius: 10, padding: "12px 14px", marginBottom: 10 };
+        const psRow = { display: "flex", justifyContent: "space-between", fontSize: 12, padding: "5px 0", borderBottom: `1px solid #F0F0F4` };
+
+        return (
+          <Fragment>
+            <div onClick={() => setPsPreview(null)}
+              style={{ position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.35)", zIndex: 1000 }} />
+            <div style={{ position: "fixed", top: 0, right: 0, width: 420, maxWidth: "90vw", height: "100vh", background: "#F5F6FA",
+              boxShadow: "-4px 0 20px rgba(0,0,0,0.15)", zIndex: 1001, overflowY: "auto", fontFamily: "'Noto Sans KR', sans-serif" }}>
+              {/* 헤더 */}
+              <div style={{ background: C.navy, color: C.white, padding: "16px 20px", position: "sticky", top: 0, zIndex: 2 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div style={{ fontSize: 15, fontWeight: 900 }}>📋 급여내역서 미리보기</div>
+                  <button onClick={() => setPsPreview(null)}
+                    style={{ background: "none", border: "none", color: C.white, fontSize: 18, cursor: "pointer", padding: "2px 6px" }}>✕</button>
+                </div>
+                <div style={{ fontSize: 11, opacity: 0.7, marginTop: 4 }}>{pyYear}년 {pyMonth}월 · {emp?.name || ""} ({emp?.emp_no || ""})</div>
+              </div>
+
+              <div style={{ padding: "14px 16px 80px" }}>
+                {/* 실수령액 */}
+                <div style={{ background: `linear-gradient(135deg, ${C.navy}, #1E3CB0)`, borderRadius: 12, padding: "20px 16px",
+                  marginBottom: 12, textAlign: "center", color: C.white }}>
+                  <div style={{ fontSize: 11, opacity: 0.8, marginBottom: 6 }}>💰 실수령액</div>
+                  <div style={{ fontSize: 28, fontWeight: 900, fontFamily: "monospace" }}>{fmt(net)}<span style={{ fontSize: 14, fontWeight: 700 }}>원</span></div>
+                  <div style={{ marginTop: 10, display: "flex", justifyContent: "center", gap: 20, fontSize: 11, opacity: 0.8 }}>
+                    <span>지급 {fmt(gross)}원</span>
+                    <span>공제 {fmt(totDed)}원</span>
+                  </div>
+                </div>
+
+                {/* 직원정보 */}
+                <div style={psSec}>
+                  {[
+                    ["성명", emp?.name || ""],
+                    ["사번", emp?.emp_no || ""],
+                    ["사업장", getSiteName(r.site_code)],
+                    r.work_type ? ["근무유형", `${catLabel} (${r.work_type})`] : null,
+                    r.work_days > 0 ? ["근무일수", `${r.work_days}일`] : null,
+                  ].filter(Boolean).map(([l, v]) => (
+                    <div key={l} style={psRow}>
+                      <span style={{ color: C.gray }}>{l}</span>
+                      <span style={{ fontWeight: 700 }}>{v}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* 임금분해 */}
+                {Object.keys(wageBreakdown).length > 0 && (
+                  <div style={psSec}>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 10 }}>📊 임금 구성</div>
+                    {wageBreakdown.weekday && (() => {
+                      const wd = wageBreakdown.weekday;
+                      return (
+                        <div style={{ marginBottom: wageBreakdown.weekend ? 12 : 0 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#EEF0FF", color: C.navy }}>평일제</span>
+                            {wd.hourly_rate > 0 && <span style={{ fontSize: 10, color: C.gray }}>시급 {fmt(wd.hourly_rate)}원</span>}
+                          </div>
+                          {[["기본급", wd.basic], ["연차수당", wd.annual], ["연장수당", wd.overtime], ["공휴수당", wd.holiday]]
+                            .filter(([, v]) => v > 0).map(([l, v]) => (
+                              <div key={l} style={{ ...psRow, fontSize: 11 }}>
+                                <span style={{ color: C.gray }}>{l}</span>
+                                <span style={{ fontWeight: 700, fontFamily: "monospace" }}>{fmt(v)}원</span>
+                              </div>
+                          ))}
+                          <div style={{ ...psRow, borderBottom: "none", fontWeight: 900, fontSize: 12 }}>
+                            <span style={{ color: C.navy }}>월급여</span>
+                            <span style={{ color: C.navy, fontFamily: "monospace" }}>{fmt(wd.total_pay)}원</span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {wageBreakdown.weekend && (() => {
+                      const we = wageBreakdown.weekend;
+                      const wDays = we.work_days || r.work_days || 0;
+                      return (
+                        <div>
+                          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+                            <span style={{ padding: "2px 8px", borderRadius: 6, fontSize: 10, fontWeight: 800, background: "#FFF5EB", color: C.orange }}>주말제</span>
+                            {we.hourly_rate > 0 && <span style={{ fontSize: 10, color: C.gray }}>시급 {fmt(we.hourly_rate)}원</span>}
+                          </div>
+                          {[["기본급", we.basic], ["연장수당", we.overtime], ["주휴수당", we.weekly_hol], ["공휴수당", we.holiday]]
+                            .filter(([, v]) => v > 0).map(([l, v]) => (
+                              <div key={l} style={{ ...psRow, fontSize: 11 }}>
+                                <span style={{ color: C.gray }}>{l}</span>
+                                <span style={{ fontWeight: 700, fontFamily: "monospace" }}>{fmt(v)}원</span>
+                              </div>
+                          ))}
+                          <div style={{ ...psRow, borderBottom: "none", fontWeight: 900, fontSize: 12 }}>
+                            <span style={{ color: C.orange }}>일당</span>
+                            <span style={{ color: C.orange, fontFamily: "monospace" }}>{fmt(we.daily_pay)}원</span>
+                          </div>
+                          {wDays > 0 && (
+                            <div style={{ marginTop: 4, padding: "6px 10px", background: "#FFF8F0", borderRadius: 6, fontSize: 11,
+                              color: C.orange, fontWeight: 700, textAlign: "center" }}>
+                              {fmt(we.daily_pay)}원 × {wDays}일 = {fmt(we.daily_pay * wDays)}원
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
+                {/* 지급 항목 */}
+                <div style={psSec}>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 10 }}>💵 지급 항목</div>
+                  {payItems.map(it => (
+                    <div key={it.label} style={psRow}>
+                      <span style={{ color: C.gray }}>{it.label}</span>
+                      <span style={{ fontWeight: 700, fontFamily: "monospace" }}>{fmt(it.value)}원</span>
+                    </div>
+                  ))}
+                  <div style={{ ...psRow, borderBottom: "none", fontWeight: 900, fontSize: 13 }}>
+                    <span style={{ color: C.navy }}>지급 합계</span>
+                    <span style={{ color: C.navy, fontFamily: "monospace" }}>{fmt(gross)}원</span>
+                  </div>
+                </div>
+
+                {/* 공제 항목 */}
+                <div style={psSec}>
+                  <div style={{ fontSize: 13, fontWeight: 900, color: C.error, marginBottom: 10 }}>📋 공제 항목 <span style={{ fontSize: 10, fontWeight: 600, color: C.gray }}>({r.tax_type || "4대보험"})</span></div>
+                  {dedItems.length === 0 ? (
+                    <div style={{ textAlign: "center", padding: 12, color: C.gray, fontSize: 12 }}>공제 항목 없음</div>
+                  ) : dedItems.map(it => (
+                    <div key={it.label} style={psRow}>
+                      <span style={{ color: C.gray }}>{it.label}</span>
+                      <span style={{ fontWeight: 700, fontFamily: "monospace", color: C.error }}>-{fmt(it.value)}원</span>
+                    </div>
+                  ))}
+                  <div style={{ ...psRow, borderBottom: "none", fontWeight: 900, fontSize: 13 }}>
+                    <span style={{ color: C.error }}>공제 합계</span>
+                    <span style={{ color: C.error, fontFamily: "monospace" }}>-{fmt(totDed)}원</span>
+                  </div>
+                </div>
+
+                {/* 계좌 정보 */}
+                {emp?.bank_name && (
+                  <div style={psSec}>
+                    <div style={{ fontSize: 13, fontWeight: 900, color: C.navy, marginBottom: 8 }}>🏦 입금 계좌</div>
+                    <div style={{ fontSize: 12, color: C.gray }}>
+                      {emp.bank_name} {emp.account_number || ""} ({emp.account_holder || emp.name})
+                    </div>
+                  </div>
+                )}
+
+                {/* 안내 */}
+                <div style={{ padding: 10, background: "#FFF8E1", borderRadius: 8, fontSize: 11, color: "#F57F17", fontWeight: 600, textAlign: "center" }}>
+                  이 화면은 미리보기입니다. 실제 발송 내용은 발송 시점 기준으로 생성됩니다.
+                </div>
+              </div>
+            </div>
+          </Fragment>
+        );
+      })()}
       {pyEditRecord && (
         <Fragment>
           <div onClick={() => setPyEditRecord(null)}
