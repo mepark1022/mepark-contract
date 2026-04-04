@@ -1978,8 +1978,6 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
           <button onClick={downloadBulkTemplate} style={{ ...btnOutline, fontSize: 11, padding: "5px 10px", color: C.success, borderColor: C.success }}>📋 생성양식</button>
           <button onClick={() => setShowBulk(true)} style={{ ...btnOutline, fontSize: 11, padding: "5px 10px", color: "#E97132", borderColor: "#E97132" }}>📊 일괄생성</button>
           <button onClick={() => setShowBulkEdit(true)} style={{ ...btnOutline, fontSize: 11, padding: "5px 10px", color: C.skyBlue, borderColor: C.skyBlue }}>📤 일괄수정</button>
-          <div style={{ flex: 1 }} />
-          <button onClick={() => setShowPwChange(true)} style={{ ...btnOutline, fontSize: 11, padding: "5px 10px" }}>🔑 내 비밀번호</button>
         </div>
       )}
 
@@ -2384,6 +2382,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                                     }}>{r === "super_admin" ? "슈퍼" : r === "admin" ? "관리자" : r === "crew" ? "크루" : "현장"}</button>
                                 ))}
                               </div>
+                              <div style={{ fontSize: 10, color: C.gray, marginTop: 4 }}>선택한 직원의 ERP 접근 권한을 변경합니다</div>
                             </div>
                             {/* 비번 초기화 / 정지·해제 */}
                             <div style={{ display: "flex", gap: 8 }}>
@@ -2393,14 +2392,22 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                                 background: se.account_status === "banned" ? C.success : C.error, color: C.white, border: "none", opacity: accountLoading ? 0.5 : 1,
                               }}>{se.account_status === "banned" ? "🔓 활성화" : "🚫 정지"}</button>
                             </div>
+                            <div style={{ fontSize: 10, color: C.gray, marginTop: -4 }}>비밀번호 초기화: 임시 비밀번호가 생성되어 화면에 표시됩니다 · 정지: 해당 직원의 로그인을 차단합니다</div>
                             {/* v9.1: 계정 삭제 */}
                             <button onClick={handleDeleteAccount} disabled={accountLoading} style={{
                               width: "100%", padding: "8px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: "pointer", fontFamily: FONT,
                               background: "none", color: C.error, border: `1px solid ${C.error}`, marginTop: 4, opacity: accountLoading ? 0.5 : 1,
                             }}>🗑 계정 삭제 (직원 데이터 유지)</button>
+                            <div style={{ fontSize: 10, color: C.gray, marginTop: -4 }}>ERP 계정만 삭제되며, 직원 인사정보와 급여 데이터는 유지됩니다</div>
                           </div>
                         </div>
                       )}
+                      {/* 내 비밀번호 변경 */}
+                      <div style={sectionBox}>
+                        {sectionTitle("🔐", "내 비밀번호")}
+                        <div style={{ fontSize: 11, color: C.gray, marginBottom: 10 }}>현재 로그인된 내 계정({myProfile?.email || "—"})의 비밀번호를 변경합니다</div>
+                        <button onClick={() => setShowPwChange(true)} style={{ ...btnOutline, width: "100%", fontSize: 12 }}>🔑 내 비밀번호 변경</button>
+                      </div>
                     </>
                   ) : (
                     <>
@@ -2434,6 +2441,12 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
                           )}
                           {!can("manage_admins") && <div style={{ fontSize: 11, color: C.gray, textAlign: "center" }}>슈퍼관리자만 계정을 생성할 수 있습니다.</div>}
                         </div>
+                      </div>
+                      {/* 내 비밀번호 변경 */}
+                      <div style={sectionBox}>
+                        {sectionTitle("🔐", "내 비밀번호")}
+                        <div style={{ fontSize: 11, color: C.gray, marginBottom: 10 }}>현재 로그인된 내 계정({myProfile?.email || "—"})의 비밀번호를 변경합니다</div>
+                        <button onClick={() => setShowPwChange(true)} style={{ ...btnOutline, width: "100%", fontSize: 12 }}>🔑 내 비밀번호 변경</button>
                       </div>
                     </>
                   )}
@@ -3120,6 +3133,7 @@ function EmployeeRoster({ employees, allContracts = [], saveEmployee, deleteEmpl
           <div style={{ background: C.white, borderRadius: 16, width: 380, padding: 0 }} onClick={e => e.stopPropagation()}>
             <div style={{ background: C.navy, padding: "16px 24px", borderRadius: "16px 16px 0 0" }}>
               <h3 style={{ fontSize: 16, fontWeight: 900, color: C.white, margin: 0 }}>🔑 내 비밀번호 변경</h3>
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.6)", marginTop: 4 }}>현재 로그인된 내 계정의 비밀번호를 변경합니다</div>
             </div>
             <div style={{ padding: 24 }}>
               {pwMsg && <div style={{ marginBottom: 12, padding: "10px 14px", borderRadius: 8, fontSize: 12, fontWeight: 700, background: pwMsg.startsWith("✅") ? "#E8F5E9" : "#FFEBEE", color: pwMsg.startsWith("✅") ? C.success : C.error }}>{pwMsg}</div>}
@@ -13872,7 +13886,8 @@ function MainApp() {
       {showMyPw && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => { setShowMyPw(false); setMyPw(""); setMyPw2(""); setMyPwMsg(""); }}>
           <div style={{ background: "#fff", borderRadius: 16, padding: 28, width: 360, maxWidth: "90vw" }} onClick={e => e.stopPropagation()}>
-            <h3 style={{ margin: "0 0 16px", fontSize: 16, fontWeight: 800, color: C.navy }}>🔑 내 비밀번호 변경</h3>
+            <h3 style={{ margin: "0 0 6px", fontSize: 16, fontWeight: 800, color: C.navy }}>🔑 내 비밀번호 변경</h3>
+            <div style={{ fontSize: 11, color: C.gray, marginBottom: 16 }}>현재 로그인된 내 계정의 비밀번호를 변경합니다</div>
             <div style={{ marginBottom: 12 }}>
               <label style={{ fontSize: 12, fontWeight: 700, color: C.gray, display: "block", marginBottom: 4 }}>새 비밀번호</label>
               <input type="password" value={myPw} onChange={e => setMyPw(e.target.value)} placeholder="6자 이상" style={{ ...inputStyle, padding: "11px 14px" }} />
