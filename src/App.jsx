@@ -8889,6 +8889,14 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
     setEditMode(true);
   };
 
+  // 현장앱 staff_type → ERP staff_type 매핑
+  const normalizeStaffType = (t) => {
+    if (t === "site" || t === "peak") return "regular";
+    if (t === "hq" || t === "part") return "substitute";
+    if (t === "extra") return "extra";
+    return t || "regular";
+  };
+
   // ── 전일 복사 ──
   const copyFromPrevDay = () => {
     const site = form.site_code;
@@ -8907,7 +8915,7 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
       valet_count: prev.valet_count || 0,
       valet_amount: prev.valet_amount || 0,
       staffList: stf.length > 0
-        ? stf.map(s => ({ employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0, extra_type: s.extra_type || null, extra_amount: s.extra_amount || 0 }))
+        ? stf.map(s => ({ employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: normalizeStaffType(s.staff_type), work_hours: s.work_hours || 0, extra_type: s.extra_type || null, extra_amount: s.extra_amount || 0 }))
         : f.staffList,
       payList: PAYMENT_TYPES.map(pt => {
         const existing = pay.find(p => p.payment_type === pt.key);
@@ -8926,7 +8934,7 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
       id: report.id, site_code: report.site_code,
       valet_count: report.valet_count || 0, valet_amount: report.valet_amount || 0, memo: report.memo || "",
       images: report.images || [],
-      staffList: stf.length > 0 ? stf.map(s => ({ id: s.id, employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: s.staff_type || "regular", work_hours: s.work_hours || 0, extra_type: s.extra_type || null, extra_amount: s.extra_amount || 0 }))
+      staffList: stf.length > 0 ? stf.map(s => ({ id: s.id, employee_id: s.employee_id, name_raw: s.name_raw || "", staff_type: normalizeStaffType(s.staff_type), work_hours: s.work_hours || 0, extra_type: s.extra_type || null, extra_amount: s.extra_amount || 0 }))
         : employees.filter(e => (e.site_code_1 === report.site_code || e.site_code_2 === report.site_code) && e.status === "재직").map(e => ({ employee_id: e.id, name_raw: e.name, staff_type: "regular", work_hours: 8 })),
       payList: PAYMENT_TYPES.map(pt => {
         const existing = pay.find(p => p.payment_type === pt.key);
@@ -9276,6 +9284,21 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
     return employees.filter(e => (e.site_code_1 === code || e.site_code_2 === code) && e.status === "재직");
   }, [employees, selSite, editMode, form.site_code]);
 
+  // ── 편집 시 드롭다운에 타사업장/퇴사 직원도 포함 ──
+  const staffDropdownEmps = useMemo(() => {
+    if (!editMode || !form.staffList) return siteEmployees;
+    const siteIds = new Set(siteEmployees.map(e => e.id));
+    const extraEmps = [];
+    form.staffList.forEach(s => {
+      if (s.employee_id && !siteIds.has(s.employee_id)) {
+        const emp = employees.find(e => e.id === s.employee_id);
+        if (emp && !extraEmps.some(x => x.id === emp.id)) extraEmps.push(emp);
+      }
+    });
+    if (extraEmps.length === 0) return siteEmployees;
+    return [...siteEmployees, ...extraEmps];
+  }, [siteEmployees, editMode, form.staffList, employees]);
+
   // ── 결제수단 합계 vs 발렛비 불일치 체크 ──
   const paymentMismatch = useMemo(() => {
     if (!editMode) return null;
@@ -9591,8 +9614,9 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {staff.map((s, i) => {
                 const emp = s.employee_id ? employees.find(e => e.id === s.employee_id) : null;
-                const typeBg = s.staff_type === "regular" ? "#E3F2FD" : s.staff_type === "substitute" ? "#FFF3E0" : "#F3E5F5";
-                const typeLabel = s.staff_type === "regular" ? "" : s.staff_type === "substitute" ? " 대근" : " 추가";
+                const nType = normalizeStaffType(s.staff_type);
+                const typeBg = nType === "regular" ? "#E3F2FD" : nType === "substitute" ? "#FFF3E0" : "#F3E5F5";
+                const typeLabel = nType === "regular" ? "" : nType === "substitute" ? " 대근" : " 추가";
                 const hasExtra = s.extra_type && toNum(s.extra_amount) > 0;
                 return (
                   <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: hasExtra ? "#FFF8E1" : typeBg, color: C.dark, fontWeight: 600, border: hasExtra ? "1px solid #FFE082" : "none" }}>
@@ -9727,7 +9751,10 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
               <select value={s.employee_id || ""} onChange={e => { const empId = e.target.value; const emp = employees.find(emp2 => emp2.id === empId); setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, employee_id: empId, name_raw: emp?.name || ss.name_raw } : ss) })); }} style={{ ...fieldSt, flex: 2, minWidth: 120 }}>
                 <option value="">직접입력</option>
-                {siteEmployees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.emp_no})</option>)}
+                {staffDropdownEmps.map(e => {
+                  const isSite = siteEmployees.some(se => se.id === e.id);
+                  return <option key={e.id} value={e.id}>{e.name} ({e.emp_no}){isSite ? "" : " ⬅타"}</option>;
+                })}
               </select>
               {!s.employee_id && <input placeholder="이름" value={s.name_raw} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, name_raw: e.target.value } : ss) }))} style={{ ...fieldSt, flex: 1, minWidth: 60 }} />}
               <select value={s.staff_type} onChange={e => setForm(f => ({ ...f, staffList: f.staffList.map((ss, j) => j === i ? { ...ss, staff_type: e.target.value } : ss) }))} style={{ ...fieldSt, width: 72, flex: "none" }}>
@@ -9792,7 +9819,7 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
             <div key={i} style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" }}>
               <select value={e.employee_id || ""} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, employee_id: ev.target.value } : ee) }))} style={{ ...fieldSt, flex: 2, minWidth: 100 }}>
                 <option value="">직원선택</option>
-                {siteEmployees.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
+                {staffDropdownEmps.map(emp => <option key={emp.id} value={emp.id}>{emp.name}</option>)}
               </select>
               <select value={e.extra_type} onChange={ev => setForm(f => ({ ...f, extraList: f.extraList.map((ee, j) => j === i ? { ...ee, extra_type: ev.target.value } : ee) }))} style={{ ...fieldSt, width: 80, flex: "none" }}>
                 {EXTRA_TYPES.map(t => <option key={t.key} value={t.key}>{t.label}</option>)}
