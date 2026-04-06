@@ -9660,7 +9660,7 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
             })}
           </div>
         )}
-        {report.memo && <div style={{ fontSize: 11, color: C.gray, background: C.bg, borderRadius: 6, padding: "6px 10px", marginBottom: 10 }}>📝 {report.memo}</div>}
+        {report.memo && <div style={{ fontSize: 11, color: C.gray, background: C.bg, borderRadius: 6, padding: "6px 10px", marginBottom: 10 }}>📝 {report.memo}<div style={{ fontSize: 10, color: C.muted, marginTop: 4, textAlign: "right" }}>✍️ {reporterName || "ERP 관리자"}</div></div>}
         {/* 첨부 이미지 */}
         {(report.images || []).length > 0 && (
           <div>
@@ -14384,11 +14384,15 @@ function ClosingReportPage({ employees }) {
                         </div>
                       )}
                       {/* 메모 */}
-                      {info.report.memo && (
+                      {info.report.memo && (() => {
+                        const rName = info.report.reporter_id ? (employees.find(e => e.id === info.report.reporter_id)?.name || "현장앱") : null;
+                        return (
                         <div style={{ marginTop: 8, fontSize: 11, color: C.gray, padding: "6px 8px", background: "#FAFAFA", borderRadius: 6, borderLeft: `3px solid ${C.gold}` }}>
                           {info.report.memo}
+                          <div style={{ fontSize: 10, color: C.muted, marginTop: 3, textAlign: "right" }}>✍️ {rName || "ERP 관리자"}</div>
                         </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   ) : (
                     <div style={{ padding: "16px 14px", textAlign: "center" }}>
