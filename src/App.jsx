@@ -9614,13 +9614,12 @@ function DailyReportPage({ employees, onDataChange, initialDate, initialSite }) 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
               {staff.map((s, i) => {
                 const emp = s.employee_id ? employees.find(e => e.id === s.employee_id) : null;
-                const nType = normalizeStaffType(s.staff_type);
-                const typeBg = nType === "regular" ? "#E3F2FD" : nType === "substitute" ? "#FFF3E0" : "#F3E5F5";
-                const typeLabel = nType === "regular" ? "" : nType === "substitute" ? " 대근" : " 추가";
+                const ST = { site: { label: "", bg: "#E3F2FD", color: C.navy }, regular: { label: "", bg: "#E3F2FD", color: C.navy }, peak: { label: " 피크", bg: "#EDE7F6", color: "#5E35B1" }, support: { label: " 지원", bg: "#FFF3E0", color: "#E65100" }, hq: { label: " 본사", bg: "#E8F5E9", color: "#2E7D32" }, part: { label: " 알바", bg: "#FFF8E1", color: "#F57F17" }, extra: { label: " 비번", bg: "#F3E5F5", color: "#7B1FA2" }, substitute: { label: " 대근", bg: "#FFF3E0", color: "#E65100" } };
+                const stInfo = ST[s.staff_type] || ST.site;
                 const hasExtra = s.extra_type && toNum(s.extra_amount) > 0;
                 return (
-                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: hasExtra ? "#FFF8E1" : typeBg, color: C.dark, fontWeight: 600, border: hasExtra ? "1px solid #FFE082" : "none" }}>
-                    {emp?.name || s.name_raw || "?"}{typeLabel} · {s.work_hours}h
+                  <span key={i} style={{ fontSize: 11, padding: "3px 10px", borderRadius: 12, background: hasExtra ? "#FFF8E1" : stInfo.bg, color: stInfo.color, fontWeight: 600, border: hasExtra ? "1px solid #FFE082" : "none" }}>
+                    {emp?.name || s.name_raw || "?"}{stInfo.label} · {s.work_hours}h
                     {hasExtra && <span style={{ color: C.orange, fontWeight: 800, marginLeft: 4 }}>💰{s.extra_type} {fmt(s.extra_amount)}원</span>}
                   </span>
                 );
